@@ -289,6 +289,11 @@ TEST_CASE("ParaView restart mode", "[ParaView]")
       REQUIRE(t == MFEM_Approx(t_ref));
    };
 
+   {
+      std::ifstream f("ParaView/ParaView.pvd");
+      std::cout << f.rdbuf();
+   }
+
    XMLDocument xml;
    xml.LoadFile("ParaView/ParaView.pvd");
    REQUIRE(xml.ErrorID() == XML_SUCCESS);
