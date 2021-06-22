@@ -294,6 +294,7 @@ TEST_CASE("ParaView restart mode", "[ParaView]")
       std::cout << f.rdbuf();
    }
 
+
    XMLDocument xml;
    xml.LoadFile("ParaView/ParaView.pvd");
    REQUIRE(xml.ErrorID() == XML_SUCCESS);
