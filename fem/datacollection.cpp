@@ -885,6 +885,9 @@ void ParaViewDataCollection::Save()
          pvd_in.seekg(pos_begin);
          pvd_in.read(buf.data(), count);
          pvd_in.close();
+
+         mfem::out << "Will write to file:\n" << buf.data() << '\n';
+
          pvd_stream.open(pvdname.c_str(),std::ios::out);
          pvd_stream.write(buf.data(), count);
       }
