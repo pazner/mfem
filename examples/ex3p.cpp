@@ -66,6 +66,7 @@ int main(int argc, char *argv[])
    // 2. Parse command-line options.
    const char *mesh_file = "../data/beam-tet.mesh";
    int order = 1;
+   int ser_ref_levels = 1, par_ref_levels = 1;
    bool static_cond = false;
    bool pa = false;
    const char *device_config = "cpu";
@@ -90,6 +91,10 @@ int main(int argc, char *argv[])
    args.AddOption(&visualization, "-vis", "--visualization", "-no-vis",
                   "--no-visualization",
                   "Enable or disable GLVis visualization.");
+   args.AddOption(&ser_ref_levels, "-rs", "--refine-serial",
+                  "Number of times to refine the mesh uniformly in serial.");
+   args.AddOption(&par_ref_levels, "-rp", "--refine-parallel",
+                  "Number of times to refine the mesh uniformly in parallel.");
 #ifdef MFEM_USE_AMGX
    args.AddOption(&useAmgX, "-amgx", "--useAmgX", "-no-amgx",
                   "--no-useAmgX",
@@ -130,8 +135,7 @@ int main(int argc, char *argv[])
    //    'ref_levels' to be the largest number that gives a final mesh with no
    //    more than 1,000 elements.
    {
-      int ref_levels = (int)floor(log(1000./mesh->GetNE())/log(2.)/dim);
-      for (int l = 0; l < ref_levels; l++)
+      for (int l = 0; l < ser_ref_levels; l++)
       {
          mesh->UniformRefinement();
       }
@@ -145,7 +149,6 @@ int main(int argc, char *argv[])
    ParMesh *pmesh = new ParMesh(MPI_COMM_WORLD, *mesh);
    delete mesh;
    {
-      int par_ref_levels = 2;
       for (int l = 0; l < par_ref_levels; l++)
       {
          pmesh->UniformRefinement();
@@ -229,7 +232,9 @@ int main(int argc, char *argv[])
       cg.SetPrintLevel(1);
       cg.SetOperator(*A);
       cg.SetPreconditioner(ams);
+      tic();
       cg.Mult(B, X);
+      std::cout << "Elapsed solver time: " << toc() << '\n';
    }
    else
    {
