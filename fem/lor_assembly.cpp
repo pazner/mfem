@@ -210,6 +210,7 @@ void Assemble3DBatchedLOR(Mesh &mesh_lor,
 {
    const int nel_ho = mesh_ho.GetNE();
    const int nel_lor = mesh_lor.GetNE();
+   const int ndof = fes_ho.GetVSize();
 
    static constexpr int dim = 3;
    static constexpr int nv = 8;
@@ -218,22 +219,43 @@ void Assemble3DBatchedLOR(Mesh &mesh_lor,
    static constexpr int nnz_per_row = 27;
    static constexpr int nnz_per_el = nnz_per_row*ndof_per_el;
 
+   Array<int> dof_glob2loc_(2*ndof_per_el*nel_ho);
+   Array<int> dof_glob2loc_offsets_(ndof+1);
    // Set up element to dof mapping (in lexicographic ordering)
    Array<int> el_dof_lex_(ndof_per_el*nel_ho);
    {
       Array<int> dofs;
       const Array<int> &lex_map = dynamic_cast<const NodalFiniteElement&>
                                   (*fes_ho.GetFE(0)).GetLexicographicOrdering();
+      dof_glob2loc_offsets_ = 0;
       for (int iel_ho=0; iel_ho<nel_ho; ++iel_ho)
       {
          fes_ho.GetElementDofs(iel_ho, dofs);
          for (int i=0; i<ndof_per_el; ++i)
          {
-            el_dof_lex_[i + iel_ho*ndof_per_el] = dofs[lex_map[i]];
+            const int dof = dofs[lex_map[i]];
+            el_dof_lex_[i + iel_ho*ndof_per_el] = dof;
+            dof_glob2loc_offsets_[dof+1] += 2;
+         }
+      }
+
+      dof_glob2loc_offsets_.PartialSum();
+      // Sanity check
+      MFEM_VERIFY(dof_glob2loc_offsets_[ndof] == dof_glob2loc_.Size(), "");
+
+      Array<int> dof_ptr(ndof);
+      for (int i=0; i<ndof; ++i) { dof_ptr[i] = dof_glob2loc_offsets_[i]; }
+      for (int iel_ho=0; iel_ho<nel_ho; ++iel_ho)
+      {
+         fes_ho.GetElementDofs(iel_ho, dofs);
+         for (int i=0; i<ndof_per_el; ++i)
+         {
+            const int dof = dofs[lex_map[i]];
+            dof_glob2loc_[dof_ptr[dof]++] = iel_ho;
+            dof_glob2loc_[dof_ptr[dof]++] = i;
          }
       }
    }
-
    Array<double> Q_(nel_ho*pow(order,dim)*nv*(dim*(dim+1))/2);
 
    // Compute geometric factors at quadrature points
@@ -367,16 +389,16 @@ void Assemble3DBatchedLOR(Mesh &mesh_lor,
       });
    }
 
-   Vector V_(nnz_per_el/*, MemoryType::DEVICE*/);
+   Vector V_(nnz_per_el);
    Array<int> col_ptr_;
-   col_ptr_.SetSize(A_mat.Height()/*, MemoryType::DEVICE*/);
+   col_ptr_.SetSize(nnz_per_row);
 
    static constexpr int sz_grad_A = 3*3*2*2*2*2;
    static constexpr int sz_grad_B = sz_grad_A*2;
    static constexpr int sz_local_mat = 8*8;
-   Vector grad_A_(sz_grad_A/*, MemoryType::DEVICE*/);
-   Vector grad_B_(sz_grad_B/*, MemoryType::DEVICE*/);
-   Vector local_mat_(sz_local_mat/*, MemoryType::DEVICE*/);
+   Vector grad_A_(sz_grad_A);
+   Vector grad_B_(sz_grad_B);
+   Vector local_mat_(sz_local_mat);
 
    auto V = Reshape(V_.ReadWrite(), nnz_per_row, ndof_per_el);
 
@@ -385,6 +407,9 @@ void Assemble3DBatchedLOR(Mesh &mesh_lor,
    auto A = A_mat.ReadWriteData();
 
    const auto el_dof_lex = Reshape(el_dof_lex_.Read(), ndof_per_el, nel_ho);
+   const auto dof_glob2loc = dof_glob2loc_.Read();
+   const auto dof_glob2loc_offsets = dof_glob2loc_offsets_.Read();
+
    auto col_ptr = Reshape(col_ptr_.Write(), A_mat.Height());
 
    auto grad_A = Reshape(grad_A_.Write(), 3, 3, 2, 2, 2, 2);
@@ -581,7 +606,23 @@ void Assemble3DBatchedLOR(Mesh &mesh_lor,
          // Set column pointer to avoid searching in the row
          for (int j = I[ii], end = I[ii+1]; j < end; j++)
          {
-            col_ptr[J[j]] = j;
+            int jj = J[j];
+            int jj_el = -1;
+            const double *K = dof_glob2loc_offsets;
+            for (int k = K[jj], k_end = K[jj+1]; k < k_end; k += 2)
+            {
+               if (dof_glob2loc[k] == iel_ho)
+               {
+                  jj_el = dof_glob2loc[k+1];
+                  break;
+               }
+            }
+            if (jj_el < 0) { continue; }
+            int jx = jj_el%nd1d;
+            int jy = (jj_el/nd1d)%nd1d;
+            int jz = jj_el/nd1d/nd1d;
+            int jj_off = (jx-ix+1) + 3*(jy-iy+1) + 9*(jz-iz+1);
+            col_ptr[jj_off] = j;
          }
 
          int jx_begin = (ix > 0) ? ix - 1 : 0;
@@ -599,11 +640,8 @@ void Assemble3DBatchedLOR(Mesh &mesh_lor,
             {
                for (int jx=jx_begin; jx<=jx_end; ++jx)
                {
-                  int jj_el = jx + jy*nd1d + jz*nd1d*nd1d;
-                  int jj = el_dof_lex(jj_el, iel_ho);
                   int jj_off = (jx-ix+1) + 3*(jy-iy+1) + 9*(jz-iz+1);
-
-                  A[col_ptr[jj]] += V(jj_off, ii_el);
+                  A[col_ptr[jj_off]] += V(jj_off, ii_el);
                }
             }
          }
