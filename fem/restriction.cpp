@@ -1358,6 +1358,7 @@ void L2FaceRestriction::ComputeScatterIndicesAndOffsets(
             {
                SetBoundaryDofsScatterIndices2(face,f_ind);
             }
+            else { assert(false); }
          }
          f_ind++;
       }
@@ -1947,7 +1948,7 @@ void NCL2FaceRestriction::AddMultTranspose(const Vector& x, Vector& y) const
    if ( m==L2FaceValues::DoubleValued )
    {
       auto d_x = Reshape(x_interp.Read(), nface_dofs, vd, 2, nf);
-      auto d_y = Reshape(y.Write(), t?vd:ndofs, t?ndofs:vd);
+      auto d_y = Reshape(y.ReadWrite(), t?vd:ndofs, t?ndofs:vd);
       MFEM_FORALL(i, ndofs,
       {
          const int offset = d_offsets[i];
@@ -1971,7 +1972,7 @@ void NCL2FaceRestriction::AddMultTranspose(const Vector& x, Vector& y) const
    else // Single valued
    {
       auto d_x = Reshape(x_interp.Read(), nface_dofs, vd, nf);
-      auto d_y = Reshape(y.Write(), t?vd:ndofs, t?ndofs:vd);
+      auto d_y = Reshape(y.ReadWrite(), t?vd:ndofs, t?ndofs:vd);
       MFEM_FORALL(i, ndofs,
       {
          const int offset = d_offsets[i];
@@ -2049,6 +2050,9 @@ void NCL2FaceRestriction::ComputeScatterIndicesAndOffsets(
       {
          // We skip local non-conforming master faces as they are treated by the
          // local non-conforming slave faces.
+#warning f_ind++
+         assert(false);
+         f_ind++;
          continue;
       }
       else if ( type==FaceType::Interior && face.IsInterior() )
@@ -2077,6 +2081,7 @@ void NCL2FaceRestriction::ComputeScatterIndicesAndOffsets(
          }
          f_ind++;
       }
+      else {assert(false);}
    }
    MFEM_VERIFY(f_ind==nf, "Unexpected number of " <<
                (type==FaceType::Interior? "interior" : "boundary") <<
@@ -2108,6 +2113,7 @@ void NCL2FaceRestriction::ComputeGatherIndices(
       {
          // We skip local non-conforming master faces as they are treated by the
          // local non-conforming slave faces.
+         assert(false);
          continue;
       }
       else if ( face.IsOfFaceType(type) )
@@ -2121,6 +2127,7 @@ void NCL2FaceRestriction::ComputeGatherIndices(
          }
          f_ind++;
       }
+      else {assert(false);}
    }
    MFEM_VERIFY(f_ind==nf, "Unexpected number of " <<
                (type==FaceType::Interior? "interior" : "boundary") <<

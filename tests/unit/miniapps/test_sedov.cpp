@@ -2041,6 +2041,15 @@ int sedov(int myid, int argc, char *argv[])
    ParGridFunction l2_rho(&l2_fes), l2_e(&l2_fes);
    l2_rho.ProjectCoefficient(rho_fct_coeff);
    rho.ProjectGridFunction(l2_rho);
+
+
+
+   FunctionCoefficient u0_fct_coeff(u0);
+   ParGridFunction l2_u(&fes);
+   l2_u.ProjectCoefficient(u0_fct_coeff);
+   u.ProjectGridFunction(l2_u);
+
+
    DeltaCoefficient e_coeff(blast_position[0], blast_position[1],
                             blast_position[2], blast_energy);
    l2_e.ProjectCoefficient(e_coeff);

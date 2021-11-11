@@ -20,6 +20,9 @@
 #include "fespace.hpp"
 #include "../general/forall.hpp"
 
+#define MFEM_DEBUG_COLOR 197
+#include "../general/debug.hpp"
+
 namespace mfem
 {
 
@@ -70,6 +73,7 @@ ParNCH1FaceRestriction::ParNCH1FaceRestriction(const ParFiniteElementSpace &fes,
 
 void ParNCH1FaceRestriction::Mult(const Vector &x, Vector &y) const
 {
+   //assert(false);
    // Assumes all elements have the same number of dofs
    const int nface_dofs = face_dofs;
    const int vd = vdim;
@@ -152,6 +156,7 @@ void ParNCH1FaceRestriction::Mult(const Vector &x, Vector &y) const
 
 void ParNCH1FaceRestriction::AddMultTranspose(const Vector &x, Vector &y) const
 {
+   assert(false);
    if (x_interp.Size()==0)
    {
       x_interp.SetSize(x.Size());
@@ -206,7 +211,7 @@ void ParNCH1FaceRestriction::AddMultTranspose(const Vector &x, Vector &y) const
    auto d_offsets = gather_offsets.Read();
    auto d_indices = gather_indices.Read();
    auto d_x = Reshape(x_interp.Read(), nface_dofs, vd, nf);
-   auto d_y = Reshape(y.Write(), t?vd:ndofs, t?ndofs:vd);
+   auto d_y = Reshape(y.ReadWrite(), t?vd:ndofs, t?ndofs:vd);
    MFEM_FORALL(i, ndofs,
    {
       const int offset = d_offsets[i];
@@ -330,6 +335,7 @@ ParL2FaceRestriction::ParL2FaceRestriction(const ParFiniteElementSpace &fes,
                                            L2FaceValues m)
    : L2FaceRestriction(fes, type, m)
 {
+   //assert(false);
    if (nf==0) { return; }
    // If fespace == L2
    const ParFiniteElementSpace &pfes =
@@ -372,11 +378,13 @@ ParL2FaceRestriction::ParL2FaceRestriction(const ParFiniteElementSpace &fes,
 
 void ParL2FaceRestriction::Mult(const Vector& x, Vector& y) const
 {
+   //assert(false);
    const ParFiniteElementSpace &pfes =
       static_cast<const ParFiniteElementSpace&>(this->fes);
    ParGridFunction x_gf;
    x_gf.MakeRef(const_cast<ParFiniteElementSpace*>(&pfes),
                 const_cast<Vector&>(x), 0);
+
    x_gf.ExchangeFaceNbrData();
 
    // Assumes all elements have the same number of dofs
@@ -728,6 +736,7 @@ ParNCL2FaceRestriction::ParNCL2FaceRestriction(const ParFiniteElementSpace &fes,
                                                L2FaceValues m)
    : L2FaceRestriction(fes, type, m), interpolations(fes, ordering, type)
 {
+   //assert(false);
    if (nf==0) { return; }
    // If fespace==L2
    const ParFiniteElementSpace &pfes =
@@ -769,11 +778,14 @@ ParNCL2FaceRestriction::ParNCL2FaceRestriction(const ParFiniteElementSpace &fes,
 
 void ParNCL2FaceRestriction::Mult(const Vector& x, Vector& y) const
 {
+   //assert(false);
    const ParFiniteElementSpace &pfes =
       static_cast<const ParFiniteElementSpace&>(this->fes);
    ParGridFunction x_gf;
    x_gf.MakeRef(const_cast<ParFiniteElementSpace*>(&pfes),
                 const_cast<Vector&>(x), 0);
+   x_gf.SetTrueVector();
+   x_gf.SetFromTrueVector();
    x_gf.ExchangeFaceNbrData();
 
    // Assumes all elements have the same number of dofs
@@ -1003,15 +1015,22 @@ void ParNCL2FaceRestriction::Mult(const Vector& x, Vector& y) const
 
 void ParNCL2FaceRestriction::AddMultTranspose(const Vector &x, Vector &y) const
 {
+   dbg();
+   //assert(false);
    if (x_interp.Size()==0)
    {
       x_interp.SetSize(x.Size());
    }
-   x_interp = x;
+
+#warning M_PI
+   x_interp = M_PI;//x;
    // Assumes all elements have the same number of dofs
    const int nface_dofs = face_dofs;
    const int vd = vdim;
    const bool t = byvdim;
+
+   assert(x_interp.Size() == nface_dofs*vd*2*nf);
+
    // Interpolation from slave to master face dofs
    if ( type==FaceType::Interior && m==L2FaceValues::DoubleValued )
    {
@@ -1045,7 +1064,8 @@ void ParNCL2FaceRestriction::AddMultTranspose(const Vector &x, Vector &y) const
                   {
                      res += d_interp(dof_in, dof_out, interp_index)*dof_values[dof_in];
                   }
-                  d_x(dof_out, c, master_side, face) = res;
+#warning M_PI
+                  d_x(dof_out, c, master_side, face) = M_PI;//res;
                }
                MFEM_SYNC_THREAD;
             }
@@ -1054,7 +1074,8 @@ void ParNCL2FaceRestriction::AddMultTranspose(const Vector &x, Vector &y) const
    }
    else if ( type==FaceType::Interior && m==L2FaceValues::SingleValued )
    {
-      auto d_x = Reshape(x_interp.ReadWrite(), nface_dofs, vd, nf);
+      assert(false);
+      /*auto d_x = Reshape(x_interp.ReadWrite(), nface_dofs, vd, nf);
       auto interp_config_ptr = interpolations.GetFaceInterpConfig().Read();
       auto interpolators = interpolations.GetInterpolators().Read();
       const int nc_size = interpolations.GetNumInterpolators();
@@ -1089,40 +1110,65 @@ void ParNCL2FaceRestriction::AddMultTranspose(const Vector &x, Vector &y) const
                MFEM_SYNC_THREAD;
             }
          }
-      });
+      });*/
+   }
+
+   assert(x_interp.Size() == nface_dofs*vd*2*nf);
+   for (int i = 0; i < x_interp.Size(); ++i)
+   {
+      assert(x_interp[i] == M_PI);
    }
 
    // Gathering of face dofs into element dofs
    const int dofs = nfdofs;
-   auto d_offsets = gather_offsets.Read();
-   auto d_indices = gather_indices.Read();
+   dbg("dofs:%d, nf:%d",dofs,nf);
+   dbg("gather_offsets:");
+   for (int i = 0; i < gather_offsets.Size(); ++i)
+   {
+      dbg("%d",gather_offsets[i]);
+   }
+   const auto d_offsets = gather_offsets.Read();
+   const auto d_indices = gather_indices.Read();
    if ( m==L2FaceValues::DoubleValued )
    {
-      auto d_x = Reshape(x_interp.Read(), nface_dofs, vd, 2, nf);
-      auto d_y = Reshape(y.Write(), t?vd:ndofs, t?ndofs:vd);
+      const auto d_x = Reshape(x_interp.Read(), nface_dofs, vd, 2, nf);
+      auto d_y = Reshape(y.ReadWrite(), t?vd:ndofs, t?ndofs:vd);
       MFEM_FORALL(i, ndofs,
       {
          const int offset = d_offsets[i];
          const int next_offset = d_offsets[i + 1];
+         //dbg("next_offset-offset:%d",next_offset-offset);
+         assert(vd==1);
          for (int c = 0; c < vd; ++c)
          {
             double dof_value = 0;
             for (int j = offset; j < next_offset; ++j)
+               //#warning j = offset  const int j = offset;
             {
                int idx_j = d_indices[j];
-               bool isE1 = idx_j < dofs;
+               const bool isE1 = idx_j < dofs;
                idx_j = isE1 ? idx_j : idx_j - dofs;
-               dof_value +=  isE1 ?
+
+               const double value =  isE1 ?
                d_x(idx_j % nface_dofs, c, 0, idx_j / nface_dofs)
-               :d_x(idx_j % nface_dofs, c, 1, idx_j / nface_dofs);
+               :
+               d_x(idx_j % nface_dofs, c, 1, idx_j / nface_dofs);
+               assert(idx_j / nface_dofs < nf);
+               assert(value == M_PI);
+
+#warning +=
+               dof_value += M_PI;
             }
             d_y(t?c:i,t?i:c) += dof_value;
          }
       });
+      //#warning M_PI
+      //y = M_PI;
    }
    else // Single valued
    {
-      auto d_x = Reshape(x_interp.Read(), nface_dofs, vd, nf);
+      assert(false);
+      /*auto d_x = Reshape(x_interp.Read(), nface_dofs, vd, nf);
       auto d_y = Reshape(y.Write(), t?vd:ndofs, t?ndofs:vd);
       MFEM_FORALL(i, ndofs,
       {
@@ -1138,7 +1184,7 @@ void ParNCL2FaceRestriction::AddMultTranspose(const Vector &x, Vector &y) const
             }
             d_y(t?c:i,t?i:c) += dof_value;
          }
-      });
+      });*/
    }
 }
 
@@ -1172,6 +1218,7 @@ void ParNCL2FaceRestriction::ComputeScatterIndicesAndOffsets(
    const ElementDofOrdering ordering,
    const FaceType type)
 {
+   //assert(false);
    Mesh &mesh = *fes.GetMesh();
 
    // Initialization of the offsets
@@ -1279,6 +1326,7 @@ void ParNCL2FaceRestriction::ComputeGatherIndices(
          }
          f_ind++;
       }
+      //else { assert(false); }
    }
    MFEM_VERIFY(f_ind==nf, "Unexpected number of " <<
                (type==FaceType::Interior? "interior" : "boundary") <<
