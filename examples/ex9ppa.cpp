@@ -63,7 +63,7 @@ int main(int argc, char *argv[])
    problem = 0;
    const char *mesh_file = "../data/inline-quad.mesh";
    int ref_levels = 0;
-   int order = 3;
+   int order = 1;
    const char *device_config = "cpu";
    bool visualization = true;
 
@@ -83,9 +83,7 @@ int main(int argc, char *argv[])
    args.AddOption(&visualization, "-vis", "--visualization", "-no-vis",
                   "--no-visualization",
                   "Enable or disable GLVis visualization.");
-   int pi(0), pj(0);
-   args.AddOption(&pi, "-pi", "--permi", "Permutation i.");
-   args.AddOption(&pj, "-pj", "--permj", "Permutation j.");
+
    args.Parse();
    if (!args.Good())
    {
@@ -95,14 +93,11 @@ int main(int argc, char *argv[])
       }
       return 1;
    }
-   if (mpi.Root())
-   {
-      args.PrintOptions(cout);
-   }
+
+   //if (mpi.Root()) { args.PrintOptions(cout); }
 
    Device device(device_config);
    device.Print();
-
 
    Mesh mesh(mesh_file, 1, 1);
    int dim = mesh.Dimension();
@@ -135,7 +130,7 @@ int main(int argc, char *argv[])
    FiniteElementSpace serial_fes(&mesh, &fec);
    ParFiniteElementSpace fes(&pmesh, &fec);
 
-   cout << "Number of unknowns: " << fes.GetVSize() << endl;
+   //cout << "Number of unknowns: " << fes.GetVSize() << endl;
    dbg("Number of unknowns: %d",fes.GetVSize());
 
    Vector velocity_vector(dim);
@@ -155,14 +150,14 @@ int main(int argc, char *argv[])
    k_test.Assemble();
    k_test.Finalize();
    tic_toc.Stop();
-   cout << "test assembly time: " << tic_toc.RealTime() << " sec." << endl;
+   //cout << "test assembly time: " << tic_toc.RealTime() << " sec." << endl;
 
    tic_toc.Clear();
    tic_toc.Start();
    k_ref.Assemble();
    k_ref.Finalize();
    tic_toc.Stop();
-   cout << "ref assembly time: " << tic_toc.RealTime() << " sec." << endl;
+   //cout << "ref assembly time: " << tic_toc.RealTime() << " sec." << endl;
 
 
    MPI_Barrier(MPI_COMM_WORLD);
@@ -194,11 +189,13 @@ int main(int argc, char *argv[])
    //for (int i=0; i<u.Size(); ++i) { dbg("u[%d] %f", i, u[i]);}
 
    // all: 1578.18566715073
-   dbg("u: %.15e",sqrt(InnerProduct(MPI_COMM_WORLD,u,u)));
+   //dbg("u: %.15e",sqrt(InnerProduct(MPI_COMM_WORLD,u,u)));
    r_ref = 0.0;
    r_test = 0.0;
    A_ref->Mult(u, r_ref);
    k_test.Mult(u, r_test);
+
+   dbg("return 0"); return 0;
 
    //             2216.34303831963006814
 
@@ -215,6 +212,7 @@ int main(int argc, char *argv[])
    dbg("rr: %.21e",rr);
    const double tt = InnerProduct(MPI_COMM_WORLD,r_test,r_test);
    dbg("tt: %.21e",tt);
+
 
    const double eps = fabs(rr-tt)/fabs(rr+tt);
    dbg("eps: %.21e",eps);

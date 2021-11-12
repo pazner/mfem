@@ -137,7 +137,7 @@ static void PADGTraceSetup(const int dim,
 
 void DGTraceIntegrator::SetupPA(const FiniteElementSpace &fes, FaceType type)
 {
-   dbg();
+   //dbg();
    nf = fes.GetNFbyType(type);
    if (nf==0) { return; }
    // Assumes tensor-product elements
@@ -293,7 +293,7 @@ void DGTraceIntegrator::SetupPA(const FiniteElementSpace &fes, FaceType type)
    PADGTraceSetup(dim, dofs1D, quad1D, nf, ir->GetWeights(),
                   geom->detJ, geom->normal, r, vel,
                   alpha, beta, pa_data);
-   dbg("pa_data: %.15e",pa_data*pa_data);
+   //dbg("pa_data: %.15e",pa_data*pa_data);
 }
 
 void DGTraceIntegrator::AssemblePAInteriorFaces(const FiniteElementSpace& fes)

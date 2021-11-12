@@ -1152,30 +1152,42 @@ Mesh::FaceInformation Mesh::GetFaceInformation(int f) const
             face.elem_2_orientation = inf2%64;
          }
       }
-      else // e2<0
+      else // e2<0 --> local "boundary" face
       {
-         if (ncface==-1)
+         if (ncface==-1) //--> conforming face
          {
             face.conformity = FaceConformity::Conforming;
-            if (inf2<0)
+            if (inf2<0) // --> true boundary face (no element on side 2)
             {
                face.location = FaceLocation::Boundary;
                face.elem_2_index = e2;
                face.elem_2_orientation = -1;
             }
-            else // inf2 >= 0
+            else // inf2 >= 0 --> shared face where element 2 is a face-neighbor
             {
                face.location = FaceLocation::Shared;
                face.elem_2_index = -1 - e2;
                face.elem_2_orientation = inf2%64;
             }
          }
-         else // ncface >= 0
+         else // ncface >= 0 --> non-conforming face
          {
-            face.location = e2==-1 ? FaceLocation::Local : FaceLocation::Shared;
-            face.conformity = FaceConformity::NonConformingMaster;
-            face.elem_2_index = e2==-1 ? e2 : -1 - e2;
-            face.elem_2_orientation = inf2%64;
+            if (inf2<0) // --> master non-conforming face, interior or shared
+            {
+               assert(e2==-1);
+               face.location = FaceLocation::Local;
+               face.conformity =  FaceConformity::NonConformingMaster;
+               face.elem_2_index = e2 ;
+               face.elem_2_orientation = inf2%64;
+            }
+            else // Elem2Inf >= 0 --> shared slave non-conforming face
+            {
+               // element 2 is the master face-neighbor element with index -1-Elem2No
+               face.location = FaceLocation::Shared;
+               face.conformity =  FaceConformity::NonConformingSlave;
+               face.elem_2_index = -1 - e2;
+               face.elem_2_orientation = inf2%64;
+            }
          }
       }
    }

@@ -737,7 +737,7 @@ ParNCL2FaceRestriction::ParNCL2FaceRestriction(const ParFiniteElementSpace &fes,
    : L2FaceRestriction(fes, type, m), interpolations(fes, ordering, type)
 {
    //assert(false);
-   if (nf==0) { return; }
+   if (nf==0) { assert(false); return; }
    // If fespace==L2
    const ParFiniteElementSpace &pfes =
       static_cast<const ParFiniteElementSpace&>(this->fes);
@@ -1122,11 +1122,9 @@ void ParNCL2FaceRestriction::AddMultTranspose(const Vector &x, Vector &y) const
    // Gathering of face dofs into element dofs
    const int dofs = nfdofs;
    dbg("dofs:%d, nf:%d",dofs,nf);
-   dbg("gather_offsets:");
-   for (int i = 0; i < gather_offsets.Size(); ++i)
-   {
-      dbg("%d",gather_offsets[i]);
-   }
+   //dbg("gather_offsets:");
+   //for (int i = 0; i < gather_offsets.Size(); ++i)
+   //{ dbg("%d",gather_offsets[i]); }
    const auto d_offsets = gather_offsets.Read();
    const auto d_indices = gather_indices.Read();
    if ( m==L2FaceValues::DoubleValued )
@@ -1236,6 +1234,7 @@ void ParNCL2FaceRestriction::ComputeScatterIndicesAndOffsets(
       {
          // We skip local non-conforming master faces as they are treated by the
          // local non-conforming slave faces.
+         assert(face.IsNonConformingMaster());
          continue;
       }
       else if ( type==FaceType::Interior && face.IsInterior() )
@@ -1276,12 +1275,13 @@ void ParNCL2FaceRestriction::ComputeScatterIndicesAndOffsets(
       }
       else if (type==FaceType::Boundary && face.IsBoundary())
       {
+         assert(false);/*
          SetFaceDofsScatterIndices1(face,f_ind);
          if ( m==L2FaceValues::DoubleValued )
          {
             SetBoundaryDofsScatterIndices2(face,f_ind);
          }
-         f_ind++;
+         f_ind++;*/
       }
    }
    MFEM_VERIFY(f_ind==nf, "Unexpected number of " <<
@@ -1313,6 +1313,7 @@ void ParNCL2FaceRestriction::ComputeGatherIndices(
       {
          // We skip local non-conforming master faces as they are treated by the
          // local non-conforming slave faces.
+         assert(face.IsNonConformingMaster());
          continue;
       }
       else if ( face.IsOfFaceType(type) )
@@ -1320,13 +1321,19 @@ void ParNCL2FaceRestriction::ComputeGatherIndices(
          SetFaceDofsGatherIndices1(face,f_ind);
          if (m==L2FaceValues::DoubleValued &&
              type==FaceType::Interior &&
-             face.IsLocal())
+             face.IsLocal()
+            )
          {
             PermuteAndSetFaceDofsGatherIndices2(face,f_ind);
          }
          f_ind++;
       }
-      //else { assert(false); }
+      else
+      {
+         //dbg();
+         //mfem::out << face;
+         //assert(false);
+      }
    }
    MFEM_VERIFY(f_ind==nf, "Unexpected number of " <<
                (type==FaceType::Interior? "interior" : "boundary") <<
@@ -1338,6 +1345,9 @@ void ParNCL2FaceRestriction::ComputeGatherIndices(
       gather_offsets[i] = gather_offsets[i - 1];
    }
    gather_offsets[0] = 0;
+   /*dbg("gather_offsets:");
+   for (int i = 0; i < gather_offsets.Size(); ++i)
+   { dbg("%d",gather_offsets[i]); }*/
 }
 
 } // namespace mfem

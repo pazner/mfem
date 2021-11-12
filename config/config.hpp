@@ -17,6 +17,8 @@
 #ifndef MFEM_CONFIG_HPP
 #define MFEM_CONFIG_HPP
 
+#define MFEM_USE_MPI
+
 #ifdef MFEM_CONFIG_FILE
 #include MFEM_CONFIG_FILE
 #else

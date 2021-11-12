@@ -1427,7 +1427,8 @@ void L2FaceRestriction::SetFaceDofsScatterIndices1(
       const int global_dof_elem1 = elem_map[elem_index*elem_dofs + volume_dof_elem1];
       const int restriction_dof_elem1 = face_dofs*face_index + face_dof_elem1;
       scatter_indices1[restriction_dof_elem1] = global_dof_elem1;
-      ++gather_offsets[global_dof_elem1 + 1];
+      //++gather_offsets[global_dof_elem1 + 1];
+      gather_offsets[global_dof_elem1 + 1]++;
    }
 }
 
@@ -1456,7 +1457,8 @@ void L2FaceRestriction::PermuteAndSetFaceDofsScatterIndices2(
       const int global_dof_elem2 = elem_map[elem_index*elem_dofs + volume_dof_elem2];
       const int restriction_dof_elem2 = face_dofs*face_index + face_dof_elem1;
       scatter_indices2[restriction_dof_elem2] = global_dof_elem2;
-      ++gather_offsets[global_dof_elem2 + 1];
+      //++gather_offsets[global_dof_elem2 + 1];
+      gather_offsets[global_dof_elem2 + 1]++;
    }
 }
 
