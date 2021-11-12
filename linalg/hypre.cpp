@@ -17,9 +17,6 @@
 #include "../fem/fem.hpp"
 #include "../general/forall.hpp"
 
-#define MFEM_DEBUG_COLOR 157
-#include "../general/debug.hpp"
-
 #include <fstream>
 #include <iomanip>
 #include <cmath>

@@ -67,7 +67,7 @@ int main(int argc, char *argv[])
    if (mpi.Root()) { args.PrintOptions(cout); }
 
    Device device(device_config);
-   device.Print();
+   if (mpi.Root()) { device.Print(); }
 
    Mesh mesh(mesh_file, 1, 1);
    int dim = mesh.Dimension();

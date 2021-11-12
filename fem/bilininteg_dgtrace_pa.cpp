@@ -9,9 +9,6 @@
 // terms of the BSD-3 license. We welcome feedback and contributions, see file
 // CONTRIBUTING.md for details.
 
-#define MFEM_DEBUG_COLOR 201
-#include "../general/debug.hpp"
-
 #include "../general/forall.hpp"
 #include "bilininteg.hpp"
 #include "gridfunc.hpp"
@@ -137,7 +134,6 @@ static void PADGTraceSetup(const int dim,
 
 void DGTraceIntegrator::SetupPA(const FiniteElementSpace &fes, FaceType type)
 {
-   //dbg();
    nf = fes.GetNFbyType(type);
    if (nf==0) { return; }
    // Assumes tensor-product elements
@@ -241,7 +237,6 @@ void DGTraceIntegrator::SetupPA(const FiniteElementSpace &fes, FaceType type)
    }
    else
    {
-      assert(false);
       r.SetSize(nq * nf);
       auto C_vel = Reshape(vel.HostRead(), dim, nq, nf);
       auto n = Reshape(geom->normal.HostRead(), nq, dim, nf);
@@ -293,7 +288,6 @@ void DGTraceIntegrator::SetupPA(const FiniteElementSpace &fes, FaceType type)
    PADGTraceSetup(dim, dofs1D, quad1D, nf, ir->GetWeights(),
                   geom->detJ, geom->normal, r, vel,
                   alpha, beta, pa_data);
-   //dbg("pa_data: %.15e",pa_data*pa_data);
 }
 
 void DGTraceIntegrator::AssemblePAInteriorFaces(const FiniteElementSpace& fes)

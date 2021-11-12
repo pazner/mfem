@@ -410,7 +410,6 @@ void PABilinearFormExtension::Mult(const Vector &x, Vector &y) const
    if (int_face_restrict_lex && iFISz>0)
    {
       int_face_restrict_lex->Mult(x, faceIntX);
-
       if (faceIntX.Size()>0)
       {
          faceIntY = 0.0;
