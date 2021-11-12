@@ -1172,19 +1172,17 @@ Mesh::FaceInformation Mesh::GetFaceInformation(int f) const
          }
          else // ncface >= 0 --> non-conforming face
          {
-            if (inf2<0) // --> master non-conforming face, interior or shared
+            if (inf2 < 0)
             {
-               assert(e2==-1);
-               face.location = FaceLocation::Local;
-               face.conformity =  FaceConformity::NonConformingMaster;
-               face.elem_2_index = e2 ;
+               face.location = e2==-1 ? FaceLocation::Local : FaceLocation::Shared;
+               face.conformity = FaceConformity::NonConformingMaster;
+               face.elem_2_index = e2==-1 ? e2 : -1 - e2;
                face.elem_2_orientation = inf2%64;
             }
-            else // Elem2Inf >= 0 --> shared slave non-conforming face
+            else
             {
-               // element 2 is the master face-neighbor element with index -1-Elem2No
                face.location = FaceLocation::Shared;
-               face.conformity =  FaceConformity::NonConformingSlave;
+               face.conformity = FaceConformity::NonConformingMaster;
                face.elem_2_index = -1 - e2;
                face.elem_2_orientation = inf2%64;
             }

@@ -1599,7 +1599,6 @@ HYPRE_Int HypreParMatrix::Mult(HypreParVector &x, HypreParVector &y,
 
 void HypreParMatrix::Mult(double a, const Vector &x, double b, Vector &y) const
 {
-   //dbg("x: %.15e",sqrt(InnerProduct(MPI_COMM_WORLD,x,x)));
    MFEM_ASSERT(x.Size() == Width(), "invalid x.Size() = " << x.Size()
                << ", expected size = " << Width());
    MFEM_ASSERT(y.Size() == Height(), "invalid y.Size() = " << y.Size()
@@ -1653,12 +1652,6 @@ void HypreParMatrix::Mult(double a, const Vector &x, double b, Vector &y) const
    hypre_ParCSRMatrixMatvec(a, A, *X, b, *Y);
 
    if (!yshallow) { y = *Y; }  // Deep copy
-
-#warning y=x
-   const double norm = sqrt(InnerProduct(MPI_COMM_WORLD,x,x));
-   y = x;
-   y *= M_PI/norm;
-   //dbg("y: %.15e",sqrt(InnerProduct(MPI_COMM_WORLD,y,y)));
 }
 
 void HypreParMatrix::MultTranspose(double a, const Vector &x,

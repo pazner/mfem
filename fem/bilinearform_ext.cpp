@@ -412,38 +412,19 @@ void PABilinearFormExtension::Mult(const Vector &x, Vector &y) const
    const int iFISz = intFaceIntegrators.Size();
    if (int_face_restrict_lex && iFISz>0)
    {
-      // 1578.18566715073
       dbg("x: %.15e",sqrt(InnerProduct(MPI_COMM_WORLD,x,x)));
-
-      //MPI_Barrier(MPI_COMM_WORLD);
-
       int_face_restrict_lex->Mult(x, faceIntX);
-
-      //MPI_Barrier(MPI_COMM_WORLD);
 
       if (faceIntX.Size()>0)
       {
          faceIntY = 0.0;
-         /*for (int i = 0; i < iFISz; ++i)
+         for (int i = 0; i < iFISz; ++i)
          {
             intFaceIntegrators[i]->AddMultPA(faceIntX, faceIntY);
-         }*/
-         faceIntY = M_PI;//faceIntX;
-         // => ParNCL2FaceRestriction
+         }
          int_face_restrict_lex->AddMultTranspose(faceIntY, y);
       }
-#warning y=x
-      const double norm = sqrt(InnerProduct(MPI_COMM_WORLD,x,x));
-      //y = x;
-      y *= M_PI/norm;
-
-      // 1 6.01366302433261 M_PI:85.2292721968327
-      // 2 5.96670232590498 M_PI:83.8281476210444
-      // 3 6.01366302433261 M_PI:85.2292721968326
       dbg("y: %.15e",sqrt(InnerProduct(MPI_COMM_WORLD,y,y)));
-      MPI_Barrier(MPI_COMM_WORLD);
-      //dbg(); assert(false);
-      //#warning here
    }
 
    Array<BilinearFormIntegrator*> &bdrFaceIntegrators = *a->GetBFBFI();
