@@ -73,7 +73,6 @@ ParNCH1FaceRestriction::ParNCH1FaceRestriction(const ParFiniteElementSpace &fes,
 
 void ParNCH1FaceRestriction::Mult(const Vector &x, Vector &y) const
 {
-   //assert(false);
    // Assumes all elements have the same number of dofs
    const int nface_dofs = face_dofs;
    const int vd = vdim;
@@ -156,7 +155,6 @@ void ParNCH1FaceRestriction::Mult(const Vector &x, Vector &y) const
 
 void ParNCH1FaceRestriction::AddMultTranspose(const Vector &x, Vector &y) const
 {
-   assert(false);
    if (x_interp.Size()==0)
    {
       x_interp.SetSize(x.Size());
@@ -335,7 +333,6 @@ ParL2FaceRestriction::ParL2FaceRestriction(const ParFiniteElementSpace &fes,
                                            L2FaceValues m)
    : L2FaceRestriction(fes, type, m)
 {
-   //assert(false);
    if (nf==0) { return; }
    // If fespace == L2
    const ParFiniteElementSpace &pfes =
@@ -378,7 +375,6 @@ ParL2FaceRestriction::ParL2FaceRestriction(const ParFiniteElementSpace &fes,
 
 void ParL2FaceRestriction::Mult(const Vector& x, Vector& y) const
 {
-   //assert(false);
    const ParFiniteElementSpace &pfes =
       static_cast<const ParFiniteElementSpace&>(this->fes);
    ParGridFunction x_gf;
@@ -736,8 +732,7 @@ ParNCL2FaceRestriction::ParNCL2FaceRestriction(const ParFiniteElementSpace &fes,
                                                L2FaceValues m)
    : L2FaceRestriction(fes, type, m), interpolations(fes, ordering, type)
 {
-   //assert(false);
-   if (nf==0) { assert(false); return; }
+   if (nf==0) { return; }
    // If fespace==L2
    const ParFiniteElementSpace &pfes =
       static_cast<const ParFiniteElementSpace&>(this->fes);

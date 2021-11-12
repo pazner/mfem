@@ -18,9 +18,6 @@
 #include "pgridfunc.hpp"
 #include "ceed/util.hpp"
 
-#define MFEM_DEBUG_COLOR 87
-#include "../general/debug.hpp"
-
 namespace mfem
 {
 
@@ -412,7 +409,6 @@ void PABilinearFormExtension::Mult(const Vector &x, Vector &y) const
    const int iFISz = intFaceIntegrators.Size();
    if (int_face_restrict_lex && iFISz>0)
    {
-      dbg("x: %.15e",sqrt(InnerProduct(MPI_COMM_WORLD,x,x)));
       int_face_restrict_lex->Mult(x, faceIntX);
 
       if (faceIntX.Size()>0)
@@ -424,7 +420,6 @@ void PABilinearFormExtension::Mult(const Vector &x, Vector &y) const
          }
          int_face_restrict_lex->AddMultTranspose(faceIntY, y);
       }
-      dbg("y: %.15e",sqrt(InnerProduct(MPI_COMM_WORLD,y,y)));
    }
 
    Array<BilinearFormIntegrator*> &bdrFaceIntegrators = *a->GetBFBFI();

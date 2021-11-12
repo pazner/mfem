@@ -2052,9 +2052,6 @@ void NCL2FaceRestriction::ComputeScatterIndicesAndOffsets(
       {
          // We skip local non-conforming master faces as they are treated by the
          // local non-conforming slave faces.
-#warning f_ind++
-         assert(false);
-         f_ind++;
          continue;
       }
       else if ( type==FaceType::Interior && face.IsInterior() )
@@ -2083,7 +2080,6 @@ void NCL2FaceRestriction::ComputeScatterIndicesAndOffsets(
          }
          f_ind++;
       }
-      else {assert(false);}
    }
    MFEM_VERIFY(f_ind==nf, "Unexpected number of " <<
                (type==FaceType::Interior? "interior" : "boundary") <<
