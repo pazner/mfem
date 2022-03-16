@@ -247,10 +247,10 @@ void BatchedLOR_AMS::FormCoordinateVectors()
    }
 }
 
-BatchedLOR_AMS::BatchedLOR_AMS(BilinearForm &a_,
+BatchedLOR_AMS::BatchedLOR_AMS(BilinearForm &a,
                                ParFiniteElementSpace &pfes_ho_,
-                               const Array<int> &ess_dofs_)
-   : BatchedLOR_ND(a_, pfes_ho_, ess_dofs_),
+                               const Array<int> &ess_dofs)
+   : BatchedLOR_ND(pfes_ho_),
      edge_fes(pfes_ho_),
      dim(edge_fes.GetParMesh()->Dimension()),
      order(edge_fes.GetMaxElementOrder()),
@@ -258,7 +258,7 @@ BatchedLOR_AMS::BatchedLOR_AMS(BilinearForm &a_,
      vert_fes(edge_fes.GetParMesh(), &vert_fec)
 {
    // Assemble the system matrix, don't assume ownership of it
-   ParAssemble(A);
+   Assemble(a, ess_dofs, A);
    A.SetOperatorOwner(false);
    // Form the coordinate vectors (uses X_vert) and gradient matrix
    FormCoordinateVectors();
@@ -268,7 +268,7 @@ BatchedLOR_AMS::BatchedLOR_AMS(BilinearForm &a_,
 LORSolver<HypreAMS>::LORSolver(
    ParBilinearForm &a_ho, const Array<int> &ess_tdof_list, int ref_type)
 {
-   if (BatchedLORAssembly::FormIsSupported(a_ho))
+   if (BatchedLOR_AMS::FormIsSupported_(a_ho))
    {
       ParFiniteElementSpace &pfes = *a_ho.ParFESpace();
       BatchedLOR_AMS batched_lor(a_ho, pfes, ess_tdof_list);

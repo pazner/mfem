@@ -366,11 +366,20 @@ FiniteElementSpace &LORBase::GetFESpace() const
 void LORBase::AssembleSystem(BilinearForm &a_ho, const Array<int> &ess_dofs)
 {
    delete a;
-   if (BatchedLORAssembly::FormIsSupported(a_ho))
+
+   if (!batched || !batched->FormIsSupported(a_ho))
    {
-      // Skip forming the space
+      // Either batched is nullptr, or it doesn't support the new form. In
+      // either case, delete it and try to create a new one.
+      delete batched;
+      batched = BatchedLORAssembly::New(a_ho, fes_ho);
+   }
+
+   // If batched is not nullptr here, it supports assembling the new form.
+   if (batched)
+   {
       a = nullptr;
-      BatchedLORAssembly::Assemble(a_ho, fes_ho, ess_dofs, A);
+      batched->Assemble(a_ho, ess_dofs, A);
    }
    else
    {
@@ -423,6 +432,7 @@ void LORBase::LegacyAssembleSystem(BilinearForm &a_ho,
 
 LORBase::~LORBase()
 {
+   delete batched;
    delete a;
    delete fes;
    delete fec;

@@ -29,7 +29,6 @@ class BatchedLORAssembly
 {
 protected:
    FiniteElementSpace &fes_ho; ///< The high-order space.
-   const Array<int> &ess_dofs; ///< Essential DOFs to eliminate.
 
    Vector X_vert; ///< LOR vertex coordinates.
 
@@ -52,18 +51,19 @@ protected:
 
 public:
    /// Does the given form support batched assembly?
-   static bool FormIsSupported(BilinearForm &a);
+   virtual bool FormIsSupported(BilinearForm &a) = 0;
 
-   /// @brief Assemble the given form as a matrix and place the result in @a A.
-   ///
-   /// In serial, the result will be a SparseMatrix. In parallel, the result
-   /// will be a HypreParMatrix.
-   static void Assemble(BilinearForm &a,
-                        FiniteElementSpace &fes_ho,
-                        const Array<int> &ess_dofs,
-                        OperatorHandle &A);
+   /// @brief Create a BatchedLORAssembly object that supports assembling the
+   /// given form.
+   static BatchedLORAssembly *New(BilinearForm &a, FiniteElementSpace &fes_ho);
 
+   /// Assemble the system, and place the result in @a A.
+   void Assemble(BilinearForm &a, const Array<int> &ess_dofs, OperatorHandle &A);
+
+   virtual ~BatchedLORAssembly() { }
 protected:
+   virtual void SetForm(BilinearForm &a) = 0;
+
    /// After assembling the "sparse IJ" format, convert it to CSR.
    SparseMatrix *SparseIJToCSR() const;
 
@@ -71,11 +71,7 @@ protected:
    SparseMatrix *AssembleWithoutBC();
 
    /// Called by one of the specialized classes, e.g. BatchedLORDiffusion.
-   BatchedLORAssembly(BilinearForm &a,
-                      FiniteElementSpace &fes_ho_,
-                      const Array<int> &ess_dofs_);
-
-   virtual ~BatchedLORAssembly() { }
+   BatchedLORAssembly(FiniteElementSpace &fes_ho_);
 
    /// Return the first domain integrator in the form @a i of type @a T.
    template <typename T>
@@ -111,16 +107,36 @@ public:
 
 #ifdef MFEM_USE_MPI
    /// Assemble the system in parallel and place the result in @a A.
-   void ParAssemble(OperatorHandle &A);
+   void ParAssemble(const Array<int> &ess_dofs, OperatorHandle &A);
 #endif
-
-   /// Assemble the system, and place the result in @a A.
-   void Assemble(OperatorHandle &A);
 
    /// @brief Pure virtual function for the kernel actually performing the
    /// assembly. Overridden in the derived classes.
    virtual void AssemblyKernel() = 0;
 };
+
+template <typename T1, typename T2>
+bool HasIntegrators(BilinearForm &a)
+{
+   Array<BilinearFormIntegrator*> *integs = a.GetDBFI();
+   if (integs == NULL) { return false; }
+   if (integs->Size() == 1)
+   {
+      BilinearFormIntegrator *i0 = (*integs)[0];
+      if (dynamic_cast<T1*>(i0) || dynamic_cast<T2*>(i0)) { return true; }
+   }
+   else if (integs->Size() == 2)
+   {
+      BilinearFormIntegrator *i0 = (*integs)[0];
+      BilinearFormIntegrator *i1 = (*integs)[1];
+      if ((dynamic_cast<T1*>(i0) && dynamic_cast<T2*>(i1)) ||
+          (dynamic_cast<T2*>(i0) && dynamic_cast<T1*>(i1)))
+      {
+         return true;
+      }
+   }
+   return false;
+}
 
 }
 

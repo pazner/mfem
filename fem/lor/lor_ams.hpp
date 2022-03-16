@@ -44,9 +44,9 @@ protected:
    void Form2DEdgeToVertex(DenseMatrix &edge2vert);
    void Form3DEdgeToVertex(DenseMatrix &edge2vert);
 public:
-   BatchedLOR_AMS(BilinearForm &a_,
+   BatchedLOR_AMS(BilinearForm &a,
                   ParFiniteElementSpace &pfes_ho_,
-                  const Array<int> &ess_dofs_);
+                  const Array<int> &ess_dofs);
    HypreParMatrix &GetAssembledMatrix() const { return *A.As<HypreParMatrix>(); }
    HypreParMatrix *GetGradientMatrix() const { return G; };
    Vector *GetCoordinateVector() const { return xyz_tvec; };

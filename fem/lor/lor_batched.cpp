@@ -21,47 +21,6 @@
 namespace mfem
 {
 
-template <typename T1, typename T2>
-bool HasIntegrators(BilinearForm &a)
-{
-   Array<BilinearFormIntegrator*> *integs = a.GetDBFI();
-   if (integs == NULL) { return false; }
-   if (integs->Size() == 1)
-   {
-      BilinearFormIntegrator *i0 = (*integs)[0];
-      if (dynamic_cast<T1*>(i0) || dynamic_cast<T2*>(i0)) { return true; }
-   }
-   else if (integs->Size() == 2)
-   {
-      BilinearFormIntegrator *i0 = (*integs)[0];
-      BilinearFormIntegrator *i1 = (*integs)[1];
-      if ((dynamic_cast<T1*>(i0) && dynamic_cast<T2*>(i1)) ||
-          (dynamic_cast<T2*>(i0) && dynamic_cast<T1*>(i1)))
-      {
-         return true;
-      }
-   }
-   return false;
-}
-
-bool BatchedLORAssembly::FormIsSupported(BilinearForm &a)
-{
-   const FiniteElementCollection *fec = a.FESpace()->FEColl();
-   // TODO: check for maximum supported orders
-   // TODO: check for supported coefficient types?
-   // We want to support the following configurations:
-   // H1, ND, and RT spaces: M, A, M + K
-   if (dynamic_cast<const H1_FECollection*>(fec))
-   {
-      if (HasIntegrators<DiffusionIntegrator, MassIntegrator>(a)) { return true; }
-   }
-   else if (dynamic_cast<const ND_FECollection*>(fec))
-   {
-      if (HasIntegrators<CurlCurlIntegrator, VectorFEMassIntegrator>(a)) { return true; }
-   }
-   return false;
-}
-
 template <int Q1D>
 void BatchedLORAssembly::GetLORVertexCoordinates()
 {
@@ -368,25 +327,6 @@ SparseMatrix *BatchedLORAssembly::SparseIJToCSR() const
 
 SparseMatrix *BatchedLORAssembly::AssembleWithoutBC()
 {
-   MFEM_VERIFY(UsesTensorBasis(fes_ho),
-               "Batched LOR assembly requires tensor basis");
-
-   // Get the LOR vertex coordinates
-   const int order = fes_ho.GetMaxElementOrder();
-   const int nd1d = order + 1;
-   switch (nd1d)
-   {
-      case 2: GetLORVertexCoordinates<2>(); break;
-      case 3: GetLORVertexCoordinates<3>(); break;
-      case 4: GetLORVertexCoordinates<4>(); break;
-      case 5: GetLORVertexCoordinates<5>(); break;
-      case 6: GetLORVertexCoordinates<6>(); break;
-      case 7: GetLORVertexCoordinates<7>(); break;
-      case 8: GetLORVertexCoordinates<8>(); break;
-      case 9: GetLORVertexCoordinates<9>(); break;
-      default: MFEM_ABORT("Unsupported order " << order << "!");
-   }
-
    // Assemble the matrix, using kernels from the derived classes
    // This fills in the arrays sparse_ij and sparse_mapping
    AssemblyKernel();
@@ -394,7 +334,8 @@ SparseMatrix *BatchedLORAssembly::AssembleWithoutBC()
 }
 
 #ifdef MFEM_USE_MPI
-void BatchedLORAssembly::ParAssemble(OperatorHandle &A)
+void BatchedLORAssembly::ParAssemble(const Array<int> &ess_dofs,
+                                     OperatorHandle &A)
 {
    // Assemble the system matrix local to this partition
    SparseMatrix *A_local = AssembleWithoutBC();
@@ -595,12 +536,15 @@ void BatchedLORAssembly::ParAssemble(OperatorHandle &A)
 }
 #endif
 
-void BatchedLORAssembly::Assemble(OperatorHandle &A)
+void BatchedLORAssembly::Assemble(BilinearForm &a, const Array<int> &ess_dofs,
+                                  OperatorHandle &A)
 {
+   SetForm(a);
+
 #ifdef MFEM_USE_MPI
    if (dynamic_cast<ParFiniteElementSpace*>(&fes_ho))
    {
-      return ParAssemble(A);
+      return ParAssemble(ess_dofs, A);
    }
 #endif
 
@@ -638,31 +582,40 @@ void BatchedLORAssembly::Assemble(OperatorHandle &A)
    A.Reset(A_mat);
 }
 
-BatchedLORAssembly::BatchedLORAssembly(BilinearForm &a,
-                                       FiniteElementSpace &fes_ho_,
-                                       const Array<int> &ess_dofs_)
-   : fes_ho(fes_ho_), ess_dofs(ess_dofs_)
-{ }
-
-void BatchedLORAssembly::Assemble(BilinearForm &a,
-                                  FiniteElementSpace &fes_ho,
-                                  const Array<int> &ess_dofs,
-                                  OperatorHandle &A)
+BatchedLORAssembly::BatchedLORAssembly(FiniteElementSpace &fes_ho_)
+   : fes_ho(fes_ho_)
 {
-   const FiniteElementCollection *fec = fes_ho.FEColl();
-   if (dynamic_cast<const H1_FECollection*>(fec))
+   MFEM_VERIFY(UsesTensorBasis(fes_ho),
+               "Batched LOR assembly requires tensor basis");
+
+   // Get the LOR vertex coordinates
+   const int order = fes_ho.GetMaxElementOrder();
+   const int nd1d = order + 1;
+   switch (nd1d)
    {
-      if (HasIntegrators<DiffusionIntegrator, MassIntegrator>(a))
-      {
-         BatchedLOR_H1(a, fes_ho, ess_dofs).Assemble(A);
-      }
+      case 2: GetLORVertexCoordinates<2>(); break;
+      case 3: GetLORVertexCoordinates<3>(); break;
+      case 4: GetLORVertexCoordinates<4>(); break;
+      case 5: GetLORVertexCoordinates<5>(); break;
+      case 6: GetLORVertexCoordinates<6>(); break;
+      default: MFEM_ABORT("Unsupported order!")
    }
-   else if (dynamic_cast<const ND_FECollection*>(fec))
+}
+
+BatchedLORAssembly *BatchedLORAssembly::New(BilinearForm &a,
+                                            FiniteElementSpace &fes_ho)
+{
+   if (BatchedLOR_H1::FormIsSupported_(a))
    {
-      if (HasIntegrators<CurlCurlIntegrator, VectorFEMassIntegrator>(a))
-      {
-         BatchedLOR_ND(a, fes_ho, ess_dofs).Assemble(A);
-      }
+      return new BatchedLOR_H1(fes_ho);
+   }
+   else if (BatchedLOR_ND::FormIsSupported_(a))
+   {
+      return new BatchedLOR_ND(fes_ho);
+   }
+   else
+   {
+      return nullptr;
    }
 }
 

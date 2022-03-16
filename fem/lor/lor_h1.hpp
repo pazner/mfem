@@ -26,9 +26,10 @@ public:
    template <int ORDER> void Assemble2D();
    template <int ORDER> void Assemble3D();
    void AssemblyKernel() override;
-   BatchedLOR_H1(BilinearForm &a_,
-                 FiniteElementSpace &fes_ho_,
-                 const Array<int> &ess_dofs_);
+   static bool FormIsSupported_(BilinearForm &a);
+   bool FormIsSupported(BilinearForm &a) override;
+   void SetForm(BilinearForm &a) override;
+   BatchedLOR_H1(FiniteElementSpace &fes_ho_);
 };
 
 }

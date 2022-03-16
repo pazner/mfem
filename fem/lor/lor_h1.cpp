@@ -650,10 +650,24 @@ void BatchedLOR_H1::AssemblyKernel()
    }
 }
 
-BatchedLOR_H1::BatchedLOR_H1(BilinearForm &a,
-                             FiniteElementSpace &fes_ho_,
-                             const Array<int> &ess_dofs_)
-   : BatchedLORAssembly(a, fes_ho_, ess_dofs_)
+// This is a static member function, called by the virtual member
+// FormIsSupported.
+bool BatchedLOR_H1::FormIsSupported_(BilinearForm &a)
+{
+   const FiniteElementCollection *fec = a.FESpace()->FEColl();
+   if (dynamic_cast<const H1_FECollection*>(fec))
+   {
+      if (HasIntegrators<DiffusionIntegrator, MassIntegrator>(a)) { return true; }
+   }
+   return false;
+}
+
+bool BatchedLOR_H1::FormIsSupported(BilinearForm &a)
+{
+   return FormIsSupported_(a);
+}
+
+void BatchedLOR_H1::SetForm(BilinearForm &a)
 {
    MassIntegrator *mass = GetIntegrator<MassIntegrator>(a);
    DiffusionIntegrator *diffusion = GetIntegrator<DiffusionIntegrator>(a);
@@ -679,5 +693,9 @@ BatchedLOR_H1::BatchedLOR_H1(BilinearForm &a,
       diffusion_coeff = 0.0;
    }
 }
+
+BatchedLOR_H1::BatchedLOR_H1(FiniteElementSpace &fes_ho_)
+   : BatchedLORAssembly(fes_ho_)
+{ }
 
 } // namespace mfem
