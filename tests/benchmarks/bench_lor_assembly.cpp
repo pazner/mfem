@@ -36,7 +36,7 @@ struct LORBench
    IntegrationRules irs;
    const IntegrationRule &ir_el;
    FiniteElementSpace &fes_lo;
-   Array<int> ess_bdr_lo, ess_dofs_lo;
+   Array<int> ess_bdr_lo, ess_dofs_lo, ess_tdofs_empty;
    BilinearForm a_legacy, a_full;
    OperatorHandle A_batched, A_deviced;
    SparseMatrix *A_full;
@@ -254,7 +254,7 @@ struct LORBench
       mdof += 1e-6 * dofs;
    }
 
-   void KerDeviced()
+   void KerBatched()
    {
       MFEM_DEVICE_SYNC;
       tic_toc.Start();
@@ -279,7 +279,7 @@ struct LORBench
       mdof += 1e-6 * dofs;
    }
 
-   void AllDeviced()
+   void AllBatched()
    {
       LORDiscretization lor_disc(fes_ho, BasisType::GaussLobatto);
       FiniteElementSpace fes_lo(lor_disc.GetFESpace());
@@ -289,7 +289,7 @@ struct LORBench
       MFEM_DEVICE_SYNC;
       tic_toc.Start();
       OperatorHandle A_deviced;
-      AssembleBatchedLOR(lor_disc, a_legacy, fes_ho, ess_dofs_lo, A_deviced);
+      AssembleBatchedLOR(lor_disc, a_legacy, fes_ho, ess_tdofs_empty, A_deviced);
       MFEM_DEVICE_SYNC;
       tic_toc.Stop();
       mdof += 1e-6 * dofs;
@@ -302,7 +302,7 @@ struct LORBench
 #define P_ORDERS bm::CreateDenseRange(1,8,1)
 
 // The different sides of the mesh
-#define N_SIDES bm::CreateDenseRange(2,20,1)
+#define N_SIDES bm::CreateDenseRange(6,120,6)
 #define MAX_NDOFS 2*1024*1024
 
 /// Kernels definitions and registrations
@@ -314,23 +314,24 @@ static void Name(bm::State &state){\
    if (lor.dofs > MAX_NDOFS) { state.SkipWithError("MAX_NDOFS"); }\
    while (state.KeepRunning()) { lor.Name(); }\
    bm::Counter::Flags flags = bm::Counter::kIsIterationInvariantRate;\
-   state.counters["Ker_(Dofs/s)"] = bm::Counter(lor.dofs, flags);\
+   state.counters["Ker_(MDof/s)"] = bm::Counter(1e-6*lor.dofs, flags);\
    state.counters["All_(MDof/s)"] = bm::Counter(lor.Mdofs());\
    state.counters["dofs"] = bm::Counter(lor.dofs);\
    state.counters["p"] = bm::Counter(p);\
 }\
 BENCHMARK(Name)\
             -> ArgsProduct({P_ORDERS,N_SIDES})\
-            -> Unit(bm::kMillisecond);
+            -> Unit(bm::kMillisecond)\
+            -> Iterations(10);
 
 Benchmark(SanityChecks)
 
 Benchmark(KerLegacy)
 Benchmark(KerFull)
-Benchmark(KerDeviced)
+Benchmark(KerBatched)
 
 Benchmark(AllFull)
-Benchmark(AllDeviced)
+Benchmark(AllBatched)
 
 Benchmark(Dump)
 Benchmark(Test)
