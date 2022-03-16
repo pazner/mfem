@@ -309,28 +309,42 @@ void BatchedLORAssembly::FillJAndData(SparseMatrix &A) const
    });
 }
 
-SparseMatrix *BatchedLORAssembly::SparseIJToCSR() const
+template <typename T>
+void EnsureCapacity(Memory<T> &mem, int capacity)
+{
+   if (mem.Capacity() < capacity)
+   {
+      mem.Delete();
+      mem.New(capacity, mem.GetMemoryType());
+   }
+}
+
+void BatchedLORAssembly::SparseIJToCSR(OperatorHandle &A) const
 {
    const int nvdof = fes_ho.GetVSize();
 
-   SparseMatrix *A = new SparseMatrix(nvdof, nvdof, 0);
+   SparseMatrix *A_mat = A.Is<SparseMatrix>();
+   if (!A_mat)
+   {
+      A_mat = new SparseMatrix(nvdof, nvdof, 0);
+      A.Reset(A_mat);
+   }
 
-   A->GetMemoryI().New(nvdof+1, A->GetMemoryI().GetMemoryType());
-   int nnz = FillI(*A);
+   EnsureCapacity(A_mat->GetMemoryI(), nvdof + 1);
 
-   A->GetMemoryJ().New(nnz, A->GetMemoryJ().GetMemoryType());
-   A->GetMemoryData().New(nnz, A->GetMemoryData().GetMemoryType());
-   FillJAndData(*A);
+   int nnz = FillI(*A_mat);
 
-   return A;
+   EnsureCapacity(A_mat->GetMemoryJ(), nnz);
+   EnsureCapacity(A_mat->GetMemoryData(), nnz);
+   FillJAndData(*A_mat);
 }
 
-SparseMatrix *BatchedLORAssembly::AssembleWithoutBC()
+void BatchedLORAssembly::AssembleWithoutBC(OperatorHandle &A)
 {
    // Assemble the matrix, using kernels from the derived classes
    // This fills in the arrays sparse_ij and sparse_mapping
    AssemblyKernel();
-   return SparseIJToCSR();
+   return SparseIJToCSR(A);
 }
 
 #ifdef MFEM_USE_MPI
@@ -338,7 +352,8 @@ void BatchedLORAssembly::ParAssemble(const Array<int> &ess_dofs,
                                      OperatorHandle &A)
 {
    // Assemble the system matrix local to this partition
-   SparseMatrix *A_local = AssembleWithoutBC();
+   OperatorHandle A_local;
+   AssembleWithoutBC(A_local);
 
    ParFiniteElementSpace *pfes_ho =
       dynamic_cast<ParFiniteElementSpace*>(&fes_ho);
@@ -350,7 +365,8 @@ void BatchedLORAssembly::ParAssemble(const Array<int> &ess_dofs,
    A_diag.MakeSquareBlockDiag(pfes_ho->GetComm(),
                               pfes_ho->GlobalVSize(),
                               pfes_ho->GetDofOffsets(),
-                              A_local);
+                              A_local.As<SparseMatrix>());
+   A_local.SetOperatorOwner(false); // now owned by A_diag
 
    // Parallel matrix assembly using P^t A P (if needed)
    if (IsIdentityProlongation(pfes_ho->GetProlongationMatrix()))
@@ -548,7 +564,8 @@ void BatchedLORAssembly::Assemble(BilinearForm &a, const Array<int> &ess_dofs,
    }
 #endif
 
-   SparseMatrix *A_mat = AssembleWithoutBC();
+   AssembleWithoutBC(A);
+   SparseMatrix *A_mat = A.As<SparseMatrix>();
 
    // Eliminate essential DOFs (BCs) from the matrix (what we do here is
    // equivalent to  DiagonalPolicy::DIAG_KEEP).
@@ -578,8 +595,6 @@ void BatchedLORAssembly::Assemble(BilinearForm &a, const Array<int> &ess_dofs,
          }
       }
    });
-
-   A.Reset(A_mat);
 }
 
 BatchedLORAssembly::BatchedLORAssembly(FiniteElementSpace &fes_ho_)

@@ -65,10 +65,10 @@ protected:
    virtual void SetForm(BilinearForm &a) = 0;
 
    /// After assembling the "sparse IJ" format, convert it to CSR.
-   SparseMatrix *SparseIJToCSR() const;
+   void SparseIJToCSR(OperatorHandle &A) const;
 
    /// Assemble the system without eliminating essential DOFs.
-   SparseMatrix *AssembleWithoutBC();
+   void AssembleWithoutBC(OperatorHandle &A);
 
    /// Called by one of the specialized classes, e.g. BatchedLORDiffusion.
    BatchedLORAssembly(FiniteElementSpace &fes_ho_);
