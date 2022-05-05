@@ -101,20 +101,22 @@ int main(int argc, char *argv[])
    }
 
    Array<int> ess_dofs;
+   fes_rt.GetBoundaryTrueDofs(ess_dofs);
 
    ParDiscreteLinearOperator div(&fes_rt, &fes_l2);
    div.AddDomainInterpolator(new DivergenceInterpolator);
    div.Assemble();
    div.Finalize();
-
    unique_ptr<HypreParMatrix> D(div.ParallelAssemble());
+   unique_ptr<HypreParMatrix> De(D->EliminateCols(ess_dofs));
    unique_ptr<HypreParMatrix> Dt(D->Transpose());
 
    ParBilinearForm mass_rt(&fes_rt);
    mass_rt.AddDomainIntegrator(new VectorFEMassIntegrator);
    mass_rt.Assemble();
    mass_rt.Finalize();
-   unique_ptr<HypreParMatrix> M(mass_rt.ParallelAssemble());
+   OperatorHandle M;
+   mass_rt.FormSystemMatrix(ess_dofs, M);
 
    ParBilinearForm mass_l2(&fes_l2);
    mass_l2.AddDomainIntegrator(new MassIntegrator);
@@ -136,14 +138,15 @@ int main(int argc, char *argv[])
    offsets[2] = offsets[1] + fes_l2.GetTrueVSize();
 
    BlockOperator A_block(offsets);
-   A_block.SetBlock(0, 0, M.get());
+   A_block.SetBlock(0, 0, M.Ptr());
    A_block.SetBlock(0, 1, Dt.get());
    A_block.SetBlock(1, 0, D.get());
    A_block.SetBlock(1, 1, W_inv.get(), -1.0);
 
-   HypreSmoother M_jacobi(*M, HypreSmoother::Jacobi);
+   HypreSmoother M_jacobi(*M.As<HypreParMatrix>(), HypreSmoother::Jacobi);
 
-   unique_ptr<HypreParMatrix> M_diag_inv(DiagonalInverse(*M, fes_rt));
+   unique_ptr<HypreParMatrix> M_diag_inv(DiagonalInverse(*M.As<HypreParMatrix>(),
+                                                         fes_rt));
    unique_ptr<HypreParMatrix> W_diag_inv(DiagonalInverse(*W, fes_l2));
 
    unique_ptr<HypreParMatrix> S;
