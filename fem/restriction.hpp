@@ -31,7 +31,7 @@ private:
        for the FillSparseMatrix method. */
    static const int MaxNbNbr = 16;
 
-protected:
+public:
    const FiniteElementSpace &fes;
    const int ne;
    const int vdim;

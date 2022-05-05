@@ -24,7 +24,7 @@ MFEM_LIB_FILE = mfem_is_not_built
 BLOCK_SOLVERS_SRC = div_free_solver.cpp block-solvers.cpp
 BLOCK_SOLVERS_OBJ = $(BLOCK_SOLVERS_SRC:.cpp=.o)
 
-SEQ_MINIAPPS = lor_solvers
+SEQ_MINIAPPS = lor_solvers hdiv_saddle_point
 PAR_MINIAPPS = block-solvers plor_solvers
 
 ifeq ($(MFEM_USE_MPI),NO)
@@ -36,7 +36,7 @@ endif
 .SUFFIXES:
 .SUFFIXES: .o .cpp .mk
 .PHONY: all clean clean-build clean-exec
-# .PRECIOUS: %.o
+.PRECIOUS: %.o
 
 all: $(MINIAPPS)
 

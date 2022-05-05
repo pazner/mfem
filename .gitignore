@@ -296,6 +296,7 @@ miniapps/toys/lissajous.gf
 miniapps/toys/mondrian.mesh
 
 miniapps/solvers/block-solvers
+miniapps/solvers/hdiv_saddle_point
 miniapps/solvers/lor_solvers
 miniapps/solvers/plor_solvers
 miniapps/solvers/ParaView
