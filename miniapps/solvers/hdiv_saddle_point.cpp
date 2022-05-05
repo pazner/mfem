@@ -161,7 +161,38 @@ int main(int argc, char *argv[])
 
    BlockVector X_block(offsets), B_block(offsets);
    X_block = 0.0;
-   B_block.GetBlock(0).Randomize(1);
+
+   ParBilinearForm a(&fes_rt);
+   a.AddDomainIntegrator(new DivDivIntegrator);
+   a.AddDomainIntegrator(new VectorFEMassIntegrator);
+   a.Assemble();
+   a.Finalize();
+
+   ParGridFunction x(&fes_rt);
+   ParLinearForm b(&fes_rt);
+   b.Randomize(1);
+   x = 0.0;
+   OperatorHandle A;
+   Vector X, B;
+   a.FormLinearSystem(ess_dofs, x, b, A, X, B);
+   HypreADS ads(*A.As<HypreParMatrix>(), &fes_rt);
+
+   CGSolver cg(MPI_COMM_WORLD);
+   cg.SetAbsTol(0.0);
+   cg.SetRelTol(1e-12);
+   cg.SetMaxIter(500);
+   cg.SetPrintLevel(1);
+   cg.SetPrintLevel(IterativeSolver::PrintLevel().Summary().FirstAndLast());
+   cg.SetOperator(*A);
+   cg.SetPreconditioner(ads);
+
+   tic_toc.Clear();
+   tic_toc.Start();
+   cg.Mult(B, X);
+   tic_toc.Stop();
+   if (Mpi::Root()) { cout << "CG Elapsed:     " << tic_toc.RealTime() << '\n'; }
+
+   B_block.GetBlock(0) = B;
    B_block.GetBlock(1) = 0.0;
 
    MINRESSolver minres(MPI_COMM_WORLD);
@@ -173,10 +204,15 @@ int main(int argc, char *argv[])
    minres.SetOperator(A_block);
    minres.SetPreconditioner(D_prec);
 
+   tic_toc.Clear();
    tic_toc.Start();
    minres.Mult(B_block, X_block);
    tic_toc.Stop();
    if (Mpi::Root()) { cout << "MINRES Elapsed: " << tic_toc.RealTime() << '\n'; }
+
+   X -= X_block.GetBlock(0);
+   double error = X.Normlinf();
+   if (Mpi::Root()) { cout << "Error: " << error << '\n'; }
 
    return 0;
 }
