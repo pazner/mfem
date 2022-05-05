@@ -210,7 +210,7 @@ int main(int argc, char *argv[])
    tic_toc.Start();
    cg.Mult(B, X);
    tic_toc.Stop();
-   std::cout << "CG Elapsed: " << tic_toc.RealTime() << '\n';
+   if (Mpi::Root()) { cout << "CG Elapsed: " << tic_toc.RealTime() << '\n'; }
 
    a.RecoverFEMSolution(X, b, x);
 

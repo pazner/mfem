@@ -34,6 +34,25 @@ void MakeTranspose(SparseMatrix &A, SparseMatrix &B)
    delete tmp;
 }
 
+ParMesh LoadParMesh(const char *mesh_file)
+{
+   Mesh serial_mesh = Mesh::LoadFromFile(mesh_file);
+   return ParMesh(MPI_COMM_WORLD, serial_mesh);
+}
+
+HypreParMatrix *DiagonalInverse(HypreParMatrix &A, ParFiniteElementSpace &fes)
+{
+   Vector diag_vec;
+   A.GetDiag(diag_vec);
+   for (int i=0; i<diag_vec.Size(); ++i) { diag_vec[i] = 1.0/diag_vec[i]; }
+   SparseMatrix diag_inv(diag_vec);
+
+   HYPRE_BigInt global_size = fes.GlobalTrueVSize();
+   HYPRE_BigInt *row_starts = fes.GetTrueDofOffsets();
+   HypreParMatrix D(MPI_COMM_WORLD, global_size, row_starts, &diag_inv);
+   return new HypreParMatrix(D); // make a deep copy
+}
+
 int main(int argc, char *argv[])
 {
    Mpi::Init(argc, argv);
@@ -54,7 +73,7 @@ int main(int argc, char *argv[])
                   "Enable or disable GLVis visualization.");
    args.ParseCheck();
 
-   Mesh mesh(mesh_file, 1, 1);
+   ParMesh mesh = LoadParMesh(mesh_file);
    const int dim = mesh.Dimension();
    MFEM_VERIFY(dim == 2 || dim == 3, "Spatial dimension must be 2 or 3.");
    for (int l = 0; l < ref_levels; l++) { mesh.UniformRefinement(); }
@@ -65,45 +84,51 @@ int main(int argc, char *argv[])
    int mt = FiniteElement::INTEGRAL;
 
    RT_FECollection fec_rt(order-1, dim, b1, b2);
-   FiniteElementSpace fes_rt(&mesh, &fec_rt);
+   ParFiniteElementSpace fes_rt(&mesh, &fec_rt);
 
    L2_FECollection fec_l2(order-1, dim, b2, mt);
-   FiniteElementSpace fes_l2(&mesh, &fec_l2);
+   ParFiniteElementSpace fes_l2(&mesh, &fec_l2);
 
-   cout << "Number of RT DOFs: " << fes_rt.GetTrueVSize() << endl;
-   cout << "Number of L2 DOFs: " << fes_l2.GetTrueVSize() << endl;
+   {
+      HYPRE_BigInt ndofs_rt = fes_rt.GlobalTrueVSize();
+      HYPRE_BigInt ndofs_l2 = fes_l2.GlobalTrueVSize();
+      if (Mpi::Root())
+      {
+         cout << "Number of RT DOFs: " << ndofs_rt << endl;
+         cout << "Number of L2 DOFs: " << ndofs_l2 << endl;
+         cout << "Assembling... " << flush;
+      }
+   }
 
    Array<int> ess_dofs;
 
-   DiscreteLinearOperator div(&fes_rt, &fes_l2);
+   ParDiscreteLinearOperator div(&fes_rt, &fes_l2);
    div.AddDomainInterpolator(new DivergenceInterpolator);
    div.Assemble();
    div.Finalize();
-   SparseMatrix &D = div.SpMat();
-   SparseMatrix Dt;
-   MakeTranspose(D, Dt);
-   {
-      std::ofstream f("D.txt");
-      div.SpMat().PrintMatlab(f);
-   }
 
-   BilinearForm mass_rt(&fes_rt);
+   unique_ptr<HypreParMatrix> D(div.ParallelAssemble());
+   unique_ptr<HypreParMatrix> Dt(D->Transpose());
+
+   ParBilinearForm mass_rt(&fes_rt);
    mass_rt.AddDomainIntegrator(new VectorFEMassIntegrator);
    mass_rt.Assemble();
    mass_rt.Finalize();
-   SparseMatrix &M = mass_rt.SpMat();
+   unique_ptr<HypreParMatrix> M(mass_rt.ParallelAssemble());
 
-   BilinearForm dg_mass(&fes_l2);
-   dg_mass.AddDomainIntegrator(new MassIntegrator);
-   dg_mass.Assemble();
-   dg_mass.Finalize();
-   SparseMatrix &W = dg_mass.SpMat();
+   ParBilinearForm mass_l2(&fes_l2);
+   mass_l2.AddDomainIntegrator(new MassIntegrator);
+   mass_l2.Assemble();
+   mass_l2.Finalize();
+   unique_ptr<HypreParMatrix> W(mass_l2.ParallelAssemble());
 
-   BilinearForm dg_mass_inv(&fes_l2);
-   dg_mass_inv.AddDomainIntegrator(new InverseIntegrator(new MassIntegrator));
-   dg_mass_inv.Assemble();
-   dg_mass_inv.Finalize();
-   SparseMatrix &W_inv = dg_mass_inv.SpMat();
+   ParBilinearForm mass_l2_inv(&fes_l2);
+   mass_l2_inv.AddDomainIntegrator(new InverseIntegrator(new MassIntegrator));
+   mass_l2_inv.Assemble();
+   mass_l2_inv.Finalize();
+   unique_ptr<HypreParMatrix> W_inv(mass_l2_inv.ParallelAssemble());
+
+   if (Mpi::Root()) { cout << "Done." << endl; }
 
    Array<int> offsets(3);
    offsets[0] = 0;
@@ -111,43 +136,27 @@ int main(int argc, char *argv[])
    offsets[2] = offsets[1] + fes_l2.GetTrueVSize();
 
    BlockOperator A_block(offsets);
-   A_block.SetBlock(0, 0, &M);
-   A_block.SetBlock(0, 1, &Dt);
-   A_block.SetBlock(1, 0, &D);
-   A_block.SetBlock(1, 1, &W_inv, -1.0);
+   A_block.SetBlock(0, 0, M.get());
+   A_block.SetBlock(0, 1, Dt.get());
+   A_block.SetBlock(1, 0, D.get());
+   A_block.SetBlock(1, 1, W_inv.get(), -1.0);
 
-   DSmoother M_jacobi(M);
+   HypreSmoother M_jacobi(*M, HypreSmoother::Jacobi);
 
-   Vector M_diag_vec;
-   M.GetDiag(M_diag_vec);
-   for (int i=0; i<M_diag_vec.Size(); ++i) { M_diag_vec[i] = 1.0/M_diag_vec[i]; }
-   SparseMatrix M_diag_inv(M_diag_vec);
+   unique_ptr<HypreParMatrix> M_diag_inv(DiagonalInverse(*M, fes_rt));
+   unique_ptr<HypreParMatrix> W_diag_inv(DiagonalInverse(*W, fes_l2));
 
-   Vector W_diag_vec;
-   W.GetDiag(W_diag_vec);
-   for (int i=0; i<W_diag_vec.Size(); ++i) { W_diag_vec[i] = 1.0/W_diag_vec[i]; }
-   SparseMatrix W_diag_inv(W_diag_vec);
-
-   SparseMatrix S;
+   unique_ptr<HypreParMatrix> S;
    {
-      SparseMatrix *tmp = RAP(M_diag_inv, D);
-      S.Swap(*tmp);
-      delete tmp;
+      unique_ptr<HypreParMatrix> D_Minv_Dt(RAP(M_diag_inv.get(), Dt.get()));
+      S.reset(ParAdd(D_Minv_Dt.get(), W_inv.get()));
    }
-   // S.Add(1.0, W_diag_inv);
-   S.Add(1.0, W_inv);
 
-   HYPRE_BigInt row_starts[2];
-   row_starts[0] = 0;
-   row_starts[1] = S.Height();
-
-   HypreParMatrix S_hypre(MPI_COMM_WORLD, fes_l2.GetTrueVSize(), row_starts, &S);
-   HypreBoomerAMG S_inv(S_hypre);
+   HypreBoomerAMG S_inv(*S);
    S_inv.SetPrintLevel(0);
-   // UMFPackSolver S_inv(S);
 
    BlockDiagonalPreconditioner D_prec(offsets);
-   D_prec.SetDiagonalBlock(0, &M_diag_inv);
+   D_prec.SetDiagonalBlock(0, M_diag_inv.get());
    D_prec.SetDiagonalBlock(1, &S_inv);
 
    BlockVector X_block(offsets), B_block(offsets);
@@ -155,7 +164,7 @@ int main(int argc, char *argv[])
    B_block.GetBlock(0).Randomize(1);
    B_block.GetBlock(1) = 0.0;
 
-   MINRESSolver minres;
+   MINRESSolver minres(MPI_COMM_WORLD);
    minres.SetAbsTol(0.0);
    minres.SetRelTol(1e-12);
    minres.SetMaxIter(500);
@@ -167,88 +176,7 @@ int main(int argc, char *argv[])
    tic_toc.Start();
    minres.Mult(B_block, X_block);
    tic_toc.Stop();
-   std::cout << "MINRES Elapsed: " << tic_toc.RealTime() << '\n';
-
-   // fes.GetBoundaryTrueDofs(ess_dofs);
-
-   //    BilinearForm a(&fes);
-   //    if (H1 || L2)
-   //    {
-   //       a.AddDomainIntegrator(new MassIntegrator);
-   //       a.AddDomainIntegrator(new DiffusionIntegrator);
-   //    }
-   //    else
-   //    {
-   //       a.AddDomainIntegrator(new VectorFEMassIntegrator);
-   //    }
-
-   //    if (ND) { a.AddDomainIntegrator(new CurlCurlIntegrator); }
-   //    else if (RT) { a.AddDomainIntegrator(new DivDivIntegrator); }
-   //    else if (L2)
-   //    {
-   //       a.AddInteriorFaceIntegrator(new DGDiffusionIntegrator(-1.0, kappa));
-   //       a.AddBdrFaceIntegrator(new DGDiffusionIntegrator(-1.0, kappa));
-   //    }
-   //    // TODO: L2 diffusion not implemented with partial assembly
-   //    if (!L2) { a.SetAssemblyLevel(AssemblyLevel::PARTIAL); }
-   //    a.Assemble();
-
-   //    LinearForm b(&fes);
-   //    if (H1 || L2) { b.AddDomainIntegrator(new DomainLFIntegrator(f_coeff)); }
-   //    else { b.AddDomainIntegrator(new VectorFEDomainLFIntegrator(f_vec_coeff)); }
-   //    if (L2)
-   //    {
-   //       // DG boundary conditions are enforced weakly with this integrator.
-   //       b.AddBdrFaceIntegrator(new DGDirichletLFIntegrator(u_coeff, -1.0, kappa));
-   //    }
-   //    b.Assemble();
-
-   //    GridFunction x(&fes);
-   //    if (H1 || L2) { x.ProjectCoefficient(u_coeff);}
-   //    else { x.ProjectCoefficient(u_vec_coeff); }
-
-   //    Vector X, B;
-   //    OperatorHandle A;
-   //    a.FormLinearSystem(ess_dofs, x, b, A, X, B);
-
-   // #ifdef MFEM_USE_SUITESPARSE
-   //    LORSolver<UMFPackSolver> solv_lor(a, ess_dofs);
-   // #else
-   //    LORSolver<GSSmoother> solv_lor(a, ess_dofs);
-   // #endif
-
-   //    CGSolver cg;
-   //    cg.SetAbsTol(0.0);
-   //    cg.SetRelTol(1e-12);
-   //    cg.SetMaxIter(500);
-   //    cg.SetPrintLevel(1);
-   //    cg.SetOperator(*A);
-   //    cg.SetPreconditioner(solv_lor);
-   //    cg.Mult(B, X);
-
-   //    a.RecoverFEMSolution(X, b, x);
-
-   //    double er =
-   //       (H1 || L2) ? x.ComputeL2Error(u_coeff) : x.ComputeL2Error(u_vec_coeff);
-   //    cout << "L2 error: " << er << endl;
-
-   //    if (visualization)
-   //    {
-   //       // Save the solution and mesh to disk. The output can be viewed using
-   //       // GLVis as follows: "glvis -m mesh.mesh -g sol.gf"
-   //       x.Save("sol.gf");
-   //       mesh.Save("mesh.mesh");
-
-   //       // Also save the solution for visualization using ParaView
-   //       ParaViewDataCollection dc("LOR", &mesh);
-   //       dc.SetPrefixPath("ParaView");
-   //       dc.SetHighOrderOutput(true);
-   //       dc.SetLevelsOfDetail(order);
-   //       dc.RegisterField("u", &x);
-   //       dc.SetCycle(0);
-   //       dc.SetTime(0.0);
-   //       dc.Save();
-   //    }
+   if (Mpi::Root()) { cout << "MINRES Elapsed: " << tic_toc.RealTime() << '\n'; }
 
    return 0;
 }
