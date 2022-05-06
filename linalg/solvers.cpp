@@ -1597,6 +1597,13 @@ void MINRESSolver::SetOperator(const Operator &op)
    {
       u1.SetSize(width);
    }
+
+   v0.UseDevice(true);
+   v1.UseDevice(true);
+   w0.UseDevice(true);
+   w1.UseDevice(true);
+   q.UseDevice(true);
+   u1.UseDevice(true);
 }
 
 void MINRESSolver::Mult(const Vector &b, Vector &x) const
