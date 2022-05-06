@@ -46,6 +46,7 @@ ParMesh LoadParMesh(const char *mesh_file, int ser_ref = 0, int par_ref = 0)
 
 HypreParMatrix *DiagonalInverse(Vector &diag_vec, ParFiniteElementSpace &fes)
 {
+   diag_vec.HostReadWrite();
    for (int i=0; i<diag_vec.Size(); ++i) { diag_vec[i] = 1.0/diag_vec[i]; }
    SparseMatrix diag_inv(diag_vec);
 
@@ -68,12 +69,15 @@ int main(int argc, char *argv[])
    Hypre::Init();
 
    const char *mesh_file = "../../data/star.mesh";
+   const char *device_config = "cpu";
    int ser_ref = 1;
    int par_ref = 1;
    int order = 3;
    bool visualization = true;
 
    OptionsParser args(argc, argv);
+   args.AddOption(&device_config, "-d", "--device",
+                  "Device configuration string, see Device::Configure().");
    args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use.");
    args.AddOption(&ser_ref, "-rs", "--serial-refine",
                   "Number of times to refine the mesh in serial.");
@@ -84,6 +88,9 @@ int main(int argc, char *argv[])
                   "--no-visualization",
                   "Enable or disable GLVis visualization.");
    args.ParseCheck();
+
+   Device device(device_config);
+   if (Mpi::Root()) { device.Print(); }
 
    ParMesh mesh = LoadParMesh(mesh_file, ser_ref, par_ref);
    const int dim = mesh.Dimension();
@@ -135,11 +142,12 @@ int main(int argc, char *argv[])
    mass_l2.Finalize();
    unique_ptr<HypreParMatrix> W(mass_l2.ParallelAssemble());
 
-   ParBilinearForm mass_l2_inv(&fes_l2);
-   mass_l2_inv.AddDomainIntegrator(new InverseIntegrator(new MassIntegrator));
-   mass_l2_inv.Assemble();
-   mass_l2_inv.Finalize();
-   unique_ptr<HypreParMatrix> W_inv(mass_l2_inv.ParallelAssemble());
+   // ParBilinearForm mass_l2_inv(&fes_l2);
+   // mass_l2_inv.AddDomainIntegrator(new InverseIntegrator(new MassIntegrator));
+   // mass_l2_inv.Assemble();
+   // mass_l2_inv.Finalize();
+   // unique_ptr<HypreParMatrix> W_inv(mass_l2_inv.ParallelAssemble());
+   DGMassInverse_Direct W_inv(fes_l2);
 
    if (Mpi::Root()) { cout << "Done." << endl; }
 
@@ -152,7 +160,7 @@ int main(int argc, char *argv[])
    A_block.SetBlock(0, 0, M.Ptr());
    A_block.SetBlock(0, 1, Dt.get());
    A_block.SetBlock(1, 0, D.get());
-   A_block.SetBlock(1, 1, W_inv.get(), -1.0);
+   A_block.SetBlock(1, 1, &W_inv, -1.0);
 
    Vector M_diag(fes_rt.GetTrueVSize());
    mass_rt.AssembleDiagonal(M_diag);
@@ -164,14 +172,14 @@ int main(int argc, char *argv[])
    unique_ptr<HypreParMatrix> S;
    {
       unique_ptr<HypreParMatrix> D_Minv_Dt(RAP(M_diag_inv.get(), Dt.get()));
-      S.reset(ParAdd(D_Minv_Dt.get(), W_inv.get()));
+      S.reset(ParAdd(D_Minv_Dt.get(), W_diag_inv.get()));
    }
 
    HypreBoomerAMG S_inv(*S);
    S_inv.SetPrintLevel(0);
 
    BlockDiagonalPreconditioner D_prec(offsets);
-   D_prec.SetDiagonalBlock(0, M_diag_inv.get());
+   D_prec.SetDiagonalBlock(0, &M_jacobi);
    D_prec.SetDiagonalBlock(1, &S_inv);
 
    BlockVector X_block(offsets), B_block(offsets);
