@@ -197,6 +197,12 @@ int main(int argc, char *argv[])
    x = 0.0;
    OperatorHandle A;
    Vector X, B;
+
+   // X.SetSize(fes_rt.GetTrueVSize());
+   // X = 0.0;
+   // B.SetSize(fes_rt.GetTrueVSize());
+   // B.Randomize(1);
+
    a.FormLinearSystem(ess_dofs, x, b, A, X, B);
    HypreADS ads(*A.As<HypreParMatrix>(), &fes_rt);
 
@@ -215,7 +221,15 @@ int main(int argc, char *argv[])
    tic_toc.Stop();
    if (Mpi::Root()) { cout << "CG Elapsed:     " << tic_toc.RealTime() << '\n'; }
 
-   B_block.GetBlock(0) = B;
+   {
+      Vector &B0 = B_block.GetBlock(0);
+      B.HostRead();
+      B0.HostWrite();
+      for (int i = 0; i < B0.Size(); ++i)
+      {
+         B0[i] = B[i];
+      }
+   }
    B_block.GetBlock(1) = 0.0;
 
    MINRESSolver minres(MPI_COMM_WORLD);
@@ -233,7 +247,15 @@ int main(int argc, char *argv[])
    tic_toc.Stop();
    if (Mpi::Root()) { cout << "MINRES Elapsed: " << tic_toc.RealTime() << '\n'; }
 
-   X -= X_block.GetBlock(0);
+   {
+      Vector &X0 = X_block;
+      X.HostReadWrite();
+      X0.HostRead();
+      for (int i = 0; i < X.Size(); ++i)
+      {
+         X[i] -= X0[i];
+      }
+   }
    double error = X.Normlinf();
    if (Mpi::Root()) { cout << "Error: " << error << '\n'; }
 
