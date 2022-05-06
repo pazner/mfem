@@ -34,16 +34,18 @@ void MakeTranspose(SparseMatrix &A, SparseMatrix &B)
    delete tmp;
 }
 
-ParMesh LoadParMesh(const char *mesh_file)
+ParMesh LoadParMesh(const char *mesh_file, int ser_ref = 0, int par_ref = 0)
 {
    Mesh serial_mesh = Mesh::LoadFromFile(mesh_file);
-   return ParMesh(MPI_COMM_WORLD, serial_mesh);
+   for (int i = 0; i < ser_ref; ++i) { serial_mesh.UniformRefinement(); }
+   ParMesh mesh(MPI_COMM_WORLD, serial_mesh);
+   serial_mesh.Clear();
+   for (int i = 0; i < par_ref; ++i) { mesh.UniformRefinement(); }
+   return mesh;
 }
 
-HypreParMatrix *DiagonalInverse(HypreParMatrix &A, ParFiniteElementSpace &fes)
+HypreParMatrix *DiagonalInverse(Vector &diag_vec, ParFiniteElementSpace &fes)
 {
-   Vector diag_vec;
-   A.GetDiag(diag_vec);
    for (int i=0; i<diag_vec.Size(); ++i) { diag_vec[i] = 1.0/diag_vec[i]; }
    SparseMatrix diag_inv(diag_vec);
 
@@ -53,30 +55,39 @@ HypreParMatrix *DiagonalInverse(HypreParMatrix &A, ParFiniteElementSpace &fes)
    return new HypreParMatrix(D); // make a deep copy
 }
 
+HypreParMatrix *DiagonalInverse(HypreParMatrix &A, ParFiniteElementSpace &fes)
+{
+   Vector diag_vec;
+   A.GetDiag(diag_vec);
+   return DiagonalInverse(diag_vec, fes);
+}
+
 int main(int argc, char *argv[])
 {
    Mpi::Init(argc, argv);
    Hypre::Init();
 
    const char *mesh_file = "../../data/star.mesh";
-   int ref_levels = 1;
+   int ser_ref = 1;
+   int par_ref = 1;
    int order = 3;
    bool visualization = true;
 
    OptionsParser args(argc, argv);
    args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use.");
-   args.AddOption(&ref_levels, "-r", "--refine",
-                  "Number of times to refine the mesh uniformly.");
+   args.AddOption(&ser_ref, "-rs", "--serial-refine",
+                  "Number of times to refine the mesh in serial.");
+   args.AddOption(&par_ref, "-rp", "--parallel-refine",
+                  "Number of times to refine the mesh in parallel.");
    args.AddOption(&order, "-o", "--order", "Polynomial degree.");
    args.AddOption(&visualization, "-vis", "--visualization", "-no-vis",
                   "--no-visualization",
                   "Enable or disable GLVis visualization.");
    args.ParseCheck();
 
-   ParMesh mesh = LoadParMesh(mesh_file);
+   ParMesh mesh = LoadParMesh(mesh_file, ser_ref, par_ref);
    const int dim = mesh.Dimension();
    MFEM_VERIFY(dim == 2 || dim == 3, "Spatial dimension must be 2 or 3.");
-   for (int l = 0; l < ref_levels; l++) { mesh.UniformRefinement(); }
 
    VectorFunctionCoefficient f_vec_coeff(dim, f_vec), u_vec_coeff(dim, u_vec);
 
@@ -113,8 +124,8 @@ int main(int argc, char *argv[])
 
    ParBilinearForm mass_rt(&fes_rt);
    mass_rt.AddDomainIntegrator(new VectorFEMassIntegrator);
+   mass_rt.SetAssemblyLevel(AssemblyLevel::PARTIAL);
    mass_rt.Assemble();
-   mass_rt.Finalize();
    OperatorHandle M;
    mass_rt.FormSystemMatrix(ess_dofs, M);
 
@@ -143,10 +154,11 @@ int main(int argc, char *argv[])
    A_block.SetBlock(1, 0, D.get());
    A_block.SetBlock(1, 1, W_inv.get(), -1.0);
 
-   HypreSmoother M_jacobi(*M.As<HypreParMatrix>(), HypreSmoother::Jacobi);
+   Vector M_diag(fes_rt.GetTrueVSize());
+   mass_rt.AssembleDiagonal(M_diag);
+   OperatorJacobiSmoother M_jacobi(M_diag, ess_dofs);
 
-   unique_ptr<HypreParMatrix> M_diag_inv(DiagonalInverse(*M.As<HypreParMatrix>(),
-                                                         fes_rt));
+   unique_ptr<HypreParMatrix> M_diag_inv(DiagonalInverse(M_diag, fes_rt));
    unique_ptr<HypreParMatrix> W_diag_inv(DiagonalInverse(*W, fes_l2));
 
    unique_ptr<HypreParMatrix> S;
