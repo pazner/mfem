@@ -73,7 +73,7 @@ int main(int argc, char *argv[])
    int ser_ref = 1;
    int par_ref = 1;
    int order = 3;
-   bool visualization = true;
+   bool sanity_check = false;
 
    OptionsParser args(argc, argv);
    args.AddOption(&device_config, "-d", "--device",
@@ -84,9 +84,8 @@ int main(int argc, char *argv[])
    args.AddOption(&par_ref, "-rp", "--parallel-refine",
                   "Number of times to refine the mesh in parallel.");
    args.AddOption(&order, "-o", "--order", "Polynomial degree.");
-   args.AddOption(&visualization, "-vis", "--visualization", "-no-vis",
-                  "--no-visualization",
-                  "Enable or disable GLVis visualization.");
+   args.AddOption(&sanity_check, "-s", "--sanity-check", "-no-s",
+                  "--no-sanity-check", "Enable or disable sanity check.");
    args.ParseCheck();
 
    Device device(device_config);
@@ -118,9 +117,27 @@ int main(int argc, char *argv[])
       }
    }
 
-   Array<int> ess_dofs;
+   Array<int> ess_dofs, empty;
    fes_rt.GetBoundaryTrueDofs(ess_dofs);
 
+   // Form the 2x2 block system
+   //
+   //     [ M    D^t   ]
+   //     [ D  -W^{-1} ]
+   //
+   // where M is the RT mass matrix, D is the discrete divergence operator,
+   // and W is the L2 mass matrix.
+
+   // Form M
+   ParBilinearForm mass_rt(&fes_rt);
+   mass_rt.AddDomainIntegrator(new VectorFEMassIntegrator);
+   mass_rt.SetAssemblyLevel(AssemblyLevel::PARTIAL);
+   mass_rt.Assemble();
+   OperatorHandle M;
+   mass_rt.FormSystemMatrix(ess_dofs, M);
+
+   // Form D
+   // TODO: replace this with the matrix assembled by DiscreteDivergence
    ParDiscreteLinearOperator div(&fes_rt, &fes_l2);
    div.AddDomainInterpolator(new DivergenceInterpolator);
    div.Assemble();
@@ -129,25 +146,11 @@ int main(int argc, char *argv[])
    unique_ptr<HypreParMatrix> De(D->EliminateCols(ess_dofs));
    unique_ptr<HypreParMatrix> Dt(D->Transpose());
 
-   ParBilinearForm mass_rt(&fes_rt);
-   mass_rt.AddDomainIntegrator(new VectorFEMassIntegrator);
-   mass_rt.SetAssemblyLevel(AssemblyLevel::PARTIAL);
-   mass_rt.Assemble();
-   OperatorHandle M;
-   mass_rt.FormSystemMatrix(ess_dofs, M);
-
-   ParBilinearForm mass_l2(&fes_l2);
-   mass_l2.AddDomainIntegrator(new MassIntegrator);
-   mass_l2.Assemble();
-   mass_l2.Finalize();
-   unique_ptr<HypreParMatrix> W(mass_l2.ParallelAssemble());
-
-   // ParBilinearForm mass_l2_inv(&fes_l2);
-   // mass_l2_inv.AddDomainIntegrator(new InverseIntegrator(new MassIntegrator));
-   // mass_l2_inv.Assemble();
-   // mass_l2_inv.Finalize();
-   // unique_ptr<HypreParMatrix> W_inv(mass_l2_inv.ParallelAssemble());
-   DGMassInverse_Direct W_inv(fes_l2);
+   // Form W^{-1}
+   unique_ptr<Solver> W_inv;
+   // if (order <= 2) { W_inv.reset(new DGMassInverse_Direct(fes_l2)); }
+   // else { W_inv.reset(new DGMassInverse(fes_l2)); }
+   W_inv.reset(new DGMassInverse_Direct(fes_l2));
 
    if (Mpi::Root()) { cout << "Done." << endl; }
 
@@ -160,21 +163,49 @@ int main(int argc, char *argv[])
    A_block.SetBlock(0, 0, M.Ptr());
    A_block.SetBlock(0, 1, Dt.get());
    A_block.SetBlock(1, 0, D.get());
-   A_block.SetBlock(1, 1, &W_inv, -1.0);
+   A_block.SetBlock(1, 1, W_inv.get(), -1.0);
 
+
+   // We precondition the 2x2 block system defined above with the block-diagonal
+   // preconditioner
+   //
+   //     [ M^{-1}     0   ]
+   //     [   0     S^{-1} ]
+   //
+   // where M^{-1} is approximated by the reciprocal of the diagonal of M,
+   // and S^{-1} is approximate by one AMG V-cycle applied to the approximate
+   // Schur complement S, given by
+   //
+   //     S = W^{-1} + D M^{-1} D^t
+   //
+   // where W^{-1} is the recriprocal of the diagonal of W, and M^{-1} is the
+   // reciprocal of the diagonal of M.
+
+   // Form the diagonal of M
    Vector M_diag(fes_rt.GetTrueVSize());
    mass_rt.AssembleDiagonal(M_diag);
    OperatorJacobiSmoother M_jacobi(M_diag, ess_dofs);
 
-   unique_ptr<HypreParMatrix> M_diag_inv(DiagonalInverse(M_diag, fes_rt));
-   unique_ptr<HypreParMatrix> W_diag_inv(DiagonalInverse(*W, fes_l2));
+   // Form the diagonal of W
+   Vector W_diag(fes_l2.GetTrueVSize());
+   {
+      ParBilinearForm mass_l2(&fes_l2);
+      mass_l2.AddDomainIntegrator(new MassIntegrator);
+      mass_l2.SetAssemblyLevel(AssemblyLevel::PARTIAL);
+      mass_l2.Assemble();
+      mass_l2.AssembleDiagonal(W_diag);
+   }
+   unique_ptr<HypreParMatrix> W_diag_inv(DiagonalInverse(W_diag, fes_l2));
 
+   // Form the approximate Schur complement
    unique_ptr<HypreParMatrix> S;
    {
+      unique_ptr<HypreParMatrix> M_diag_inv(DiagonalInverse(M_diag, fes_rt));
       unique_ptr<HypreParMatrix> D_Minv_Dt(RAP(M_diag_inv.get(), Dt.get()));
       S.reset(ParAdd(D_Minv_Dt.get(), W_diag_inv.get()));
    }
 
+   // Create the block-diagonal preconditioner
    HypreBoomerAMG S_inv(*S);
    S_inv.SetPrintLevel(0);
 
@@ -185,51 +216,7 @@ int main(int argc, char *argv[])
    BlockVector X_block(offsets), B_block(offsets);
    X_block = 0.0;
 
-   ParBilinearForm a(&fes_rt);
-   a.AddDomainIntegrator(new DivDivIntegrator);
-   a.AddDomainIntegrator(new VectorFEMassIntegrator);
-   a.Assemble();
-   a.Finalize();
-
-   ParGridFunction x(&fes_rt);
-   ParLinearForm b(&fes_rt);
-   b.Randomize(1);
-   x = 0.0;
-   OperatorHandle A;
-   Vector X, B;
-
-   // X.SetSize(fes_rt.GetTrueVSize());
-   // X = 0.0;
-   // B.SetSize(fes_rt.GetTrueVSize());
-   // B.Randomize(1);
-
-   a.FormLinearSystem(ess_dofs, x, b, A, X, B);
-   HypreADS ads(*A.As<HypreParMatrix>(), &fes_rt);
-
-   CGSolver cg(MPI_COMM_WORLD);
-   cg.SetAbsTol(0.0);
-   cg.SetRelTol(1e-12);
-   cg.SetMaxIter(500);
-   cg.SetPrintLevel(1);
-   cg.SetPrintLevel(IterativeSolver::PrintLevel().Summary().FirstAndLast());
-   cg.SetOperator(*A);
-   cg.SetPreconditioner(ads);
-
-   tic_toc.Clear();
-   tic_toc.Start();
-   cg.Mult(B, X);
-   tic_toc.Stop();
-   if (Mpi::Root()) { cout << "CG Elapsed:     " << tic_toc.RealTime() << '\n'; }
-
-   {
-      Vector &B0 = B_block.GetBlock(0);
-      B.HostRead();
-      B0.HostWrite();
-      for (int i = 0; i < B0.Size(); ++i)
-      {
-         B0[i] = B[i];
-      }
-   }
+   B_block.GetBlock(0).Randomize(1);
    B_block.GetBlock(1) = 0.0;
 
    MINRESSolver minres(MPI_COMM_WORLD);
@@ -247,17 +234,76 @@ int main(int argc, char *argv[])
    tic_toc.Stop();
    if (Mpi::Root()) { cout << "MINRES Elapsed: " << tic_toc.RealTime() << '\n'; }
 
+   // If the sanity check is enabled, compare the solution of block 2x2 system
+   // to that of the RT div-div system
+   if (sanity_check)
    {
-      Vector &X0 = X_block;
-      X.HostReadWrite();
-      X0.HostRead();
-      for (int i = 0; i < X.Size(); ++i)
+      if (Mpi::Root()) { cout << "\nPerforming sanity check...\n" << endl; }
+
+      ParBilinearForm a(&fes_rt);
+      a.AddDomainIntegrator(new DivDivIntegrator);
+      a.AddDomainIntegrator(new VectorFEMassIntegrator);
+      a.Assemble();
+      a.Finalize();
+
+      ParGridFunction x(&fes_rt);
+      ParLinearForm b(&fes_rt);
+      b = 0.0;
+      x = 0.0;
+      OperatorHandle A;
+
+      a.FormSystemMatrix(ess_dofs, A);
+
+      Vector X(offsets[1]), B(offsets[1]);
+      X = 0.0;
       {
-         X[i] -= X0[i];
+         Vector &B0 = B_block.GetBlock(0);
+         B0.HostRead();
+         B.HostWrite();
+         for (int i = 0; i < B0.Size(); ++i)
+         {
+            B[i] = B0[i];
+         }
       }
+
+      unique_ptr<Solver> amg;
+      if (dim == 3)
+      {
+         amg.reset(new HypreADS(*A.As<HypreParMatrix>(), &fes_rt));
+      }
+      else
+      {
+         amg.reset(new HypreAMS(*A.As<HypreParMatrix>(), &fes_rt));
+      }
+
+      CGSolver cg(MPI_COMM_WORLD);
+      cg.SetAbsTol(0.0);
+      cg.SetRelTol(1e-12);
+      cg.SetMaxIter(500);
+      cg.SetPrintLevel(1);
+      cg.SetPrintLevel(IterativeSolver::PrintLevel().Summary().FirstAndLast());
+      cg.SetOperator(*A);
+      cg.SetPreconditioner(*amg);
+
+      tic_toc.Clear();
+      tic_toc.Start();
+      cg.Mult(B, X);
+      tic_toc.Stop();
+      if (Mpi::Root()) { cout << "CG Elapsed:     " << tic_toc.RealTime() << '\n'; }
+
+      {
+         Vector &X0 = X_block;
+         X.HostReadWrite();
+         X0.HostRead();
+         for (int i = 0; i < X.Size(); ++i)
+         {
+            X[i] -= X0[i];
+         }
+      }
+
+      double error = X.Normlinf();
+      if (Mpi::Root()) { cout << "Error: " << error << '\n'; }
    }
-   double error = X.Normlinf();
-   if (Mpi::Root()) { cout << "Error: " << error << '\n'; }
 
    return 0;
 }
