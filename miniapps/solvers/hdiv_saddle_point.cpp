@@ -148,9 +148,8 @@ int main(int argc, char *argv[])
 
    // Form W^{-1}
    unique_ptr<Solver> W_inv;
-   // if (order <= 2) { W_inv.reset(new DGMassInverse_Direct(fes_l2)); }
-   // else { W_inv.reset(new DGMassInverse(fes_l2)); }
-   W_inv.reset(new DGMassInverse_Direct(fes_l2));
+   if (order <= 2) { W_inv.reset(new DGMassInverse_Direct(fes_l2)); }
+   else { W_inv.reset(new DGMassInverse(fes_l2)); }
 
    if (Mpi::Root()) { cout << "Done." << endl; }
 
@@ -223,7 +222,6 @@ int main(int argc, char *argv[])
    minres.SetAbsTol(0.0);
    minres.SetRelTol(1e-12);
    minres.SetMaxIter(500);
-   minres.SetPrintLevel(1);
    minres.SetPrintLevel(IterativeSolver::PrintLevel().Summary().FirstAndLast());
    minres.SetOperator(A_block);
    minres.SetPreconditioner(D_prec);
