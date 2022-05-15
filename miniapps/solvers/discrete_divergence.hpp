@@ -129,6 +129,49 @@ void EliminateColumns(HypreParMatrix &D, const Array<int> &ess_dofs)
    mfem_hypre_TFree_host(eliminate_col_offd);
 }
 
+void FormElementToFace2D(int order, Array<int> &element2face)
+{
+   const int o = order;
+   const int op1 = order + 1;
+
+   for (int iy = 0; iy < o; ++iy)
+   {
+      for (int ix = 0; ix < o; ++ix)
+      {
+         const int ivol = ix + iy*o;
+         element2face[0 + 4*ivol] = -1 - (ix + iy*op1); // left, x = 0
+         element2face[1 + 4*ivol] = ix+1 + iy*op1; // right, x = 1
+         element2face[2 + 4*ivol] = -1 - (ix + iy*o + o*op1); // bottom, y = 0
+         element2face[3 + 4*ivol] = ix + (iy+1)*o + o*op1; // top, y = 1
+      }
+   }
+}
+
+void FormElementToFace3D(int order, Array<int> &element2face)
+{
+   const int o = order;
+   const int op1 = order + 1;
+
+   const int n = o*o*op1; // number of faces per dimension
+
+   for (int iz = 0; iz < o; ++iz)
+   {
+      for (int iy = 0; iy < o; ++iy)
+      {
+         for (int ix = 0; ix < o; ++ix)
+         {
+            const int ivol = ix + iy*o + iz*o*o;
+            element2face[0 + 6*ivol] = -1 - (ix + iy*op1 + iz*o*op1); // x = 0
+            element2face[1 + 6*ivol] = ix+1 + iy*op1 + iz*o*op1; // x = 1
+            element2face[2 + 6*ivol] = -1 - (ix + iy*o + iz*o*op1 + n); // y = 0
+            element2face[3 + 6*ivol] = ix + (iy+1)*o + iz*o*op1 + n; // y = 1
+            element2face[4 + 6*ivol] = -1 - (ix + iy*o + iz*o*o + 2*n); // z = 0
+            element2face[5 + 6*ivol] = ix + iy*o + (iz+1)*o*o + 2*n; // z = 1
+         }
+      }
+   }
+}
+
 HypreParMatrix *FormDiscreteDivergenceMatrix(ParFiniteElementSpace &fes_rt,
                                              ParFiniteElementSpace &fes_l2,
                                              const Array<int> &ess_dofs)
@@ -147,45 +190,26 @@ HypreParMatrix *FormDiscreteDivergenceMatrix(ParFiniteElementSpace &fes_rt,
    // Each row always has two nonzeros
    const int nnz = n_l2*2*dim;
    auto I = D_local.HostWriteI();
-   for (int i = 0; i < n_l2 + 1; ++i)
-   {
-      I[i] = 2*dim*i;
-   }
+   MFEM_FORALL(i, n_l2+1, I[i] = 2*dim*i; );
+
+   const int nel_ho = mesh.GetNE();
+   const int nface_per_el = dim*pow(order, dim-1)*(order+1);
+   const int nvol_per_el = pow(order, dim);
 
    // element2face is a mapping of size (2*dim, nvol_per_el) such that with a
    // macro element, subelement i (in lexicographic ordering) has faces (also
    // in lexicographic order) given by the entries (j, i).
-
-   const int o = order;
-   const int op1 = order + 1;
-
    Array<int> element2face;
-   element2face.SetSize(2*dim*pow(o, dim));
+   element2face.SetSize(2*dim*nvol_per_el);
 
-   MFEM_VERIFY(dim == 2, "Not yet 3D.");
-
-   for (int iy = 0; iy < o; ++iy)
-   {
-      for (int ix = 0; ix < o; ++ix)
-      {
-         int ivol = ix + iy*o;
-         element2face[0 + 4*ivol] = -1 - (ix + iy*op1);
-         element2face[1 + 4*ivol] = ix+1 + iy*op1;
-         element2face[2 + 4*ivol] = -1 - (ix + iy*o + o*op1);
-         element2face[3 + 4*ivol] = ix + (iy+1)*o + o*op1;
-      }
-   }
+   if (dim == 2) { FormElementToFace2D(order, element2face); }
+   else if (dim == 3) { FormElementToFace3D(order, element2face); }
+   else { MFEM_ABORT("Unsupported dimension.") }
 
    const ElementDofOrdering ordering = ElementDofOrdering::LEXICOGRAPHIC;
    const auto *R_rt = dynamic_cast<const ElementRestriction*>(
                          fes_rt.GetElementRestriction(ordering));
-
-   const int nel_ho = mesh.GetNE();
-   const int nface_per_el = dim*order*(order+1);
-   const int nvol_per_el = pow(order, dim);
-
    const auto gather_rt = Reshape(R_rt->gather_map.Read(), nface_per_el, nel_ho);
-
    const auto e2f = Reshape(element2face.Read(), 2*dim, nvol_per_el);
 
    // Fill J and data
@@ -196,7 +220,7 @@ HypreParMatrix *FormDiscreteDivergenceMatrix(ParFiniteElementSpace &fes_rt,
    auto V = D_local.HostWriteData();
 
    // Loop over L2 DOFs
-   for (int i = 0; i < n_l2; ++i)
+   MFEM_FORALL(i, n_l2,
    {
       const int i_loc = i%nvol_per_el;
       const int i_el = i/nvol_per_el;
@@ -215,7 +239,7 @@ HypreParMatrix *FormDiscreteDivergenceMatrix(ParFiniteElementSpace &fes_rt,
          J[k + 2*dim*i] = j;
          V[k + 2*dim*i] = sgn1*sgn2;
       }
-   }
+   });
 
    // Create a block diagonal parallel matrix
    OperatorHandle D_diag(Operator::Hypre_ParCSR);
