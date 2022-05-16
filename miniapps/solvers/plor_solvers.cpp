@@ -84,7 +84,7 @@ int main(int argc, char *argv[])
    int order = 3;
    const char *fe = "h";
    const char *device_config = "cpu";
-   bool visualization = true;
+   bool visualization = false;
 
    OptionsParser args(argc, argv);
    args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use.");
@@ -120,8 +120,10 @@ int main(int argc, char *argv[])
    MFEM_VERIFY(dim == 2 || dim == 3, "Spatial dimension must be 2 or 3.");
    for (int l = 0; l < ser_ref_levels; l++) { serial_mesh.UniformRefinement(); }
    ParMesh mesh(MPI_COMM_WORLD, serial_mesh);
-   for (int l = 0; l < par_ref_levels; l++) { mesh.UniformRefinement(); }
    serial_mesh.Clear();
+   for (int l = 0; l < par_ref_levels; l++) { mesh.UniformRefinement(); }
+
+   std::cout << "Done with mesh" << std::endl;
 
    if (mesh.ncmesh && (RT || ND))
    { MFEM_ABORT("LOR AMS and ADS solvers are not supported with AMR meshes."); }
@@ -165,25 +167,29 @@ int main(int argc, char *argv[])
    // TODO: L2 diffusion not implemented with partial assembly
    if (!L2) { a.SetAssemblyLevel(AssemblyLevel::PARTIAL); }
    a.Assemble();
+   std::cout << "Done assembly." << std::endl;
 
    ParLinearForm b(&fes);
-   if (H1 || L2) { b.AddDomainIntegrator(new DomainLFIntegrator(f_coeff)); }
+   b.UseDevice();
+   /*if (H1 || L2) { b.AddDomainIntegrator(new DomainLFIntegrator(f_coeff)); }
    else { b.AddDomainIntegrator(new VectorFEDomainLFIntegrator(f_vec_coeff)); }
    if (L2)
    {
       // DG boundary conditions are enforced weakly with this integrator.
       b.AddBdrFaceIntegrator(new DGDirichletLFIntegrator(u_coeff, -1.0, kappa));
    }
-   b.Assemble();
+   b.Assemble();*/
+   b.Randomize(1);
+   std::cout << "Done RHS." << std::endl;
 
    ParGridFunction x(&fes);
-   if (H1 || L2) { x.ProjectCoefficient(u_coeff);}
-   else { x.ProjectCoefficient(u_vec_coeff); }
+   x = 0.0;
+
+   std::cout << "Done coefficient." << std::endl;
 
    Vector X, B;
    OperatorHandle A;
    a.FormLinearSystem(ess_dofs, x, b, A, X, B);
-
 
    unique_ptr<Solver> solv_lor;
    if (H1 || L2)
@@ -192,7 +198,10 @@ int main(int argc, char *argv[])
    }
    else if (RT && dim == 3)
    {
+      tic_toc.Start();
       solv_lor.reset(new LORSolver<HypreADS>(a, ess_dofs));
+      tic_toc.Stop();
+      std::cout << "Assembly elapsed: " << tic_toc.RealTime() << std::endl;
    }
    else
    {
@@ -214,9 +223,9 @@ int main(int argc, char *argv[])
 
    a.RecoverFEMSolution(X, b, x);
 
-   double er =
+   /*double er =
       (H1 || L2) ? x.ComputeL2Error(u_coeff) : x.ComputeL2Error(u_vec_coeff);
-   if (Mpi::Root()) { cout << "L2 error: " << er << endl; }
+   if (Mpi::Root()) { cout << "L2 error: " << er << endl; }*/
 
    if (visualization)
    {

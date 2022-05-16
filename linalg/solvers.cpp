@@ -817,7 +817,7 @@ void CGSolver::Mult(const Vector &b, Vector &x) const
       if (print_options.iterations)
       {
          mfem::out << "   Iteration : " << setw(3) << i << "  (B r, r) = "
-                   << betanom << '\n';
+                   << betanom << std::endl;
       }
 
       Monitor(i, betanom, r, x);
