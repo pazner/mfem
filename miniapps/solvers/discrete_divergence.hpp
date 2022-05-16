@@ -83,7 +83,7 @@ void EliminateColumns(HypreParMatrix &D, const Array<int> &ess_dofs)
 
    // Eliminate columns in the diagonal block
    {
-      Memory<int> col_mem(eliminate_col_diag, offd_ncols, false);
+      Memory<HYPRE_Int> col_mem(eliminate_col_diag, diag_ncols, false);
       const auto cols = col_mem.Read(GetHypreMemoryClass(), diag_ncols);
       const int nrows_diag = hypre_CSRMatrixNumRows(diag);
       const auto I = diag->i;
@@ -97,17 +97,17 @@ void EliminateColumns(HypreParMatrix &D, const Array<int> &ess_dofs)
             data[jj] *= 1 - cols[j];
          }
       });
+      col_mem.Delete();
    }
 
    // Wait for MPI communication to finish
-   Array<HYPRE_Int> cols_to_eliminate;
    hypre_ParCSRCommHandleDestroy(comm_handle);
    mfem_hypre_TFree_host(int_buf_data);
    mfem_hypre_TFree_host(eliminate_col_diag);
 
    // Eliminate columns in the off-diagonal block
    {
-      Memory<int> col_mem(eliminate_col_offd, offd_ncols, false);
+      Memory<HYPRE_Int> col_mem(eliminate_col_offd, offd_ncols, false);
       const auto cols = col_mem.Read(GetHypreMemoryClass(), offd_ncols);
       const int nrows_offd = hypre_CSRMatrixNumRows(offd);
       const auto I = offd->i;
@@ -124,6 +124,7 @@ void EliminateColumns(HypreParMatrix &D, const Array<int> &ess_dofs)
             data[jj] *= 1 - cols[j];
          }
       });
+      col_mem.Delete();
    }
 
    mfem_hypre_TFree_host(eliminate_col_offd);
@@ -189,7 +190,7 @@ HypreParMatrix *FormDiscreteDivergenceMatrix(ParFiniteElementSpace &fes_rt,
    D_local.GetMemoryI().New(n_l2 + 1);
    // Each row always has two nonzeros
    const int nnz = n_l2*2*dim;
-   auto I = D_local.HostWriteI();
+   auto I = D_local.WriteI();
    MFEM_FORALL(i, n_l2+1, I[i] = 2*dim*i; );
 
    const int nel_ho = mesh.GetNE();
@@ -216,8 +217,8 @@ HypreParMatrix *FormDiscreteDivergenceMatrix(ParFiniteElementSpace &fes_rt,
    D_local.GetMemoryJ().New(nnz);
    D_local.GetMemoryData().New(nnz);
 
-   auto J = D_local.HostWriteJ();
-   auto V = D_local.HostWriteData();
+   auto J = D_local.WriteJ();
+   auto V = D_local.WriteData();
 
    // Loop over L2 DOFs
    MFEM_FORALL(i, n_l2,
@@ -230,10 +231,8 @@ HypreParMatrix *FormDiscreteDivergenceMatrix(ParFiniteElementSpace &fes_rt,
          const int sjv_loc = e2f(k, i_loc);
          const int jv_loc = (sjv_loc >= 0) ? sjv_loc : -1 - sjv_loc;
          const int sgn1 = (sjv_loc >= 0) ? 1 : -1;
-         MFEM_ASSERT_KERNEL(k < nface_per_el, "");
          const int sj = gather_rt(jv_loc, i_el);
          const int j = (sj >= 0) ? sj : -1 - sj;
-         MFEM_ASSERT_KERNEL(j >= 0 && j < n_rt, "");
          const int sgn2 = (sj >= 0) ? 1 : -1;
 
          J[k + 2*dim*i] = j;
