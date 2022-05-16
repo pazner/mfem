@@ -203,22 +203,9 @@ int main(int argc, char *argv[])
    mass_rt.FormSystemMatrix(ess_dofs, M);
 
    // Form D
-   // TODO: replace this with the matrix assembled by DiscreteDivergence
-   ParDiscreteLinearOperator div(&fes_rt, &fes_l2);
-   div.AddDomainInterpolator(new DivergenceInterpolator);
-   div.Assemble();
-   div.Finalize();
-   unique_ptr<HypreParMatrix> D(div.ParallelAssemble());
-   unique_ptr<HypreParMatrix> De(D->EliminateCols(ess_dofs));
+   unique_ptr<HypreParMatrix> D(
+      FormDiscreteDivergenceMatrix(fes_rt, fes_l2, ess_dofs));
    unique_ptr<HypreParMatrix> Dt(D->Transpose());
-
-   HypreParMatrix *D2 = FormDiscreteDivergenceMatrix(fes_rt, fes_l2, ess_dofs);
-   D2->Print("D2.txt");
-   D->Print("D.txt");
-
-   TestSameMatrices(*D, *D2);
-
-   return 0;
 
    // Form W^{-1}
    unique_ptr<Solver> W_inv;
