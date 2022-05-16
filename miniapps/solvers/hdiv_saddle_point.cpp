@@ -131,6 +131,8 @@ HypreParMatrix *DiagonalInverse(HypreParMatrix &A, ParFiniteElementSpace &fes)
 
 int main(int argc, char *argv[])
 {
+   tic_toc.Start();
+
    Mpi::Init(argc, argv);
    Hypre::Init();
 
@@ -172,6 +174,14 @@ int main(int argc, char *argv[])
    L2_FECollection fec_l2(order-1, dim, b2, mt);
    ParFiniteElementSpace fes_l2(&mesh, &fec_l2);
 
+   tic_toc.Stop();
+   if (Mpi::Root())
+   {
+      cout << "Preamble: " << tic_toc.RealTime() << endl;
+   }
+
+   tic_toc.Clear();
+   tic_toc.Start();
    {
       HYPRE_BigInt ndofs_rt = fes_rt.GlobalTrueVSize();
       HYPRE_BigInt ndofs_l2 = fes_l2.GlobalTrueVSize();
@@ -212,7 +222,14 @@ int main(int argc, char *argv[])
    if (order <= 2) { W_inv.reset(new DGMassInverse_Direct(fes_l2)); }
    else { W_inv.reset(new DGMassInverse(fes_l2)); }
 
-   if (Mpi::Root()) { cout << "Done." << endl; }
+   tic_toc.Stop();
+   if (Mpi::Root())
+   {
+      cout << "Done. Elapsed: " << tic_toc.RealTime() << endl;
+   }
+   tic_toc.Clear();
+   tic_toc.Start();
+   cout << "Preconditioner setup... " << flush;
 
    Array<int> offsets(3);
    offsets[0] = 0;
@@ -278,6 +295,12 @@ int main(int argc, char *argv[])
 
    B_block.GetBlock(0).Randomize(1);
    B_block.GetBlock(1) = 0.0;
+
+   tic_toc.Stop();
+   if (Mpi::Root())
+   {
+      cout << "Done. Elapsed: " << tic_toc.RealTime() << endl;
+   }
 
    MINRESSolver minres(MPI_COMM_WORLD);
    minres.SetAbsTol(0.0);
