@@ -230,10 +230,10 @@ HypreParMatrix *FormDiscreteDivergenceMatrix(ParFiniteElementSpace &fes_rt,
          const int sjv_loc = e2f(k, i_loc);
          const int jv_loc = (sjv_loc >= 0) ? sjv_loc : -1 - sjv_loc;
          const int sgn1 = (sjv_loc >= 0) ? 1 : -1;
-         MFEM_VERIFY(k < nface_per_el, "");
+         MFEM_ASSERT_KERNEL(k < nface_per_el, "");
          const int sj = gather_rt(jv_loc, i_el);
          const int j = (sj >= 0) ? sj : -1 - sj;
-         MFEM_VERIFY(j >= 0 && j < n_rt, "");
+         MFEM_ASSERT_KERNEL(j >= 0 && j < n_rt, "");
          const int sgn2 = (sj >= 0) ? 1 : -1;
 
          J[k + 2*dim*i] = j;
