@@ -550,4 +550,47 @@ TEST_CASE("PA Diffusion", "[PartialAssembly], [CUDA]")
    test_pa_integrator<DiffusionIntegrator>();
 } // PA Diffusion test case
 
+
+TEST_CASE("RT Mass Smem")
+{
+   auto order = GENERATE(1, 2, 3, 4);
+   Mesh mesh = Mesh::MakeCartesian2D(10, 10, Element::QUADRILATERAL);
+   const int dim = mesh.Dimension();
+   RT_FECollection fec(order, dim, BasisType::GaussLobatto,
+                       BasisType::IntegratedGLL);
+   FiniteElementSpace fes(&mesh, &fec);
+   BilinearForm m1(&fes);
+   m1.AddDomainIntegrator(new VectorFEMassIntegrator);
+   m1.SetAssemblyLevel(AssemblyLevel::PARTIAL);
+   m1.Assemble();
+
+   BilinearForm m2(&fes);
+   m2.AddDomainIntegrator(new VectorFEMassIntegrator);
+   m2.Assemble();
+   m2.Finalize();
+
+   const int n = fes.GetTrueVSize();
+   GridFunction x(&fes);
+
+   VectorFunctionCoefficient coeff(2, [](const Vector &, Vector &u)
+   {
+      u[0] = 1.0;
+      u[1] = 1.0;
+   });
+
+   Vector b1(n), b2(n);
+   x.Randomize(1);
+   // x = 1.0;
+   // x.ProjectCoefficient(coeff);
+   b1 = 0.0;
+   b2 = 0.0;
+
+   m1.Mult(x, b1);
+   m2.Mult(x, b2);
+
+   b2 -= b1;
+   REQUIRE(b2.Normlinf() == MFEM_Approx(0.0));
+}
+
+
 } // namespace pa_kernels
