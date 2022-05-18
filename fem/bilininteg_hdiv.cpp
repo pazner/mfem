@@ -237,7 +237,7 @@ void SmemPAHdivMassApply2D(const int NE,
                            const int d1d = 0,
                            const int q1d = 0)
 {
-   constexpr static int VDIM = 2;
+   static constexpr int VDIM = 2;
 
    const int D1D = T_D1D ? T_D1D : d1d;
    const int Q1D = T_Q1D ? T_Q1D : q1d;
@@ -751,7 +751,7 @@ void SmemPAHdivMassApply3D(const int NE,
                            const int d1d = 0,
                            const int q1d = 0)
 {
-   constexpr static int VDIM = 3;
+   static constexpr int VDIM = 3;
 
    const int D1D = T_D1D ? T_D1D : d1d;
    const int Q1D = T_Q1D ? T_Q1D : q1d;
