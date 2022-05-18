@@ -243,11 +243,7 @@ void SmemPAHdivMassApply2D(const int NE,
    const int Q1D = T_Q1D ? T_Q1D : q1d;
 
    const int Q2 = Q1D*Q1D;
-   const int NX_NY = D1D*(D1D-1);
-
-   constexpr int MQ1 = T_Q1D ? T_Q1D : HDIV_MAX_Q1D;
-   constexpr int MD1 = T_D1D ? T_D1D : HDIV_MAX_D1D;
-   constexpr int MDQ = (MQ1 > MD1) ? MQ1 : MD1;
+   const int D2 = D1D*(D1D-1);
 
    MFEM_CONTRACT_VAR(Bot_);
    MFEM_CONTRACT_VAR(Bct_);
@@ -255,12 +251,19 @@ void SmemPAHdivMassApply2D(const int NE,
    const auto bo = Reshape(Bo_.Read(), Q1D, D1D-1);
    const auto bc = Reshape(Bc_.Read(), Q1D, D1D);
    const auto D = Reshape(op_.Read(), Q1D, Q1D, 3, NE);
-   const auto x = Reshape(x_.Read(), VDIM*(D1D-1)*D1D, NE);
-   auto y = Reshape(y_.ReadWrite(), VDIM*(D1D-1)*D1D, NE);
+   const auto x = Reshape(x_.Read(), VDIM*D2, NE);
+   auto y = Reshape(y_.ReadWrite(), VDIM*D2, NE);
 
    MFEM_FORALL_3D(e, NE, Q1D, Q1D, VDIM,
    {
       const int tidz = MFEM_THREAD_ID(z);
+
+      const int D1D = T_D1D ? T_D1D : d1d;
+      const int Q1D = T_Q1D ? T_Q1D : q1d;
+
+      constexpr int MQ1 = T_Q1D ? T_Q1D : HDIV_MAX_Q1D;
+      constexpr int MD1 = T_D1D ? T_D1D : HDIV_MAX_D1D;
+      constexpr int MDQ = (MQ1 > MD1) ? MQ1 : MD1;
 
       MFEM_SHARED double BoBot[MQ1*(MD1-1)];
       MFEM_SHARED double BcBct[MQ1*MD1];
@@ -280,9 +283,9 @@ void SmemPAHdivMassApply2D(const int NE,
       {
          MFEM_FOREACH_THREAD(i2,y,D1D-1)
          {
-            MFEM_FOREACH_THREAD(i1,y,D1D)
+            MFEM_FOREACH_THREAD(i1,x,D1D)
             {
-               const int i = i1 + i2*D1D + vd*(D1D-1)*D1D;
+               const int i = i1 + i2*D1D + vd*D2;
                X[i] = x(i,e);
             }
          }
@@ -310,7 +313,7 @@ void SmemPAHdivMassApply2D(const int NE,
       MFEM_FOREACH_THREAD(vd,z,VDIM)
       {
          const int nx = (vd == 0) ? D1D : D1D-1;
-         const int ny = (vd == 0) ? D1D-1 : D1D;
+         const int ny = (vd == 1) ? D1D : D1D-1;
          const double *Bx = (vd == 0) ? (double *)Bc : (double *)Bo;
          MFEM_FOREACH_THREAD(dy,y,ny)
          {
@@ -319,7 +322,7 @@ void SmemPAHdivMassApply2D(const int NE,
                double dq = 0.0;
                for (int dx = 0; dx < nx; ++dx)
                {
-                  dq += X[dx + dy*nx + vd*NX_NY]*Bx[dx + qx*nx];
+                  dq += X[dx + dy*nx + vd*D2]*Bx[dx + qx*nx];
                }
                DQ[qx + dy*Q1D + vd*Q2] = dq;
             }
@@ -328,8 +331,8 @@ void SmemPAHdivMassApply2D(const int NE,
       MFEM_SYNC_THREAD;
       MFEM_FOREACH_THREAD(vd,z,VDIM)
       {
-         const int ny = (vd == 0) ? D1D-1 : D1D;
-         const double *By = (vd == 0) ? (double *)Bo : (double *)Bc;
+         const int ny = (vd == 1) ? D1D : D1D-1;
+         const double *By = (vd == 1) ? (double *)Bc : (double *)Bo;
          MFEM_FOREACH_THREAD(qy,y,Q1D)
          {
             MFEM_FOREACH_THREAD(qx,x,Q1D)
@@ -363,7 +366,7 @@ void SmemPAHdivMassApply2D(const int NE,
             }
          }
       }
-      MFEM_SYNC_THREAD;
+      MFEM_SYNC_THREAD; // TODO: can remove this sync?
       // Load Bot and Bct into shared memory
       if (tidz == 0)
       {
@@ -405,8 +408,8 @@ void SmemPAHdivMassApply2D(const int NE,
       MFEM_FOREACH_THREAD(vd,z,VDIM)
       {
          const int nx = (vd == 0) ? D1D : D1D-1;
-         const int ny = (vd == 0) ? D1D-1 : D1D;
-         const double *Byt = (vd == 0) ? (double *)Bot : (double *)Bct;
+         const int ny = (vd == 1) ? D1D : D1D-1;
+         const double *Byt = (vd == 1) ? (double *)Bct : (double *)Bot;
          MFEM_FOREACH_THREAD(dy,y,ny)
          {
             MFEM_FOREACH_THREAD(dx,x,nx)
@@ -416,10 +419,11 @@ void SmemPAHdivMassApply2D(const int NE,
                {
                   dd += QD[dx + qy*nx + vd*Q2]*Byt[qy + dy*Q1D];
                }
-               y(dx + dy*nx + vd*NX_NY,e) += dd;
+               y(dx + dy*nx + vd*D2,e) += dd;
             }
          }
       }
+      MFEM_SYNC_THREAD;
    });
 }
 
@@ -755,10 +759,6 @@ void SmemPAHdivMassApply3D(const int NE,
    const int Q3 = Q1D*Q1D*Q1D;
    const int D3 = D1D*(D1D-1)*(D1D-1);
 
-   constexpr int MQ1 = T_Q1D ? T_Q1D : HDIV_MAX_Q1D;
-   constexpr int MD1 = T_D1D ? T_D1D : HDIV_MAX_D1D;
-   constexpr int MDQ = (MQ1 > MD1) ? MQ1 : MD1;
-
    MFEM_CONTRACT_VAR(Bot_);
    MFEM_CONTRACT_VAR(Bct_);
 
@@ -771,6 +771,13 @@ void SmemPAHdivMassApply3D(const int NE,
    MFEM_FORALL_3D(e, NE, Q1D, Q1D, VDIM,
    {
       const int tidz = MFEM_THREAD_ID(z);
+
+      const int D1D = T_D1D ? T_D1D : d1d;
+      const int Q1D = T_Q1D ? T_Q1D : q1d;
+
+      constexpr int MQ1 = T_Q1D ? T_Q1D : HDIV_MAX_Q1D;
+      constexpr int MD1 = T_D1D ? T_D1D : HDIV_MAX_D1D;
+      constexpr int MDQ = (MQ1 > MD1) ? MQ1 : MD1;
 
       MFEM_SHARED double BoBot[MQ1*(MD1-1)];
       MFEM_SHARED double BcBct[MQ1*MD1];
