@@ -2663,6 +2663,8 @@ public:
    virtual void AssembleDiagonalPA(Vector& diag);
 
    const Coefficient *GetCoefficient() const { return Q; }
+
+   bool fallback = false;
 };
 
 /** Integrator for (Q div u, p) where u=(v1,...,vn) and all vi are in the same

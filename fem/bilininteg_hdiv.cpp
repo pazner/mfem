@@ -1086,7 +1086,7 @@ void PAHdivMassApply(const int dim,
                      Vector &y)
 {
    const int id = (D1D << 4) | Q1D;
-   printf("dim = %d, id = %0x\n", dim, id);
+   // printf("dim = %d, id = %0x\n", dim, id);
 
    if (dim == 2)
    {
