@@ -45,7 +45,7 @@ struct RTMassBenchmark
       p(p_),
       N(N_),
       mesh(CreateKershawMesh(N,eps_)),
-      fec(p, dim),
+      fec(p-1, dim), // RT space of index p-1
       fes(&mesh, &fec),
       n(fes.GetTrueVSize()),
       integ(new VectorFEMassIntegrator),
@@ -93,7 +93,7 @@ struct RTMassBenchmark
 // The different sides of the mesh
 #define N_SIDES bm::CreateDenseRange(2,30,2)
 
-#define MAX_NDOFS 2*1024*1024
+#define MAX_NDOFS 3*2*1024*1024
 
 /// Kernels definitions and registrations
 #define Benchmark(op_name, suffix, eps)\
