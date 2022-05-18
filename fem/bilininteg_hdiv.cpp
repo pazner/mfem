@@ -735,6 +735,344 @@ void PAHdivMassApply3D(const int D1D,
    }); // end of element loop
 }
 
+template<int T_D1D = 0, int T_Q1D = 0>
+void SmemPAHdivMassApply3D(const int NE,
+                           const Array<double> &Bo_,
+                           const Array<double> &Bc_,
+                           const Array<double> &Bot_,
+                           const Array<double> &Bct_,
+                           const Vector &op_,
+                           const Vector &x_,
+                           Vector &y_,
+                           const int d1d = 0,
+                           const int q1d = 0)
+{
+   constexpr static int VDIM = 3;
+
+   const int D1D = T_D1D ? T_D1D : d1d;
+   const int Q1D = T_Q1D ? T_Q1D : q1d;
+
+   const int Q3 = Q1D*Q1D*Q1D;
+   const int D3 = D1D*(D1D-1)*(D1D-1);
+
+   constexpr int MQ1 = T_Q1D ? T_Q1D : HDIV_MAX_Q1D;
+   constexpr int MD1 = T_D1D ? T_D1D : HDIV_MAX_D1D;
+   constexpr int MDQ = (MQ1 > MD1) ? MQ1 : MD1;
+
+   MFEM_CONTRACT_VAR(Bot_);
+   MFEM_CONTRACT_VAR(Bct_);
+
+   const auto bo = Reshape(Bo_.Read(), Q1D, D1D-1);
+   const auto bc = Reshape(Bc_.Read(), Q1D, D1D);
+   const auto D = Reshape(op_.Read(), Q1D, Q1D, Q1D, 6, NE);
+   const auto x = Reshape(x_.Read(), VDIM*D3, NE);
+   auto y = Reshape(y_.ReadWrite(), VDIM*D3, NE);
+
+   MFEM_FORALL_3D(e, NE, Q1D, Q1D, VDIM,
+   {
+      const int tidz = MFEM_THREAD_ID(z);
+
+      MFEM_SHARED double BoBot[MQ1*(MD1-1)];
+      MFEM_SHARED double BcBct[MQ1*MD1];
+      double (*Bo)[MD1-1] = (double (*)[MD1-1]) BoBot;
+      double (*Bc)[MD1] = (double (*)[MD1]) BcBct;
+      double (*Bot)[MQ1] = (double (*)[MQ1]) BoBot;
+      double (*Bct)[MQ1] = (double (*)[MQ1]) BcBct;
+      MFEM_SHARED double sm0[VDIM*MDQ*MDQ*MDQ];
+      MFEM_SHARED double sm1[VDIM*MDQ*MDQ*MDQ];
+      double *X = sm0;
+      double *DDQ = sm1;
+      double *DQQ = sm0;
+      double *QQQ = sm1;
+      double *QQD = sm0;
+      double *QDD = sm1;
+
+      // Load X into shared memory
+      MFEM_FOREACH_THREAD(vd,z,VDIM)
+      {
+         MFEM_FOREACH_THREAD(i3,y,D1D-1)
+         {
+            MFEM_FOREACH_THREAD(i2,x,D1D-1)
+            {
+               MFEM_UNROLL(MD1)
+               for (int i1 = 0; i1 < D1D; ++i1)
+               {
+                  const int i = i1 + i2*D1D + i3*D1D*(D1D-1) + vd*D3;
+                  X[i] = x(i,e);
+               }
+            }
+         }
+      }
+      // Load Bo and Bc into shared memory
+      if (tidz == 0)
+      {
+         MFEM_FOREACH_THREAD(d,y,D1D-1)
+         {
+            MFEM_FOREACH_THREAD(q,x,Q1D)
+            {
+               Bo[q][d] = bo(q,d);
+            }
+         }
+         MFEM_FOREACH_THREAD(d,y,D1D)
+         {
+            MFEM_FOREACH_THREAD(q,x,Q1D)
+            {
+               Bc[q][d] = bc(q,d);
+            }
+         }
+      }
+      MFEM_SYNC_THREAD;
+      // Apply B operator
+      MFEM_FOREACH_THREAD(vd,z,VDIM)
+      {
+         const int nx = (vd == 0) ? D1D : D1D-1;
+         const int ny = (vd == 1) ? D1D : D1D-1;
+         const int nz = (vd == 2) ? D1D : D1D-1;
+         const double *Bx = (vd == 0) ? (double *)Bc : (double *)Bo;
+         MFEM_FOREACH_THREAD(dy,y,ny)
+         {
+            MFEM_FOREACH_THREAD(qx,x,Q1D)
+            {
+               double u[D1D];
+               MFEM_UNROLL(MD1)
+               for (int dz = 0; dz < nz; ++dz)
+               {
+                  u[dz] = 0.0;
+               }
+               MFEM_UNROLL(MD1)
+               for (int dx = 0; dx < nx; ++dx)
+               {
+                  MFEM_UNROLL(MD1)
+                  for (int dz = 0; dz < nz; ++dz)
+                  {
+                     u[dz] += X[dx + dy*nx + dz*nx*ny + vd*D3]*Bx[dx + qx*nx];
+                  }
+               }
+               MFEM_UNROLL(MD1)
+               for (int dz = 0; dz < nz; ++dz)
+               {
+                  DDQ[qx + dy*Q1D + dz*Q1D*ny + vd*Q3] = u[dz];
+               }
+            }
+         }
+      }
+      MFEM_SYNC_THREAD;
+      MFEM_FOREACH_THREAD(vd,z,VDIM)
+      {
+         const int ny = (vd == 1) ? D1D : D1D-1;
+         const int nz = (vd == 2) ? D1D : D1D-1;
+         const double *By = (vd == 1) ? (double *)Bc : (double *)Bo;
+         MFEM_FOREACH_THREAD(qy,y,Q1D)
+         {
+            MFEM_FOREACH_THREAD(qx,x,Q1D)
+            {
+               double u[D1D];
+               MFEM_UNROLL(MD1)
+               for (int dz = 0; dz < nz; ++dz)
+               {
+                  u[dz] = 0.0;
+               }
+               MFEM_UNROLL(MD1)
+               for (int dy = 0; dy < ny; ++dy)
+               {
+                  MFEM_UNROLL(MD1)
+                  for (int dz = 0; dz < nz; ++dz)
+                  {
+                     u[dz] += DDQ[qx + dy*Q1D + dz*Q1D*ny + vd*Q3]*By[dy + qy*ny];
+                  }
+               }
+               MFEM_UNROLL(MD1)
+               for (int dz = 0; dz < nz; ++dz)
+               {
+                  DQQ[qx + qy*Q1D + dz*Q1D*Q1D + vd*Q3] = u[dz];
+               }
+            }
+         }
+      }
+      MFEM_SYNC_THREAD;
+      MFEM_FOREACH_THREAD(vd,z,VDIM)
+      {
+         const int nz = (vd == 2) ? D1D : D1D-1;
+         const double *Bz = (vd == 2) ? (double *)Bc : (double *)Bo;
+         MFEM_FOREACH_THREAD(qy,y,Q1D)
+         {
+            MFEM_FOREACH_THREAD(qx,x,Q1D)
+            {
+               double u[Q1D];
+               MFEM_UNROLL(MQ1)
+               for (int qz = 0; qz < Q1D; ++qz)
+               {
+                  u[qz] = 0.0;
+               }
+               MFEM_UNROLL(MD1)
+               for (int dz = 0; dz < nz; ++dz)
+               {
+                  MFEM_UNROLL(MQ1)
+                  for (int qz = 0; qz < Q1D; ++qz)
+                  {
+                     u[qz] += DQQ[qx + qy*Q1D + dz*Q1D*Q1D + vd*Q3]*Bz[dz + qz*nz];
+                  }
+               }
+               MFEM_UNROLL(MQ1)
+               for (int qz = 0; qz < Q1D; ++qz)
+               {
+                  QQQ[qx + qy*Q1D + qz*Q1D*Q1D + vd*Q3] = u[qz];
+               }
+            }
+         }
+      }
+      MFEM_SYNC_THREAD;
+      // Apply D operator
+      if (tidz == 0)
+      {
+         MFEM_FOREACH_THREAD(qy,y,Q1D)
+         {
+            MFEM_FOREACH_THREAD(qx,x,Q1D)
+            {
+               MFEM_UNROLL(MQ1)
+               for (int qz = 0; qz < Q1D; ++qz)
+               {
+                  const double Qx = QQQ[qx + qy*Q1D + qz*Q1D*Q1D + 0*Q3];
+                  const double Qy = QQQ[qx + qy*Q1D + qz*Q1D*Q1D + 1*Q3];
+                  const double Qz = QQQ[qx + qy*Q1D + qz*Q1D*Q1D + 2*Q3];
+
+                  const double D11 = D(qx,qy,qz,0,e);
+                  const double D12 = D(qx,qy,qz,1,e);
+                  const double D13 = D(qx,qy,qz,2,e);
+                  const double D22 = D(qx,qy,qz,3,e);
+                  const double D23 = D(qx,qy,qz,4,e);
+                  const double D33 = D(qx,qy,qz,5,e);
+
+                  QQQ[qx + qy*Q1D + qz*Q1D*Q1D + 0*Q3] = D11*Qx + D12*Qy + D13*Qz;
+                  QQQ[qx + qy*Q1D + qz*Q1D*Q1D + 1*Q3] = D12*Qx + D22*Qy + D23*Qz;
+                  QQQ[qx + qy*Q1D + qz*Q1D*Q1D + 2*Q3] = D13*Qx + D23*Qy + D33*Qz;
+               }
+            }
+         }
+      }
+      MFEM_SYNC_THREAD;
+      // Load Bot and Bct into shared memory
+      if (tidz == 0)
+      {
+         MFEM_FOREACH_THREAD(d,y,D1D-1)
+         {
+            MFEM_FOREACH_THREAD(q,x,Q1D)
+            {
+               Bot[d][q] = bo(q,d);
+            }
+         }
+         MFEM_FOREACH_THREAD(d,y,D1D)
+         {
+            MFEM_FOREACH_THREAD(q,x,Q1D)
+            {
+               Bct[d][q] = bc(q,d);
+            }
+         }
+      }
+      MFEM_SYNC_THREAD;
+      // Apply Bt operator
+      MFEM_FOREACH_THREAD(vd,z,VDIM)
+      {
+         const int nx = (vd == 0) ? D1D : D1D-1;
+         const double *Bxt = (vd == 0) ? (double *)Bct : (double *)Bot;
+         MFEM_FOREACH_THREAD(qy,y,Q1D)
+         {
+            MFEM_FOREACH_THREAD(dx,x,nx)
+            {
+               double u[Q1D];
+               MFEM_UNROLL(MQ1)
+               for (int qz = 0; qz < Q1D; ++qz)
+               {
+                  u[qz] = 0.0;
+               }
+               MFEM_UNROLL(MQ1)
+               for (int qx = 0; qx < Q1D; ++qx)
+               {
+                  MFEM_UNROLL(MQ1)
+                  for (int qz = 0; qz < Q1D; ++qz)
+                  {
+                     u[qz] += QQQ[qx + qy*Q1D + qz*Q1D*Q1D + vd*Q3]*Bxt[qx + dx*Q1D];
+                  }
+               }
+               MFEM_UNROLL(MQ1)
+               for (int qz = 0; qz < Q1D; ++qz)
+               {
+                  QQD[dx + qy*nx + qz*nx*Q1D + vd*Q3] = u[qz];
+               }
+            }
+         }
+      }
+      MFEM_SYNC_THREAD;
+      MFEM_FOREACH_THREAD(vd,z,VDIM)
+      {
+         const int nx = (vd == 0) ? D1D : D1D-1;
+         const int ny = (vd == 1) ? D1D : D1D-1;
+         const double *Byt = (vd == 1) ? (double *)Bct : (double *)Bot;
+         MFEM_FOREACH_THREAD(dy,y,ny)
+         {
+            MFEM_FOREACH_THREAD(dx,x,nx)
+            {
+               double u[Q1D];
+               MFEM_UNROLL(MQ1)
+               for (int qz = 0; qz < Q1D; ++qz)
+               {
+                  u[qz] = 0.0;
+               }
+               MFEM_UNROLL(MQ1)
+               for (int qy = 0; qy < Q1D; ++qy)
+               {
+                  MFEM_UNROLL(MQ1)
+                  for (int qz = 0; qz < Q1D; ++qz)
+                  {
+                     u[qz] += QQD[dx + qy*nx + qz*nx*Q1D + vd*Q3]*Byt[qy + dy*Q1D];
+                  }
+               }
+               MFEM_UNROLL(MQ1)
+               for (int qz = 0; qz < Q1D; ++qz)
+               {
+                  QDD[dx + dy*nx + qz*nx*ny + vd*Q3] = u[qz];
+               }
+            }
+         }
+      }
+      MFEM_SYNC_THREAD;
+      MFEM_FOREACH_THREAD(vd,z,VDIM)
+      {
+         const int nx = (vd == 0) ? D1D : D1D-1;
+         const int ny = (vd == 1) ? D1D : D1D-1;
+         const int nz = (vd == 2) ? D1D : D1D-1;
+         const double *Bzt = (vd == 2) ? (double *)Bct : (double *)Bot;
+         MFEM_FOREACH_THREAD(dy,y,ny)
+         {
+            MFEM_FOREACH_THREAD(dx,x,nx)
+            {
+               double u[D1D];
+               MFEM_UNROLL(MD1)
+               for (int dz = 0; dz < nz; ++dz)
+               {
+                  u[dz] = 0.0;
+               }
+               MFEM_UNROLL(MQ1)
+               for (int qz = 0; qz < Q1D; ++qz)
+               {
+                  MFEM_UNROLL(MD1)
+                  for (int dz = 0; dz < nz; ++dz)
+                  {
+                     u[dz] += QDD[dx + dy*nx + qz*nx*ny + vd*Q3]*Bzt[qz + dz*Q1D];
+                  }
+               }
+               MFEM_UNROLL(MD1)
+               for (int dz = 0; dz < nz; ++dz)
+               {
+                  y(dx + dy*nx + dz*nx*ny + vd*D3,e) += u[dz];
+               }
+            }
+         }
+      }
+      MFEM_SYNC_THREAD;
+   });
+}
+
 void PAHdivMassApply(const int dim,
                      const int D1D,
                      const int Q1D,
@@ -748,22 +1086,33 @@ void PAHdivMassApply(const int dim,
                      Vector &y)
 {
    const int id = (D1D << 4) | Q1D;
+   printf("dim = %d, id = %0x\n", dim, id);
 
    if (dim == 2)
    {
-      printf("id = %0x\n", id);
       switch (id)
       {
          case 0x22: return SmemPAHdivMassApply2D<2,2>(NE,Bo,Bc,Bot,Bct,op,x,y);
          case 0x33: return SmemPAHdivMassApply2D<3,3>(NE,Bo,Bc,Bot,Bct,op,x,y);
          case 0x44: return SmemPAHdivMassApply2D<4,4>(NE,Bo,Bc,Bot,Bct,op,x,y);
          case 0x55: return SmemPAHdivMassApply2D<5,5>(NE,Bo,Bc,Bot,Bct,op,x,y);
-         default: return PAHdivMassApply2D(D1D,Q1D,NE,Bo,Bc,Bot,Bct,op,x,y);
+         default:
+            printf("Fallback.\n");
+            return PAHdivMassApply2D(D1D,Q1D,NE,Bo,Bc,Bot,Bct,op,x,y);
       }
    }
    else if (dim == 3)
    {
-      PAHdivMassApply3D(D1D,Q1D,NE,Bo,Bc,Bot,Bct,op,x,y);
+      switch (id)
+      {
+         case 0x23: return SmemPAHdivMassApply3D<2,3>(NE,Bo,Bc,Bot,Bct,op,x,y);
+         case 0x34: return SmemPAHdivMassApply3D<3,4>(NE,Bo,Bc,Bot,Bct,op,x,y);
+         case 0x45: return SmemPAHdivMassApply3D<4,5>(NE,Bo,Bc,Bot,Bct,op,x,y);
+         case 0x56: return SmemPAHdivMassApply3D<5,6>(NE,Bo,Bc,Bot,Bct,op,x,y);
+         default:
+            printf("Fallback.\n");
+            return PAHdivMassApply3D(D1D,Q1D,NE,Bo,Bc,Bot,Bct,op,x,y);
+      }
    }
 }
 

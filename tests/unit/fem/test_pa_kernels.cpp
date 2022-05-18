@@ -553,9 +553,16 @@ TEST_CASE("PA Diffusion", "[PartialAssembly], [CUDA]")
 
 TEST_CASE("RT Mass Smem")
 {
-   auto order = GENERATE(1, 2, 3, 4);
-   Mesh mesh = Mesh::MakeCartesian2D(10, 10, Element::QUADRILATERAL);
+   auto order = GENERATE(0, 1, 2, 3);
+   auto mesh_fname = GENERATE(
+                        "../../data/star.mesh",
+                        "../../data/fichera.mesh"
+                     );
+   Mesh mesh = Mesh::LoadFromFile(mesh_fname);
    const int dim = mesh.Dimension();
+
+   if (order > 2 && dim == 3) { return; } // skip slow tests
+
    RT_FECollection fec(order, dim, BasisType::GaussLobatto,
                        BasisType::IntegratedGLL);
    FiniteElementSpace fes(&mesh, &fec);
@@ -570,18 +577,8 @@ TEST_CASE("RT Mass Smem")
    m2.Finalize();
 
    const int n = fes.GetTrueVSize();
-   GridFunction x(&fes);
-
-   VectorFunctionCoefficient coeff(2, [](const Vector &, Vector &u)
-   {
-      u[0] = 1.0;
-      u[1] = 1.0;
-   });
-
-   Vector b1(n), b2(n);
+   Vector x(n), b1(n), b2(n);
    x.Randomize(1);
-   // x = 1.0;
-   // x.ProjectCoefficient(coeff);
    b1 = 0.0;
    b2 = 0.0;
 
