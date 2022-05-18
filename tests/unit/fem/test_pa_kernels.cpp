@@ -551,13 +551,14 @@ TEST_CASE("PA Diffusion", "[PartialAssembly], [CUDA]")
 } // PA Diffusion test case
 
 
-TEST_CASE("RT Mass Smem")
+TEST_CASE("RT Mass Smem", "[PartialAssembly], [CUDA]")
 {
    auto order = GENERATE(0, 1, 2, 3);
    auto mesh_fname = GENERATE(
                         "../../data/star.mesh",
                         "../../data/fichera.mesh"
                      );
+   CAPTURE(order, mesh_fname);
    Mesh mesh = Mesh::LoadFromFile(mesh_fname);
    const int dim = mesh.Dimension();
 
