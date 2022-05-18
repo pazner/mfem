@@ -1,0 +1,98 @@
+\documentclass[tikz]{standalone}
+\usepackage{pgfplots}
+\usepackage{tikzscale}
+\usepackage{libertine}
+\usepackage{bm}
+
+\newcommand{\TITLE}{\RUNTITLE{}\\1x Tesla V100-SXM2}
+
+\newcommand{\XMIN}{4e2}
+\newcommand{\XMAX}{1e7}
+
+\newcommand{\YMIN}{0}
+\newcommand{\YMAX}{3000}
+
+\pgfplotsset{compat=newest}
+\renewcommand*\familydefault{\sfdefault}
+
+\definecolor{RGB1}{RGB}{31,120,180}  % Dark blue
+\definecolor{RGB2}{RGB}{255,127,0}   % Dark orange
+\definecolor{RGB3}{RGB}{51,160,44}   % Dark green
+\definecolor{RGB4}{RGB}{227,26,28}   % Dark red
+\definecolor{RGB5}{RGB}{160,60,140}  % Dark purple (modified)
+\definecolor{RGB6}{RGB}{177,89,40}   % Dark brown
+\definecolor{RGB7}{RGB}{192,220,192} % Light green
+\definecolor{RGB8}{RGB}{220,220,220} % Dark gray
+
+\definecolor{firebrick}{HTML}{B22222}
+\definecolor{steelblue4}{HTML}{3B77AF}
+
+\pgfplotscreateplotcyclelist{CycleList}{%
+  RGB1!50!black,every mark/.append style={fill=RGB1},mark=*,smooth,mark size=2pt\\%
+  RGB2!50!black,every mark/.append style={fill=RGB2},mark=*,smooth,mark size=2pt\\%
+  RGB3!50!black,every mark/.append style={fill=RGB3},mark=*,smooth,mark size=2pt\\%
+  RGB4!50!black,every mark/.append style={fill=RGB4},mark=*,smooth,mark size=2pt\\%
+  RGB5!50!black,every mark/.append style={fill=RGB5},mark=*,smooth,mark size=2pt\\%
+  RGB6!50!black,every mark/.append style={fill=RGB6},mark=*,smooth,mark size=2pt\\%
+  RGB7!50!black,every mark/.append style={fill=RGB7},mark=*,smooth,mark size=2pt\\%
+  RGB8!50!black,every mark/.append style={fill=RGB8},mark=*,smooth,mark size=2pt\\%
+}
+
+\pgfplotsset{tick scale binop=\times}
+
+\providecommand{\PLOTSTYLE}{}
+\pgfplotsset{
+  throughput plot/.code=\pgfkeysalsofrom{\PLOTSTYLE},
+  throughput plot/.belongs to family=/pgfplots/scale
+}
+
+\pgfplotsset{throughput order/.style n args={1}{
+  table/x index=11,
+  table/y index=10,
+  table/skip first n=11,
+  table/col sep=comma,
+  table/header=false,
+  table/restrict expr to domain={\thisrowno{12}}{#1:#1},
+}}
+
+\pgfplotsset{every axis/.append style={
+  axis line style={->},
+  label style={font=\Large},
+  tick label style={font=\large},
+  title style={font=\Large\bfseries, text=steelblue4}
+}}
+
+\begin{document}
+\begin{tikzpicture}
+\begin{axis}[
+    align=center,
+    grid=both,
+    xmode=log,
+    ymode=normal,
+    major grid style={line width=.1pt,draw=gray!50},
+    minor grid style={line width=.1pt,draw=gray!50},
+    width=4in,
+    height=4in,
+    xlabel={Degrees of Freedom (DOF)},
+    ylabel={MDOF/s},
+    cycle list name=CycleList,
+    legend pos=north west,
+    legend entries={$p=1$,$p=2$,$p=3$,$p=4$,$p=5$,$p=6$,$p=7$,$p=8$},
+    title=\TITLE,
+    ymin=\YMIN,
+    ymax=\YMAX,
+    xmin=\XMIN,
+    xmax=\XMAX,
+    throughput plot,
+]
+  \addplot table[throughput order=1] {\DATA};
+  \addplot table[throughput order=2] {\DATA};
+  \addplot table[throughput order=3] {\DATA};
+  \addplot table[throughput order=4] {\DATA};
+  \addplot table[throughput order=5] {\DATA};
+  % \addplot table[throughput order=6] {\DATA};
+  % \addplot table[throughput order=7] {\DATA};
+  % \addplot table[throughput order=8] {\DATA};
+\end{axis}
+\end{tikzpicture}
+\end{document}

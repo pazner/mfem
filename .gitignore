@@ -329,6 +329,10 @@ tests/benchmarks/bench_virtuals
 tests/benchmarks/plot/*.pdf
 tests/benchmarks/plot/*.tex
 tests/benchmarks/plot/*.csv
+tests/benchmarks/rtmass_plots/build
+tests/benchmarks/rtmass_plots/*.tex
+tests/benchmarks/rtmass_plots/*.csv
+!tests/benchmarks/rtmass_plots/template.tex
 
 # Test script output
 tests/scripts/*.err
