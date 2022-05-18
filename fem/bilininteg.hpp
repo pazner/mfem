@@ -27,8 +27,8 @@ constexpr int HCURL_MAX_Q1D = 5;
 constexpr int HCURL_MAX_Q1D = 6;
 #endif
 
-constexpr int HDIV_MAX_D1D = 5;
-constexpr int HDIV_MAX_Q1D = 6;
+constexpr int HDIV_MAX_D1D = 6;
+constexpr int HDIV_MAX_Q1D = 7;
 
 /// Abstract base class BilinearFormIntegrator
 class BilinearFormIntegrator : public NonlinearFormIntegrator
