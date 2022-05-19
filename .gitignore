@@ -302,6 +302,7 @@ miniapps/solvers/plor_solvers
 miniapps/solvers/ParaView
 miniapps/solvers/mesh.*
 miniapps/solvers/sol.*
+miniapps/solvers/prof*
 
 miniapps/parelag/MultilevelHcurlHdivSolver
 miniapps/parelag/*.mesh
