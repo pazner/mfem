@@ -198,10 +198,19 @@ int main(int argc, char *argv[])
    }
    else if (RT && dim == 3)
    {
+      tic_toc.Clear();
       tic_toc.Start();
-      solv_lor.reset(new LORSolver<HypreADS>(a, ess_dofs));
+      auto *ads = new LORSolver<HypreADS>(a, ess_dofs);
+      solv_lor.reset(ads);
       tic_toc.Stop();
       std::cout << "Assembly elapsed: " << tic_toc.RealTime() << std::endl;
+
+
+      tic_toc.Clear();
+      tic_toc.Start();
+      ads->GetSolver().Setup(B, X);
+      tic_toc.Stop();
+      std::cout << "ADS setup elapsed: " << tic_toc.RealTime() << std::endl;
    }
    else
    {
@@ -212,10 +221,11 @@ int main(int argc, char *argv[])
    cg.SetAbsTol(0.0);
    cg.SetRelTol(1e-12);
    cg.SetMaxIter(500);
-   cg.SetPrintLevel(1);
+   cg.SetPrintLevel(IterativeSolver::PrintLevel().FirstAndLast().Summary());
    cg.SetOperator(*A);
    cg.SetPreconditioner(*solv_lor);
 
+   tic_toc.Clear();
    tic_toc.Start();
    cg.Mult(B, X);
    tic_toc.Stop();

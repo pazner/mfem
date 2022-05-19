@@ -175,10 +175,7 @@ int main(int argc, char *argv[])
    ParFiniteElementSpace fes_l2(&mesh, &fec_l2);
 
    tic_toc.Stop();
-   if (Mpi::Root())
-   {
-      cout << "Preamble: " << tic_toc.RealTime() << endl;
-   }
+   if (Mpi::Root()) { cout << "Preamble: " << tic_toc.RealTime() << endl; }
 
    tic_toc.Clear();
    tic_toc.Start();
@@ -223,13 +220,10 @@ int main(int argc, char *argv[])
    else { W_inv.reset(new DGMassInverse(fes_l2)); }
 
    tic_toc.Stop();
-   if (Mpi::Root())
-   {
-      cout << "Done. Elapsed: " << tic_toc.RealTime() << endl;
-   }
+   if (Mpi::Root()) { cout << "Done. Elapsed: " << tic_toc.RealTime() << endl; }
    tic_toc.Clear();
    tic_toc.Start();
-   cout << "Preconditioner setup... " << flush;
+   if (Mpi::Root()) { cout << "Preconditioner setup... " << flush; }
 
    Array<int> offsets(3);
    offsets[0] = 0;
@@ -284,7 +278,8 @@ int main(int argc, char *argv[])
 
    // Create the block-diagonal preconditioner
    HypreBoomerAMG S_inv(*S);
-   S_inv.SetPrintLevel(0);
+   // S_inv.SetPrintLevel(0);
+   S_inv.SetPrintLevel(1);
 
    BlockDiagonalPreconditioner D_prec(offsets);
    D_prec.SetDiagonalBlock(0, &M_jacobi);
@@ -295,6 +290,8 @@ int main(int argc, char *argv[])
 
    B_block.GetBlock(0).Randomize(1);
    B_block.GetBlock(1) = 0.0;
+
+   S_inv.Setup(B_block.GetBlock(1), X_block.GetBlock(1)); // AMG setup
 
    tic_toc.Stop();
    if (Mpi::Root())
