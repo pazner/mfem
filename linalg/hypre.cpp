@@ -16,6 +16,8 @@
 #include "linalg.hpp"
 #include "../fem/fem.hpp"
 #include "../general/forall.hpp"
+#define MFEM_NVTX_COLOR Purple
+#include "../general/nvtx.hpp"
 
 #include <fstream>
 #include <iomanip>
@@ -1721,6 +1723,12 @@ HYPRE_Int HypreParMatrix::Mult(HypreParVector &x, HypreParVector &y,
 
 void HypreParMatrix::Mult(double a, const Vector &x, double b, Vector &y) const
 {
+#undef MFEM_NVTX_COLOR
+#define MFEM_NVTX_COLOR RoyalBlue
+   MFEM_NVTX;
+#undef MFEM_NVTX_COLOR
+#define MFEM_NVTX_COLOR Purple
+
    MFEM_ASSERT(x.Size() == Width(), "invalid x.Size() = " << x.Size()
                << ", expected size = " << Width());
    MFEM_ASSERT(y.Size() == Height(), "invalid y.Size() = " << y.Size()
@@ -3694,6 +3702,8 @@ void HypreSolver::Setup(const HypreParVector &b, HypreParVector &x) const
 {
    if (setup_called) { return; }
 
+   NVTX("Hypre Setup");
+
    MFEM_VERIFY(A != NULL, "HypreParMatrix A is missing");
 
    HYPRE_Int err_flag = SetupFcn()(*this, *A, b, x);
@@ -3719,6 +3729,8 @@ void HypreSolver::Setup(const Vector &b, Vector &x) const
 
 void HypreSolver::Mult(const HypreParVector &b, HypreParVector &x) const
 {
+   NVTX("Hypre Solve");
+
    HYPRE_Int err_flag;
    if (A == NULL)
    {

@@ -13,6 +13,8 @@
 #include "bilininteg.hpp"
 #include "gridfunc.hpp"
 #include "ceed/diffusion.hpp"
+#define MFEM_NVTX_COLOR RoyalBlue
+#include "../general/nvtx.hpp"
 
 using namespace std;
 
@@ -1518,6 +1520,7 @@ static void SmemPADiffusionApply3D(const int NE,
                                    const int d1d = 0,
                                    const int q1d = 0)
 {
+   MFEM_NVTX;
    const int D1D = T_D1D ? T_D1D : d1d;
    const int Q1D = T_Q1D ? T_Q1D : q1d;
    constexpr int M1Q = T_Q1D ? T_Q1D : MAX_Q1D;

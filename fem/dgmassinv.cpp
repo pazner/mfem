@@ -13,6 +13,8 @@
 #include "bilinearform.hpp"
 #include "dgmassinv_kernels.hpp"
 #include "../general/forall.hpp"
+#define MFEM_NVTX_COLOR Red
+#include "../general/nvtx.hpp"
 
 #ifdef MFEM_USE_CUDA
 #include <cublas.h>
@@ -125,6 +127,8 @@ DGMassInverse::~DGMassInverse()
 template<int DIM, int D1D, int Q1D>
 void DGMassInverse::DGMassCGIteration(const Vector &b_, Vector &u_) const
 {
+   MFEM_NVTX;
+
    const int NE = fes.GetNE();
    const int d1d = m->dofs1D;
    const int q1d = m->quad1D;

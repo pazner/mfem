@@ -10,6 +10,8 @@
 // CONTRIBUTING.md for details.
 
 #include "../general/forall.hpp"
+#define MFEM_NVTX_COLOR RoyalBlue
+#include "../general/nvtx.hpp"
 #include "bilininteg.hpp"
 #include "gridfunc.hpp"
 
@@ -237,6 +239,8 @@ void SmemPAHdivMassApply2D(const int NE,
                            const int d1d = 0,
                            const int q1d = 0)
 {
+   MFEM_NVTX;
+
    static constexpr int VDIM = 2;
 
    const int D1D = T_D1D ? T_D1D : d1d;
@@ -560,6 +564,8 @@ void PAHdivMassApply3D(const int D1D,
                        const Vector &x_,
                        Vector &y_)
 {
+   MFEM_NVTX;
+
    MFEM_VERIFY(D1D <= HDIV_MAX_D1D, "Error: D1D > HDIV_MAX_D1D");
    MFEM_VERIFY(Q1D <= HDIV_MAX_Q1D, "Error: Q1D > HDIV_MAX_Q1D");
    constexpr static int VDIM = 3;
@@ -751,6 +757,8 @@ void SmemPAHdivMassApply3D(const int NE,
                            const int d1d = 0,
                            const int q1d = 0)
 {
+   MFEM_NVTX;
+
    static constexpr int VDIM = 3;
 
    const int D1D = T_D1D ? T_D1D : d1d;
@@ -1104,7 +1112,7 @@ void PAHdivMassApply(const int dim,
          case 0x44: return SmemPAHdivMassApply2D<4,4>(NE,Bo,Bc,Bot,Bct,op,x,y);
          case 0x55: return SmemPAHdivMassApply2D<5,5>(NE,Bo,Bc,Bot,Bct,op,x,y);
          default:
-            printf("Fallback.\n");
+            printf("fallback dim = %d, id = %0x\n", dim, id);
             return PAHdivMassApply2D(D1D,Q1D,NE,Bo,Bc,Bot,Bct,op,x,y);
       }
    }
@@ -1116,8 +1124,10 @@ void PAHdivMassApply(const int dim,
          case 0x34: return SmemPAHdivMassApply3D<3,4>(NE,Bo,Bc,Bot,Bct,op,x,y);
          case 0x45: return SmemPAHdivMassApply3D<4,5>(NE,Bo,Bc,Bot,Bct,op,x,y);
          case 0x56: return SmemPAHdivMassApply3D<5,6>(NE,Bo,Bc,Bot,Bct,op,x,y);
+         case 0x67: return SmemPAHdivMassApply3D<6,7>(NE,Bo,Bc,Bot,Bct,op,x,y);
+         case 0x78: return SmemPAHdivMassApply3D<7,8>(NE,Bo,Bc,Bot,Bct,op,x,y);
          default:
-            printf("Fallback.\n");
+            printf("fallback dim = %d, id = %0x\n", dim, id);
             return PAHdivMassApply3D(D1D,Q1D,NE,Bo,Bc,Bot,Bct,op,x,y);
       }
    }
@@ -1315,6 +1325,8 @@ static void PADivDivApply3D(const int D1D,
                             const Vector &x_,
                             Vector &y_)
 {
+   MFEM_NVTX;
+
    MFEM_VERIFY(D1D <= HDIV_MAX_D1D, "Error: D1D > HDIV_MAX_D1D");
    MFEM_VERIFY(Q1D <= HDIV_MAX_Q1D, "Error: Q1D > HDIV_MAX_Q1D");
    constexpr static int VDIM = 3;

@@ -13,6 +13,8 @@
 #include "../general/annotation.hpp"
 #include "../general/forall.hpp"
 #include "../general/globals.hpp"
+#define MFEM_NVTX_COLOR Purple
+#include "../general/nvtx.hpp"
 #include "../fem/bilinearform.hpp"
 #include <iostream>
 #include <iomanip>
@@ -299,6 +301,8 @@ void OperatorJacobiSmoother::Setup(const Vector &diag)
 
 void OperatorJacobiSmoother::Mult(const Vector &x, Vector &y) const
 {
+   NVTX("Jacobi");
+
    // For empty MPI ranks, height may be 0:
    // MFEM_VERIFY(Height() > 0, "The diagonal hasn't been computed.");
    MFEM_ASSERT(x.Size() == Width(), "invalid input vector");
