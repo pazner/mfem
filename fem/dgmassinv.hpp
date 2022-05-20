@@ -139,6 +139,10 @@ public:
 
    DGMassInverse_Direct(FiniteElementSpace &fes_,
                         Coefficient &coeff_,
+                        BatchSolverMode mode_ = BatchSolverMode::NATIVE);
+
+   DGMassInverse_Direct(FiniteElementSpace &fes_,
+                        Coefficient &coeff_,
                         const IntegrationRule &ir_,
                         BatchSolverMode mode_ = BatchSolverMode::NATIVE);
    // /// @brief Construct the DG inverse mass operator for @a fes_ with

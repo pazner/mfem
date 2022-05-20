@@ -410,6 +410,11 @@ DGMassInverse_Direct::DGMassInverse_Direct(FiniteElementSpace &fes_,
 
 DGMassInverse_Direct::DGMassInverse_Direct(FiniteElementSpace &fes_,
                                            Coefficient &coeff,
+                                           BatchSolverMode mode_)
+   : DGMassInverse_Direct(fes_, &coeff, nullptr, mode_) { }
+
+DGMassInverse_Direct::DGMassInverse_Direct(FiniteElementSpace &fes_,
+                                           Coefficient &coeff,
                                            const IntegrationRule &ir,
                                            BatchSolverMode mode_)
    : DGMassInverse_Direct(fes_, &coeff, &ir, mode_) { }
