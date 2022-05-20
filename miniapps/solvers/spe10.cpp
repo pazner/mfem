@@ -25,18 +25,18 @@
 using namespace std;
 using namespace mfem;
 
-int nx = 60;
-int ny = 220;
-int nz = 850;
+static constexpr int nx = 60;
+static constexpr int ny = 220;
+static constexpr int nz = 85;
 
 static constexpr double hx = 20.0;
 static constexpr double hy = 10.0;
 static constexpr double hz = 2.0;
 
-ParMesh MakeParMesh()
+ParMesh MakeParMesh(int Nx, int Ny, int Nz)
 {
    Mesh mesh = Mesh::MakeCartesian3D(
-                  nx, ny, nz, Element::HEXAHEDRON, nx*hx, ny*hy, nz*hz);
+                  Nx, Ny, Nz, Element::HEXAHEDRON, nx*hx, ny*hy, nz*hz);
    return ParMesh(MPI_COMM_WORLD, mesh);
 }
 
@@ -169,19 +169,23 @@ int main(int argc, char *argv[])
    const char *device_config = "cpu";
    int order = 3;
 
+   int Nx = nx;
+   int Ny = ny;
+   int Nz = nz;
+
    OptionsParser args(argc, argv);
    args.AddOption(&device_config, "-d", "--device",
                   "Device configuration string, see Device::Configure().");
    args.AddOption(&order, "-o", "--order", "Polynomial degree.");
-   args.AddOption(&nx, "-nx", "--nx", "x size.");
-   args.AddOption(&ny, "-ny", "--ny", "y size.");
-   args.AddOption(&nz, "-nz", "--nz", "z size.");
+   args.AddOption(&Nx, "-nx", "--nx", "x size.");
+   args.AddOption(&Ny, "-ny", "--ny", "y size.");
+   args.AddOption(&Nz, "-nz", "--nz", "z size.");
    args.ParseCheck();
 
    Device device(device_config);
    if (Mpi::Root()) { device.Print(); }
 
-   ParMesh mesh = MakeParMesh();
+   ParMesh mesh = MakeParMesh(Nx, Ny, Nz);
    const int dim = mesh.Dimension();
    MFEM_VERIFY(dim == 2 || dim == 3, "Spatial dimension must be 2 or 3.");
 
@@ -236,19 +240,17 @@ int main(int argc, char *argv[])
    Array<int> ess_dofs, empty;
    fes_rt.GetBoundaryTrueDofs(ess_dofs);
 
-   // {
-   //    SPE10Coefficient spe10_vec;
-   //    ParGridFunction gf(&fes_rt);
-   //    // ParGridFunction gf(&fes_l2);
-   //    gf.ProjectCoefficient(spe10_vec);
-   //    // gf.ProjectCoefficient(spe10);
-   //    ParaViewDataCollection pv("SPE10", &mesh);
-   //    pv.SetPrefixPath("ParaView");
-   //    pv.RegisterField("beta", &gf);
-   //    pv.SetCycle(0);
-   //    pv.SetTime(0.0);
-   //    pv.Save();
-   // }
+   {
+      SPE10Coefficient spe10_vec;
+      ParGridFunction gf(&fes_rt);
+      gf.ProjectCoefficient(spe10_vec);
+      ParaViewDataCollection pv("SPE10_Scaled", &mesh);
+      pv.SetPrefixPath("ParaView");
+      pv.RegisterField("beta", &gf);
+      pv.SetCycle(0);
+      pv.SetTime(0.0);
+      pv.Save();
+   }
 
    // Form the 2x2 block system
    //
