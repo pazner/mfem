@@ -25,9 +25,9 @@
 using namespace std;
 using namespace mfem;
 
-static constexpr int nx = 60;
-static constexpr int ny = 220;
-static constexpr int nz = 850;
+int nx = 60;
+int ny = 220;
+int nz = 850;
 
 static constexpr double hx = 20.0;
 static constexpr double hy = 10.0;
@@ -69,14 +69,43 @@ struct SPE10Coefficient : DiagonalMatrixCoefficient
       {
          MFEM_ABORT("Cannot open data file spe_perm.dat.")
       }
-      int n = 3*nx*ny*nz;
-      for (int i = 0; i < n; ++i)
+      double tmp;
+      double *ptr = coeff_data.begin();
+      for (int l=0; l<3; l++)
       {
-         double val;
-         permfile >> val;
-         coeff_data[i] = 1.0/val;
+         for (unsigned k=0; k<nz; k++)
+         {
+            for (unsigned j=0; j<ny; j++)
+            {
+               for (unsigned i=0; i<nz; i++)
+               {
+                  permfile >> *ptr;
+                  *ptr = 1/(*ptr);
+                  ptr++;
+               }
+               for (unsigned i=0; i<60-nz; i++)
+               {
+                  permfile>>tmp;   // skip unneeded part
+               }
+            }
+            for (unsigned j=0; j<220-ny; j++)
+               for (unsigned i=0; i<60; i++)
+               {
+                  permfile>>tmp;   // skip unneeded part
+               }
+         }
+         if (l<2) // if not processing Kz, we must skip unneeded part
+         {
+            for (unsigned k=0; k<85-nz; k++)
+               for (unsigned j=0; j<220; j++)
+                  for (unsigned i=0; i<60; i++)
+                  {
+                     permfile>>tmp;   // skip unneeded part
+                  }
+         }
       }
    }
+   using VectorCoefficient::Eval;
    void Eval(Vector &V, ElementTransformation &T, const IntegrationPoint &ip)
    {
       double data[3];
@@ -111,6 +140,9 @@ int main(int argc, char *argv[])
    args.AddOption(&device_config, "-d", "--device",
                   "Device configuration string, see Device::Configure().");
    args.AddOption(&order, "-o", "--order", "Polynomial degree.");
+   args.AddOption(&nx, "-nx", "--nx", "x size.");
+   args.AddOption(&ny, "-ny", "--ny", "y size.");
+   args.AddOption(&nz, "-nz", "--nz", "z size.");
    args.ParseCheck();
 
    Device device(device_config);
@@ -149,6 +181,17 @@ int main(int argc, char *argv[])
    fes_rt.GetBoundaryTrueDofs(ess_dofs);
 
    SPE10Coefficient beta_coeff;
+
+   {
+      ParGridFunction gf(&fes_rt);
+      gf.ProjectCoefficient(beta_coeff);
+      ParaViewDataCollection pv("SPE10", &mesh);
+      pv.SetPrefixPath("ParaView");
+      pv.RegisterField("beta", &gf);
+      pv.SetCycle(0);
+      pv.SetTime(0.0);
+      pv.Save();
+   }
 
    // Form the 2x2 block system
    //
