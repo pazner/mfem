@@ -129,56 +129,6 @@ HypreParMatrix *DiagonalInverse(HypreParMatrix &A, ParFiniteElementSpace &fes)
    return DiagonalInverse(diag_vec, fes);
 }
 
-struct SqrtCoefficient : Coefficient
-{
-   Coefficient &coeff;
-   SqrtCoefficient(Coefficient &coeff_) : coeff(coeff_) { }
-   double Eval(ElementTransformation &T, const IntegrationPoint &ip) override
-   {
-      return sqrt(coeff.Eval(T, ip));
-   }
-};
-
-const IntegrationRule &ir = IntRules.Get(Geometry::CUBE, 12);
-
-struct ScaledDGMassInverse : Operator
-{
-   unique_ptr<SqrtCoefficient> coeff;
-   DGMassInverse massinv;
-   unique_ptr<BilinearForm> mass;
-   mutable Vector z;
-
-   ScaledDGMassInverse(FiniteElementSpace &fes) : Operator(fes.GetTrueVSize()), massinv(fes, ir), mass(nullptr) { }
-   ScaledDGMassInverse(FiniteElementSpace &fes, Coefficient &coeff_)
-   : Operator(fes.GetTrueVSize()), coeff(new SqrtCoefficient(coeff_)), massinv(fes, *coeff, ir), mass(new BilinearForm(&fes))
-   {
-      mass->AddDomainIntegrator(new MassIntegrator(&ir));
-      mass->SetAssemblyLevel(AssemblyLevel::PARTIAL);
-      mass->Assemble();
-   }
-
-   void Mult(const Vector &x, Vector &y) const
-   {
-      if (coeff)
-      {
-         z.SetSize(x.Size());
-         massinv.Mult(x, y);
-         mass->Mult(y, z);
-         massinv.Mult(z, y);
-      }
-      else
-      {
-         massinv.Mult(x, y);
-      }
-   }
-};
-
-double alpha_f(const Vector &x)
-{
-   // return 2.0 + sin(x[0] + x[1] + x[2]);
-   return 2.0 + x[0] + x[1] + x[2];
-}
-
 int main(int argc, char *argv[])
 {
    tic_toc.Start();
@@ -224,6 +174,8 @@ int main(int argc, char *argv[])
    L2_FECollection fec_l2(order-1, dim, b2, mt);
    ParFiniteElementSpace fes_l2(&mesh, &fec_l2);
 
+   const IntegrationRule &ir = IntRules.Get(mesh.GetElementGeometry(0),2*order);
+
    tic_toc.Stop();
    if (Mpi::Root()) { cout << "Preamble: " << tic_toc.RealTime() << endl; }
 
@@ -247,8 +199,7 @@ int main(int argc, char *argv[])
    Vector alpha_vec(mesh.attributes.Max());
    alpha_vec = 1.64098370E+00;
    alpha_vec(0) = 1.88046595E-03;
-   // PWConstCoefficient alpha_coeff(alpha_vec);
-   FunctionCoefficient alpha_coeff(alpha_f);
+   PWConstCoefficient alpha_coeff(alpha_vec);
 
    Vector beta_vec(mesh.attributes.Max());
    beta_vec = 0.2;
@@ -278,9 +229,8 @@ int main(int argc, char *argv[])
 
    // Form W^{-1}
    unique_ptr<Operator> W_inv;
-   W_inv.reset(new ScaledDGMassInverse(fes_l2, alpha_coeff));
-   // if (order <= 2) { W_inv.reset(new DGMassInverse_Direct(fes_l2, alpha_coeff)); }
-   // else { W_inv.reset(new DGMassInverse(fes_l2, alpha_coeff)); }
+   if (order <= 2) { W_inv.reset(new DGMassInverse_Direct(fes_l2, alpha_coeff, ir)); }
+   else { W_inv.reset(new DGMassInverse(fes_l2, alpha_coeff, ir)); }
 
    tic_toc.Stop();
    if (Mpi::Root()) { cout << "Done. Elapsed: " << tic_toc.RealTime() << endl; }
