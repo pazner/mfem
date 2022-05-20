@@ -59,11 +59,13 @@ HypreParMatrix *DiagonalInverse(HypreParMatrix &A, ParFiniteElementSpace &fes)
    return DiagonalInverse(diag_vec, fes);
 }
 
-struct SPE10Coefficient : DiagonalMatrixCoefficient
+struct SPE10Data
 {
    Array<double> coeff_data;
-   SPE10Coefficient() : VectorCoefficient(3), coeff_data(3*nx*ny*nz)
+   SPE10Data() : coeff_data(3*nx*ny*nz)
    {
+      MFEM_VERIFY(nx<=60 && ny<=220 && nz<=85, "");
+
       ifstream permfile("spe_perm.dat");
       if (!permfile.good())
       {
@@ -73,105 +75,43 @@ struct SPE10Coefficient : DiagonalMatrixCoefficient
       double *ptr = coeff_data.begin();
       for (int l=0; l<3; l++)
       {
-         for (unsigned k=0; k<nz; k++)
+         for (int k=0; k<nz; k++)
          {
-            for (unsigned j=0; j<ny; j++)
+            for (int j=0; j<ny; j++)
             {
-               for (unsigned i=0; i<nz; i++)
+               for (int i=0; i<nx; i++)
                {
                   permfile >> *ptr;
                   *ptr = 1/(*ptr);
                   ptr++;
                }
-               for (unsigned i=0; i<60-nz; i++)
+               for (int i=0; i<60-nx; i++)
                {
                   permfile>>tmp;   // skip unneeded part
                }
             }
-            for (unsigned j=0; j<220-ny; j++)
-               for (unsigned i=0; i<60; i++)
+            for (int j=0; j<220-ny; j++)
+               for (int i=0; i<60; i++)
                {
                   permfile>>tmp;   // skip unneeded part
                }
          }
          if (l<2) // if not processing Kz, we must skip unneeded part
          {
-            for (unsigned k=0; k<85-nz; k++)
-               for (unsigned j=0; j<220; j++)
-                  for (unsigned i=0; i<60; i++)
+            for (int k=0; k<85-nz; k++)
+               for (int j=0; j<220; j++)
+                  for (int i=0; i<60; i++)
                   {
                      permfile>>tmp;   // skip unneeded part
                   }
          }
       }
-   }
-   using VectorCoefficient::Eval;
-   void Eval(Vector &V, ElementTransformation &T, const IntegrationPoint &ip)
-   {
-      double data[3];
-      Vector xvec(data, 3);
-      T.Transform(ip, xvec);
-
-      const double x = xvec[0], y = xvec[1], z = xvec[2];
-      unsigned int i = nx-1-(int)floor(x/hx/(1+3e-16));
-      MFEM_ASSERT(i >= 0 && i<nx, "");
-      unsigned int j = (int)floor(y/hy/(1+3e-16));
-      MFEM_ASSERT(j >= 0 && j < ny, "");
-      unsigned int k = nz-1-(int)floor(z/hz/(1+3e-16));
-      MFEM_ASSERT(k >= 0 && k < nz, "");
-
-      V[0] = coeff_data[ny*nx*k + nx*j + i];
-      V[1] = coeff_data[ny*nx*k + nx*j + i + nx*ny*nz];
-      V[2] = coeff_data[ny*nx*k + nx*j + i + 2*nx*ny*nz];
    }
 };
 
 struct ScalarSPE10Coefficient : Coefficient
 {
-   Array<double> coeff_data;
-   ScalarSPE10Coefficient() : coeff_data(3*nx*ny*nz)
-   {
-      ifstream permfile("spe_perm.dat");
-      if (!permfile.good())
-      {
-         MFEM_ABORT("Cannot open data file spe_perm.dat.")
-      }
-      double tmp;
-      double *ptr = coeff_data.begin();
-      for (int l=0; l<3; l++)
-      {
-         for (unsigned k=0; k<nz; k++)
-         {
-            for (unsigned j=0; j<ny; j++)
-            {
-               for (unsigned i=0; i<nz; i++)
-               {
-                  permfile >> *ptr;
-                  *ptr = 1/(*ptr);
-                  ptr++;
-               }
-               for (unsigned i=0; i<60-nz; i++)
-               {
-                  permfile>>tmp;   // skip unneeded part
-               }
-            }
-            for (unsigned j=0; j<220-ny; j++)
-               for (unsigned i=0; i<60; i++)
-               {
-                  permfile>>tmp;   // skip unneeded part
-               }
-         }
-         if (l<2) // if not processing Kz, we must skip unneeded part
-         {
-            for (unsigned k=0; k<85-nz; k++)
-               for (unsigned j=0; j<220; j++)
-                  for (unsigned i=0; i<60; i++)
-                  {
-                     permfile>>tmp;   // skip unneeded part
-                  }
-         }
-      }
-   }
+   SPE10Data spe10data;
    using Coefficient::Eval;
    double Eval(ElementTransformation &T, const IntegrationPoint &ip)
    {
@@ -180,14 +120,42 @@ struct ScalarSPE10Coefficient : Coefficient
       T.Transform(ip, xvec);
 
       const double x = xvec[0], y = xvec[1], z = xvec[2];
-      unsigned int i = nx-1-(int)floor(x/hx/(1+3e-16));
-      MFEM_ASSERT(i >= 0 && i<nx, "");
-      unsigned int j = (int)floor(y/hy/(1+3e-16));
-      MFEM_ASSERT(j >= 0 && j < ny, "");
-      unsigned int k = nz-1-(int)floor(z/hz/(1+3e-16));
-      MFEM_ASSERT(k >= 0 && k < nz, "");
+      const int i = nx-1-(int)floor(x/hx/(1+3e-16));
+      MFEM_VERIFY(i >= 0 && i<nx, "");
+      const int j = (int)floor(y/hy/(1+3e-16));
+      MFEM_VERIFY(j >= 0 && j < ny, "");
+      const int k = nz-1-(int)floor(z/hz/(1+3e-16));
+      MFEM_VERIFY(k >= 0 && k < nz, "");
 
-      return coeff_data[ny*nx*k + nx*j + i];
+      const double c0 = spe10data.coeff_data[i + j*nx + k*nx*ny + 0*nx*ny*nz];
+      const double c1 = spe10data.coeff_data[i + j*nx + k*nx*ny + 1*nx*ny*nz];
+      const double c2 = spe10data.coeff_data[i + j*nx + k*nx*ny + 2*nx*ny*nz];
+      return sqrt(c0*c0 + c1*c1 + c2*c2);
+   }
+};
+
+struct SPE10Coefficient : DiagonalMatrixCoefficient
+{
+   SPE10Data spe10;
+   SPE10Coefficient() : VectorCoefficient(3) { }
+   using VectorCoefficient::Eval;
+   void Eval(Vector &V, ElementTransformation &T, const IntegrationPoint &ip)
+   {
+      double data[3];
+      Vector xvec(data, 3);
+      T.Transform(ip, xvec);
+
+      const double x = xvec[0], y = xvec[1], z = xvec[2];
+      const int i = nx-1-(int)floor(x/hx/(1+3e-16));
+      MFEM_VERIFY(i >= 0 && i < nx, "");
+      const int j = (int)floor(y/hy/(1+3e-16));
+      MFEM_VERIFY(j >= 0 && j < ny, "");
+      const int k = nz-1-(int)floor(z/hz/(1+3e-16));
+      MFEM_VERIFY(k >= 0 && k < nz, "");
+
+      V[0] = spe10.coeff_data[ny*nx*k + nx*j + i];
+      V[1] = spe10.coeff_data[ny*nx*k + nx*j + i + nx*ny*nz];
+      V[2] = spe10.coeff_data[ny*nx*k + nx*j + i + 2*nx*ny*nz];
    }
 };
 
@@ -231,6 +199,29 @@ int main(int argc, char *argv[])
 
    tic_toc.Clear();
    tic_toc.Start();
+   if (Mpi::Root()) { cout << "Coefficient... " << flush; }
+   ScalarSPE10Coefficient spe10;
+
+   const int ir_order = 2*order + 2;
+   const IntegrationRule &ir = IntRules.Get(mesh.GetElementGeometry(0), ir_order);
+   QuadratureSpace qs(&mesh, ir_order);
+   QuadratureFunction qf(&qs);
+   for (int i = 0; i < mesh.GetNE(); ++i)
+   {
+      const IntegrationRule &ir_el = qf.GetElementIntRule(i);
+      Vector vals;
+      qf.GetElementValues(i, vals);
+      for (int j = 0; j < ir.Size(); ++j)
+      {
+         vals[j] = spe10.Eval(*mesh.GetElementTransformation(i), ir_el[j]);
+      }
+   }
+   tic_toc.Stop();
+   if (Mpi::Root()) { cout << "done. " << tic_toc.RealTime() << endl; }
+   QuadratureFunctionCoefficient beta_coeff(qf);
+
+   tic_toc.Clear();
+   tic_toc.Start();
    {
       HYPRE_BigInt ndofs_rt = fes_rt.GlobalTrueVSize();
       HYPRE_BigInt ndofs_l2 = fes_l2.GlobalTrueVSize();
@@ -245,21 +236,19 @@ int main(int argc, char *argv[])
    Array<int> ess_dofs, empty;
    fes_rt.GetBoundaryTrueDofs(ess_dofs);
 
-   // SPE10Coefficient beta_coeff;
-   // ConstantCoefficient beta_coeff(1.0);
-   ScalarSPE10Coefficient beta_coeff;
-
-   {
-      // ParGridFunction gf(&fes_rt);
-      ParGridFunction gf(&fes_l2);
-      gf.ProjectCoefficient(beta_coeff);
-      ParaViewDataCollection pv("SPE10", &mesh);
-      pv.SetPrefixPath("ParaView");
-      pv.RegisterField("beta", &gf);
-      pv.SetCycle(0);
-      pv.SetTime(0.0);
-      pv.Save();
-   }
+   // {
+   //    SPE10Coefficient spe10_vec;
+   //    ParGridFunction gf(&fes_rt);
+   //    // ParGridFunction gf(&fes_l2);
+   //    gf.ProjectCoefficient(spe10_vec);
+   //    // gf.ProjectCoefficient(spe10);
+   //    ParaViewDataCollection pv("SPE10", &mesh);
+   //    pv.SetPrefixPath("ParaView");
+   //    pv.RegisterField("beta", &gf);
+   //    pv.SetCycle(0);
+   //    pv.SetTime(0.0);
+   //    pv.Save();
+   // }
 
    // Form the 2x2 block system
    //
@@ -272,6 +261,7 @@ int main(int argc, char *argv[])
    // Form M
    ParBilinearForm mass_rt(&fes_rt);
    mass_rt.AddDomainIntegrator(new VectorFEMassIntegrator(&beta_coeff));
+   (*mass_rt.GetDBFI())[0]->SetIntegrationRule(ir);
    mass_rt.SetAssemblyLevel(AssemblyLevel::PARTIAL);
    mass_rt.Assemble();
    OperatorHandle M;
@@ -375,14 +365,15 @@ int main(int argc, char *argv[])
    minres.SetOperator(A_block);
    minres.SetPreconditioner(D_prec);
 
+   B_block.SyncFromBlocks();
    tic_toc.Clear();
    tic_toc.Start();
    minres.Mult(B_block, X_block);
    tic_toc.Stop();
    if (Mpi::Root()) { cout << "MINRES Elapsed: " << tic_toc.RealTime() << '\n'; }
+   X_block.SyncToBlocks();
 
-
-   if (true)
+   if (false)
    {
       if (Mpi::Root()) { cout << "\nPerforming sanity check...\n" << endl; }
 
@@ -404,7 +395,6 @@ int main(int argc, char *argv[])
       x = 0.0;
       OperatorHandle A;
 
-      Vector X(offsets[1]), B(offsets[1]);
       {
          Vector &B0 = B_block.GetBlock(0);
          B0.HostRead();
@@ -415,11 +405,11 @@ int main(int argc, char *argv[])
          }
       }
 
+      Vector X, B;
       a.FormLinearSystem(ess_dofs, x, b, A, X, B);
 
       unique_ptr<Solver> amg;
       amg.reset(new HypreBoomerAMG(*A.As<HypreParMatrix>()));
-
 
       CGSolver cg(MPI_COMM_WORLD);
       cg.SetAbsTol(0.0);
@@ -439,10 +429,10 @@ int main(int argc, char *argv[])
       a.RecoverFEMSolution(X, b, x);
 
       {
-         Vector &X0 = X_block;
+         Vector &X0 = X_block.GetBlock(0);
          x.HostReadWrite();
          X0.HostRead();
-         for (int i = 0; i < X.Size(); ++i)
+         for (int i = 0; i < x.Size(); ++i)
          {
             x[i] -= X0[i];
          }
