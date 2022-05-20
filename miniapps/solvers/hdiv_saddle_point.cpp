@@ -129,6 +129,56 @@ HypreParMatrix *DiagonalInverse(HypreParMatrix &A, ParFiniteElementSpace &fes)
    return DiagonalInverse(diag_vec, fes);
 }
 
+struct SqrtCoefficient : Coefficient
+{
+   Coefficient &coeff;
+   SqrtCoefficient(Coefficient &coeff_) : coeff(coeff_) { }
+   double Eval(ElementTransformation &T, const IntegrationPoint &ip) override
+   {
+      return sqrt(coeff.Eval(T, ip));
+   }
+};
+
+const IntegrationRule &ir = IntRules.Get(Geometry::CUBE, 12);
+
+struct ScaledDGMassInverse : Operator
+{
+   unique_ptr<SqrtCoefficient> coeff;
+   DGMassInverse massinv;
+   unique_ptr<BilinearForm> mass;
+   mutable Vector z;
+
+   ScaledDGMassInverse(FiniteElementSpace &fes) : Operator(fes.GetTrueVSize()), massinv(fes, ir), mass(nullptr) { }
+   ScaledDGMassInverse(FiniteElementSpace &fes, Coefficient &coeff_)
+   : Operator(fes.GetTrueVSize()), coeff(new SqrtCoefficient(coeff_)), massinv(fes, *coeff, ir), mass(new BilinearForm(&fes))
+   {
+      mass->AddDomainIntegrator(new MassIntegrator(&ir));
+      mass->SetAssemblyLevel(AssemblyLevel::PARTIAL);
+      mass->Assemble();
+   }
+
+   void Mult(const Vector &x, Vector &y) const
+   {
+      if (coeff)
+      {
+         z.SetSize(x.Size());
+         massinv.Mult(x, y);
+         mass->Mult(y, z);
+         massinv.Mult(z, y);
+      }
+      else
+      {
+         massinv.Mult(x, y);
+      }
+   }
+};
+
+double alpha_f(const Vector &x)
+{
+   // return 2.0 + sin(x[0] + x[1] + x[2]);
+   return 2.0 + x[0] + x[1] + x[2];
+}
+
 int main(int argc, char *argv[])
 {
    tic_toc.Start();
@@ -193,6 +243,18 @@ int main(int argc, char *argv[])
    Array<int> ess_dofs, empty;
    fes_rt.GetBoundaryTrueDofs(ess_dofs);
 
+   // Crooked pipe coefficients
+   Vector alpha_vec(mesh.attributes.Max());
+   alpha_vec = 1.64098370E+00;
+   alpha_vec(0) = 1.88046595E-03;
+   // PWConstCoefficient alpha_coeff(alpha_vec);
+   FunctionCoefficient alpha_coeff(alpha_f);
+
+   Vector beta_vec(mesh.attributes.Max());
+   beta_vec = 0.2;
+   beta_vec(0) = 2000;
+   PWConstCoefficient beta_coeff(beta_vec);
+
    // Form the 2x2 block system
    //
    //     [ M    D^t   ]
@@ -203,7 +265,7 @@ int main(int argc, char *argv[])
 
    // Form M
    ParBilinearForm mass_rt(&fes_rt);
-   mass_rt.AddDomainIntegrator(new VectorFEMassIntegrator);
+   mass_rt.AddDomainIntegrator(new VectorFEMassIntegrator(&beta_coeff));
    mass_rt.SetAssemblyLevel(AssemblyLevel::PARTIAL);
    mass_rt.Assemble();
    OperatorHandle M;
@@ -215,9 +277,10 @@ int main(int argc, char *argv[])
    unique_ptr<HypreParMatrix> Dt(D->Transpose());
 
    // Form W^{-1}
-   unique_ptr<Solver> W_inv;
-   if (order <= 2) { W_inv.reset(new DGMassInverse_Direct(fes_l2)); }
-   else { W_inv.reset(new DGMassInverse(fes_l2)); }
+   unique_ptr<Operator> W_inv;
+   W_inv.reset(new ScaledDGMassInverse(fes_l2, alpha_coeff));
+   // if (order <= 2) { W_inv.reset(new DGMassInverse_Direct(fes_l2, alpha_coeff)); }
+   // else { W_inv.reset(new DGMassInverse(fes_l2, alpha_coeff)); }
 
    tic_toc.Stop();
    if (Mpi::Root()) { cout << "Done. Elapsed: " << tic_toc.RealTime() << endl; }
@@ -235,7 +298,6 @@ int main(int argc, char *argv[])
    A_block.SetBlock(0, 1, Dt.get());
    A_block.SetBlock(1, 0, D.get());
    A_block.SetBlock(1, 1, W_inv.get(), -1.0);
-
 
    // We precondition the 2x2 block system defined above with the block-diagonal
    // preconditioner
@@ -261,7 +323,7 @@ int main(int argc, char *argv[])
    Vector W_diag(fes_l2.GetTrueVSize());
    {
       ParBilinearForm mass_l2(&fes_l2);
-      mass_l2.AddDomainIntegrator(new MassIntegrator);
+      mass_l2.AddDomainIntegrator(new MassIntegrator(alpha_coeff));
       mass_l2.SetAssemblyLevel(AssemblyLevel::PARTIAL);
       mass_l2.Assemble();
       mass_l2.AssembleDiagonal(W_diag);
@@ -320,8 +382,10 @@ int main(int argc, char *argv[])
       if (Mpi::Root()) { cout << "\nPerforming sanity check...\n" << endl; }
 
       ParBilinearForm a(&fes_rt);
-      a.AddDomainIntegrator(new DivDivIntegrator);
-      a.AddDomainIntegrator(new VectorFEMassIntegrator);
+      auto *divdiv = new DivDivIntegrator(alpha_coeff);
+      divdiv->SetIntegrationRule(ir);
+      a.AddDomainIntegrator(divdiv);
+      a.AddDomainIntegrator(new VectorFEMassIntegrator(&beta_coeff));
       a.Assemble();
       a.Finalize();
 
