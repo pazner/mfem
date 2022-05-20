@@ -126,6 +126,71 @@ struct SPE10Coefficient : DiagonalMatrixCoefficient
    }
 };
 
+struct ScalarSPE10Coefficient : Coefficient
+{
+   Array<double> coeff_data;
+   ScalarSPE10Coefficient() : coeff_data(3*nx*ny*nz)
+   {
+      ifstream permfile("spe_perm.dat");
+      if (!permfile.good())
+      {
+         MFEM_ABORT("Cannot open data file spe_perm.dat.")
+      }
+      double tmp;
+      double *ptr = coeff_data.begin();
+      for (int l=0; l<3; l++)
+      {
+         for (unsigned k=0; k<nz; k++)
+         {
+            for (unsigned j=0; j<ny; j++)
+            {
+               for (unsigned i=0; i<nz; i++)
+               {
+                  permfile >> *ptr;
+                  *ptr = 1/(*ptr);
+                  ptr++;
+               }
+               for (unsigned i=0; i<60-nz; i++)
+               {
+                  permfile>>tmp;   // skip unneeded part
+               }
+            }
+            for (unsigned j=0; j<220-ny; j++)
+               for (unsigned i=0; i<60; i++)
+               {
+                  permfile>>tmp;   // skip unneeded part
+               }
+         }
+         if (l<2) // if not processing Kz, we must skip unneeded part
+         {
+            for (unsigned k=0; k<85-nz; k++)
+               for (unsigned j=0; j<220; j++)
+                  for (unsigned i=0; i<60; i++)
+                  {
+                     permfile>>tmp;   // skip unneeded part
+                  }
+         }
+      }
+   }
+   using Coefficient::Eval;
+   double Eval(ElementTransformation &T, const IntegrationPoint &ip)
+   {
+      double data[3];
+      Vector xvec(data, 3);
+      T.Transform(ip, xvec);
+
+      const double x = xvec[0], y = xvec[1], z = xvec[2];
+      unsigned int i = nx-1-(int)floor(x/hx/(1+3e-16));
+      MFEM_ASSERT(i >= 0 && i<nx, "");
+      unsigned int j = (int)floor(y/hy/(1+3e-16));
+      MFEM_ASSERT(j >= 0 && j < ny, "");
+      unsigned int k = nz-1-(int)floor(z/hz/(1+3e-16));
+      MFEM_ASSERT(k >= 0 && k < nz, "");
+
+      return coeff_data[ny*nx*k + nx*j + i];
+   }
+};
+
 int main(int argc, char *argv[])
 {
    tic_toc.Start();
@@ -180,10 +245,13 @@ int main(int argc, char *argv[])
    Array<int> ess_dofs, empty;
    fes_rt.GetBoundaryTrueDofs(ess_dofs);
 
-   SPE10Coefficient beta_coeff;
+   // SPE10Coefficient beta_coeff;
+   // ConstantCoefficient beta_coeff(1.0);
+   ScalarSPE10Coefficient beta_coeff;
 
    {
-      ParGridFunction gf(&fes_rt);
+      // ParGridFunction gf(&fes_rt);
+      ParGridFunction gf(&fes_l2);
       gf.ProjectCoefficient(beta_coeff);
       ParaViewDataCollection pv("SPE10", &mesh);
       pv.SetPrefixPath("ParaView");
@@ -288,6 +356,7 @@ int main(int argc, char *argv[])
    X_block = 0.0;
 
    B_block.GetBlock(0).Randomize(1);
+   B_block.GetBlock(0).SetSubVector(ess_dofs, 0.0);
    B_block.GetBlock(1) = 0.0;
 
    S_inv.Setup(B_block.GetBlock(1), X_block.GetBlock(1)); // AMG setup
@@ -311,6 +380,77 @@ int main(int argc, char *argv[])
    minres.Mult(B_block, X_block);
    tic_toc.Stop();
    if (Mpi::Root()) { cout << "MINRES Elapsed: " << tic_toc.RealTime() << '\n'; }
+
+
+   if (true)
+   {
+      if (Mpi::Root()) { cout << "\nPerforming sanity check...\n" << endl; }
+
+      DG_Interface_FECollection hfec(order-1, dim);
+      ParFiniteElementSpace hfes(&mesh, &hfec);
+
+      ParBilinearForm a(&fes_rt);
+      a.AddDomainIntegrator(new DivDivIntegrator);
+      a.AddDomainIntegrator(new VectorFEMassIntegrator(&beta_coeff));
+
+      a.EnableHybridization(&hfes, new NormalTraceJumpIntegrator(), ess_dofs);
+
+      a.Assemble();
+      a.Finalize();
+
+      ParGridFunction x(&fes_rt);
+      ParLinearForm b(&fes_rt);
+      b = 0.0;
+      x = 0.0;
+      OperatorHandle A;
+
+      Vector X(offsets[1]), B(offsets[1]);
+      {
+         Vector &B0 = B_block.GetBlock(0);
+         B0.HostRead();
+         b.HostWrite();
+         for (int i = 0; i < B0.Size(); ++i)
+         {
+            b[i] = B0[i];
+         }
+      }
+
+      a.FormLinearSystem(ess_dofs, x, b, A, X, B);
+
+      unique_ptr<Solver> amg;
+      amg.reset(new HypreBoomerAMG(*A.As<HypreParMatrix>()));
+
+
+      CGSolver cg(MPI_COMM_WORLD);
+      cg.SetAbsTol(0.0);
+      cg.SetRelTol(1e-12);
+      cg.SetMaxIter(500);
+      cg.SetPrintLevel(1);
+      cg.SetPrintLevel(IterativeSolver::PrintLevel().Summary().FirstAndLast());
+      cg.SetOperator(*A);
+      cg.SetPreconditioner(*amg);
+
+      tic_toc.Clear();
+      tic_toc.Start();
+      cg.Mult(B, X);
+      tic_toc.Stop();
+      if (Mpi::Root()) { cout << "CG Elapsed:     " << tic_toc.RealTime() << '\n'; }
+
+      a.RecoverFEMSolution(X, b, x);
+
+      {
+         Vector &X0 = X_block;
+         x.HostReadWrite();
+         X0.HostRead();
+         for (int i = 0; i < X.Size(); ++i)
+         {
+            x[i] -= X0[i];
+         }
+      }
+
+      double error = x.Normlinf();
+      if (Mpi::Root()) { cout << "Error: " << error << '\n'; }
+   }
 
    return 0;
 }
