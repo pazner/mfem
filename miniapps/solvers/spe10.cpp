@@ -36,7 +36,7 @@ static constexpr double hz = 2.0;
 ParMesh MakeParMesh(int Nx, int Ny, int Nz, int par_ref)
 {
    Mesh serial_mesh = Mesh::MakeCartesian3D(
-                  Nx, Ny, Nz, Element::HEXAHEDRON, nx*hx, ny*hy, nz*hz);
+                         Nx, Ny, Nz, Element::HEXAHEDRON, nx*hx, ny*hy, nz*hz);
    ParMesh mesh(MPI_COMM_WORLD, serial_mesh);
    serial_mesh.Clear();
    for (int i = 0; i < par_ref; ++i)
