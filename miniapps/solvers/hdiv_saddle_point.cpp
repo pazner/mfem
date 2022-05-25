@@ -229,7 +229,11 @@ int main(int argc, char *argv[])
 
    // Form W^{-1}
    unique_ptr<Operator> W_inv;
-   if (order <= 2) { W_inv.reset(new DGMassInverse_Direct(fes_l2, alpha_coeff, ir)); }
+   if (order <= 2)
+   {
+      auto mode = Device::Allows(Backend::CUDA) ? BatchSolverMode::CUBLAS : BatchSolverMode::NATIVE;
+      W_inv.reset(new DGMassInverse_Direct(fes_l2, alpha_coeff, ir, mode));
+   }
    else { W_inv.reset(new DGMassInverse(fes_l2, alpha_coeff, ir)); }
 
    tic_toc.Stop();

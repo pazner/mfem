@@ -33,11 +33,17 @@ static constexpr double hx = 20.0;
 static constexpr double hy = 10.0;
 static constexpr double hz = 2.0;
 
-ParMesh MakeParMesh(int Nx, int Ny, int Nz)
+ParMesh MakeParMesh(int Nx, int Ny, int Nz, int par_ref)
 {
-   Mesh mesh = Mesh::MakeCartesian3D(
+   Mesh serial_mesh = Mesh::MakeCartesian3D(
                   Nx, Ny, Nz, Element::HEXAHEDRON, nx*hx, ny*hy, nz*hz);
-   return ParMesh(MPI_COMM_WORLD, mesh);
+   ParMesh mesh(MPI_COMM_WORLD, serial_mesh);
+   serial_mesh.Clear();
+   for (int i = 0; i < par_ref; ++i)
+   {
+      mesh.UniformRefinement();
+   }
+   return mesh;
 }
 
 HypreParMatrix *DiagonalInverse(Vector &diag_vec, ParFiniteElementSpace &fes)
@@ -168,10 +174,10 @@ int main(int argc, char *argv[])
 
    const char *device_config = "cpu";
    int order = 3;
-
    int Nx = nx;
    int Ny = ny;
    int Nz = nz;
+   int par_ref = 1;
 
    OptionsParser args(argc, argv);
    args.AddOption(&device_config, "-d", "--device",
@@ -180,12 +186,13 @@ int main(int argc, char *argv[])
    args.AddOption(&Nx, "-nx", "--nx", "x size.");
    args.AddOption(&Ny, "-ny", "--ny", "y size.");
    args.AddOption(&Nz, "-nz", "--nz", "z size.");
+   args.AddOption(&par_ref, "-rp", "--parallel-refine", "Parallel refinements.");
    args.ParseCheck();
 
    Device device(device_config);
    if (Mpi::Root()) { device.Print(); }
 
-   ParMesh mesh = MakeParMesh(Nx, Ny, Nz);
+   ParMesh mesh = MakeParMesh(Nx, Ny, Nz, par_ref);
    const int dim = mesh.Dimension();
    MFEM_VERIFY(dim == 2 || dim == 3, "Spatial dimension must be 2 or 3.");
 
@@ -240,17 +247,17 @@ int main(int argc, char *argv[])
    Array<int> ess_dofs, empty;
    fes_rt.GetBoundaryTrueDofs(ess_dofs);
 
-   {
-      SPE10Coefficient spe10_vec;
-      ParGridFunction gf(&fes_rt);
-      gf.ProjectCoefficient(spe10_vec);
-      ParaViewDataCollection pv("SPE10_Scaled", &mesh);
-      pv.SetPrefixPath("ParaView");
-      pv.RegisterField("beta", &gf);
-      pv.SetCycle(0);
-      pv.SetTime(0.0);
-      pv.Save();
-   }
+   // {
+   //    SPE10Coefficient spe10_vec;
+   //    ParGridFunction gf(&fes_rt);
+   //    gf.ProjectCoefficient(spe10_vec);
+   //    ParaViewDataCollection pv("SPE10_Scaled", &mesh);
+   //    pv.SetPrefixPath("ParaView");
+   //    pv.RegisterField("beta", &gf);
+   //    pv.SetCycle(0);
+   //    pv.SetTime(0.0);
+   //    pv.Save();
+   // }
 
    // Form the 2x2 block system
    //
