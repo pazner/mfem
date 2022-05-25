@@ -127,7 +127,7 @@ DGMassInverse::~DGMassInverse()
 template<int DIM, int D1D, int Q1D>
 void DGMassInverse::DGMassCGIteration(const Vector &b_, Vector &u_) const
 {
-   MFEM_NVTX;
+   NVTX("DG Mass Inverse");
 
    const int NE = fes.GetNE();
    const int d1d = m->dofs1D;
@@ -535,6 +535,7 @@ void DGMassInverse_Direct::Setup()
 
 void DGMassInverse_Direct::Mult(const Vector &Mu, Vector &u) const
 {
+   NVTX("DG Mass Inverse");
    if (mode == BatchSolverMode::CUBLAS)
    {
 #ifdef MFEM_USE_CUDA

@@ -1725,7 +1725,7 @@ void HypreParMatrix::Mult(double a, const Vector &x, double b, Vector &y) const
 {
 #undef MFEM_NVTX_COLOR
 #define MFEM_NVTX_COLOR RoyalBlue
-   MFEM_NVTX;
+   NVTX("Hypre Mult");
 #undef MFEM_NVTX_COLOR
 #define MFEM_NVTX_COLOR Purple
 

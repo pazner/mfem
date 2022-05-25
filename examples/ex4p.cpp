@@ -48,6 +48,9 @@
 #include <fstream>
 #include <iostream>
 
+#define MFEM_NVTX_COLOR Firebrick
+#include "general/nvtx.hpp"
+
 using namespace std;
 using namespace mfem;
 
@@ -213,11 +216,13 @@ int main(int argc, char *argv[])
       a->EnableHybridization(hfes, new NormalTraceJumpIntegrator(),
                              ess_tdof_list);
    }
-   a->Assemble();
-
    OperatorPtr A;
    Vector B, X;
-   a->FormLinearSystem(ess_tdof_list, x, *b, A, X, B);
+   {
+      NVTX("Assembly");
+      a->Assemble();
+      a->FormLinearSystem(ess_tdof_list, x, *b, A, X, B);
+   }
 
    if (myid == 0 && !pa)
    {
@@ -235,7 +240,12 @@ int main(int argc, char *argv[])
    pcg->SetRelTol(1e-12);
    pcg->SetMaxIter(2000);
    pcg->SetPrintLevel(1);
-   if (hybridization) { prec = new HypreBoomerAMG(*A.As<HypreParMatrix>()); }
+   if (hybridization)
+   {
+      auto *amg = new HypreBoomerAMG(*A.As<HypreParMatrix>());
+      amg->Setup(X, B);
+      prec = amg;
+   }
    else if (pa) { prec = new OperatorJacobiSmoother(*a, ess_tdof_list); }
    else
    {
@@ -248,13 +258,21 @@ int main(int argc, char *argv[])
    tic_toc.Clear();
    tic_toc.Start();
    pcg->Mult(B, X);
-   tic_toc.Stop();
    if (Mpi::Root()) { cout << "CG Elapsed: " << tic_toc.RealTime() << endl; }
-   return 0;
+   tic_toc.Stop();
 
-   // 14. Recover the parallel grid function corresponding to X. This is the
-   //     local finite element solution on each processor.
-   a->RecoverFEMSolution(X, *b, x);
+   {
+      NVTX("HB Recovery");
+      tic_toc.Clear();
+      tic_toc.Start();
+      // 14. Recover the parallel grid function corresponding to X. This is the
+      //     local finite element solution on each processor.
+      a->RecoverFEMSolution(X, *b, x);
+      tic_toc.Stop();
+   }
+   if (Mpi::Root()) { cout << "HB Elapsed: " << tic_toc.RealTime() << endl; }
+
+   return 0;
 
    // 15. Compute and print the L^2 norm of the error.
    {
