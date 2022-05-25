@@ -188,7 +188,7 @@ HypreParMatrix *FormDiscreteDivergenceMatrix(ParFiniteElementSpace &fes_rt,
    D_local.OverrideSize(n_l2, n_rt);
 
    D_local.GetMemoryI().New(n_l2 + 1);
-   // Each row always has two nonzeros
+   // Each row always has 2*dim nonzeros (one for each face of the element)
    const int nnz = n_l2*2*dim;
    auto I = D_local.WriteI();
    MFEM_FORALL(i, n_l2+1, I[i] = 2*dim*i; );
