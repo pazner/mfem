@@ -220,7 +220,7 @@ public:
             if (c == '.')
             {
                fmt++;
-               const char c = *fmt;
+               const char c2 = *fmt;
                char num[8] = { 0 };
                for (int k = 0; *fmt != '\0'; fmt++, k++)
                {
@@ -229,8 +229,8 @@ public:
                   num[k] = *fmt;
                }
                const int fx = std::atoi(num);
-               if (c == 'e') { mfem::out << std::scientific; }
-               if (c == 'f') { mfem::out << std::fixed; }
+               if (c2 == 'e') { mfem::out << std::scientific; }
+               if (c2 == 'f') { mfem::out << std::fixed; }
                mfem::out << std::setprecision(fx);
                operator<<(arg);
                mfem::out << std::setprecision(6);
