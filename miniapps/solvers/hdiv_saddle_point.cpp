@@ -20,13 +20,10 @@
 #include <iostream>
 #include <memory>
 
-#include "lor_mms.hpp"
 #include "discrete_divergence.hpp"
 
 using namespace std;
 using namespace mfem;
-
-bool grad_div_problem = true;
 
 void TestSameMatrices(SparseMatrix &A1, const SparseMatrix &A2,
                       HYPRE_BigInt *cmap1=nullptr,
@@ -162,8 +159,6 @@ int main(int argc, char *argv[])
    ParMesh mesh = LoadParMesh(mesh_file, ser_ref, par_ref);
    const int dim = mesh.Dimension();
    MFEM_VERIFY(dim == 2 || dim == 3, "Spatial dimension must be 2 or 3.");
-
-   VectorFunctionCoefficient f_vec_coeff(dim, f_vec), u_vec_coeff(dim, u_vec);
 
    int b1 = BasisType::GaussLobatto, b2 = BasisType::IntegratedGLL;
    int mt = FiniteElement::INTEGRAL;
