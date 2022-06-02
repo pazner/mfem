@@ -221,7 +221,7 @@ TEST_CASE("CalcVShape ND",
 {
    static constexpr int maxOrder = 5;
    static constexpr int resolution = 10;
-   auto order = GENERATE(1, maxOrder);
+   auto order = GENERATE_COPY(1, maxOrder);
 
    CAPTURE(order);
 
@@ -289,7 +289,7 @@ TEST_CASE("CalcVShape RT",
 {
    static constexpr int maxOrder = 5;
    static constexpr int resolution = 10;
-   auto order = GENERATE(1, maxOrder);
+   auto order = GENERATE_COPY(1, maxOrder);
 
    CAPTURE(order);
 

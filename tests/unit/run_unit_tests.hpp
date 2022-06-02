@@ -46,7 +46,6 @@ static int RunCatchSession(int argc, char *argv[],
    if (!cfg.showSuccessfulTests)
    {
       mfem::out.Disable();
-      mfem::err.Disable();
    }
 
    if (root)
