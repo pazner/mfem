@@ -9,8 +9,8 @@
 // terms of the BSD-3 license. We welcome feedback and contributions, see file
 // CONTRIBUTING.md for details.
 
-#include "rad_diff_coefficients.hpp"
-#include "rad_diff_operator.hpp"
+#include "mms.hpp"
+#include "radiation_diffusion.hpp"
 
 namespace mfem
 {
@@ -84,47 +84,5 @@ double RadiationEnergySource(const Vector &xvec, double t)
 }
 
 } // namespace MMS
-
-T4Coefficient::T4Coefficient(RadiationDiffusionOperator &rad_diff_)
-   : rad_diff(rad_diff_), b_gf(&rad_diff.fes_l2) { }
-
-double T4Coefficient::Eval(ElementTransformation &Tr,
-                           const IntegrationPoint &ip)
-{
-   using namespace MMS;
-
-   const double dt = rad_diff.dt;
-
-   const double e_val = rad_diff.e_gf.GetValue(Tr, ip);
-   const double k_val = b_gf.GetValue(Tr, ip);
-   const double e_np1 = e_val + dt*k_val;
-   const double T = e_np1/Cv;
-
-   return c*eta*sigma*pow(T, 4);
-   // return c*eta*sigma*T;
-   // return T;
-   // return e_val/Cv + dt*k_val/Cv;
-}
-
-T4DerivativeCoefficient::T4DerivativeCoefficient(
-   RadiationDiffusionOperator &rad_diff_)
-   : rad_diff(rad_diff_), b_gf(&rad_diff.fes_l2) { }
-
-double T4DerivativeCoefficient::Eval(ElementTransformation &Tr,
-                                     const IntegrationPoint &ip)
-{
-   using namespace MMS;
-
-   const double dt = rad_diff.dt;
-
-   const double e_val = rad_diff.e_gf.GetValue(Tr, ip);
-   const double k_val = b_gf.GetValue(Tr, ip);
-   const double e_np1 = e_val + dt*k_val;
-
-   return 4*c*eta*sigma*dt*pow(Cv, -4)*pow(e_np1, 3);
-   // return c*eta*sigma*dt/Cv;
-   // return dt/Cv;
-   // return dt/Cv;
-}
 
 } // namespace mfem

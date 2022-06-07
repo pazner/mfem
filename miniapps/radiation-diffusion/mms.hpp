@@ -19,6 +19,7 @@ namespace mfem
 
 namespace MMS
 {
+
 // See Table I from reference [1]
 // static constexpr double rho   = 2;
 // static constexpr double Cv    = 3;
@@ -49,25 +50,8 @@ double ExactMaterialEnergy(const Vector &xvec, double t);
 double ExactRadiationEnergy(const Vector &xvec, double t);
 double MaterialEnergySource(const Vector &xvec, double t);
 double RadiationEnergySource(const Vector &xvec, double t);
-}
 
-class T4Coefficient : public Coefficient
-{
-   class RadiationDiffusionOperator &rad_diff;
-public:
-   ParGridFunction b_gf;
-   T4Coefficient(class RadiationDiffusionOperator &rad_diff_);
-   double Eval(ElementTransformation &Tr, const IntegrationPoint &ip);
-};
-
-class T4DerivativeCoefficient : public Coefficient
-{
-   class RadiationDiffusionOperator &rad_diff;
-public:
-   ParGridFunction b_gf;
-   T4DerivativeCoefficient(class RadiationDiffusionOperator &rad_diff_);
-   double Eval(ElementTransformation &Tr, const IntegrationPoint &ip);
-};
+} // namespace MMS
 
 } // namespace mfem
 

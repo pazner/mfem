@@ -9,38 +9,18 @@
 // terms of the BSD-3 license. We welcome feedback and contributions, see file
 // CONTRIBUTING.md for details.
 
-#ifndef RAD_DIFF_OPERATOR_HPP
-#define RAD_DIFF_OPERATOR_HPP
+#ifndef RADIATION_DIFFUSION_HPP
+#define RADIATION_DIFFUSION_HPP
 
 #include "mfem.hpp"
-#include "rad_diff_linsolver.hpp"
-#include "rad_diff_coefficients.hpp"
+#include "radiation_diffusion.hpp"
+#include "energy_integrator.hpp"
+#include "linear_solver.hpp"
+#include "mms.hpp"
 #include <memory>
 
 namespace mfem
 {
-
-class NonlinearEnergyIntegrator : public NonlinearFormIntegrator
-{
-   ParFiniteElementSpace &fes;
-   T4Coefficient coeff;
-   DomainLFIntegrator integ;
-
-   T4DerivativeCoefficient deriv_coeff;
-   MassIntegrator mass;
-   Array<int> dofs;
-
-public:
-   NonlinearEnergyIntegrator(class RadiationDiffusionOperator &rad_diff_);
-
-   virtual void AssembleElementVector(const FiniteElement &el,
-                                      ElementTransformation &Tr,
-                                      const Vector &elfun, Vector &elvect);
-
-   virtual void AssembleElementGrad(const FiniteElement &el,
-                                    ElementTransformation &Tr,
-                                    const Vector &elfun, DenseMatrix &elmat);
-};
 
 class RadiationDiffusionOperator : public TimeDependentOperator
 {

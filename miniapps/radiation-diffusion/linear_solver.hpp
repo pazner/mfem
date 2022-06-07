@@ -9,11 +9,11 @@
 // terms of the BSD-3 license. We welcome feedback and contributions, see file
 // CONTRIBUTING.md for details.
 
-#ifndef RAD_DIFF_LINSOLVER_HPP
-#define RAD_DIFF_LINSOLVER_HPP
+#ifndef LINEAR_SOLVER_HPP
+#define LINEAR_SOLVER_HPP
 
 #include "mfem.hpp"
-#include "rad_diff_coefficients.hpp"
+#include "mms.hpp"
 #include <memory>
 
 namespace mfem

@@ -9,8 +9,8 @@
 // terms of the BSD-3 license. We welcome feedback and contributions, see file
 // CONTRIBUTING.md for details.
 
-#include "rad_diff_linsolver.hpp"
-#include "rad_diff_operator.hpp"
+#include "radiation_diffusion.hpp"
+#include "linear_solver.hpp"
 
 namespace mfem
 {

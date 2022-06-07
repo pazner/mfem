@@ -8,262 +8,177 @@
 // MFEM is free software; you can redistribute it and/or modify it under the
 // terms of the BSD-3 license. We welcome feedback and contributions, see file
 // CONTRIBUTING.md for details.
-//
-//                     ----------------------------------
-//                     Radiation-Diffusion Solver Miniapp
-//                     ----------------------------------
-//
-// This miniapp solves a simple radiation-diffusion test case as described in
-// the paper
-//
-// T. A. Brunner, Development of a grey nonlinear thermal radiation diffusion
-// verification problem (2006).
 
-#include "mfem.hpp"
+#include "radiation_diffusion.hpp"
 
-#include "rad_diff_operator.hpp"
-#include "rad_diff_linsolver.hpp"
-
-using namespace std;
-using namespace mfem;
-
-ParMesh LoadParMesh(const char *mesh_file, int ser_ref = 0, int par_ref = 0)
+namespace mfem
 {
-   Mesh serial_mesh = Mesh::LoadFromFile(mesh_file);
-   for (int i = 0; i < ser_ref; ++i) { serial_mesh.UniformRefinement(); }
-   ParMesh mesh(MPI_COMM_WORLD, serial_mesh);
-   serial_mesh.Clear();
-   for (int i = 0; i < par_ref; ++i) { mesh.UniformRefinement(); }
-   return mesh;
+
+RadiationDiffusionOperator::RadiationDiffusionOperator(ParMesh &mesh, int order)
+   : dim(mesh.Dimension()),
+     fec_l2(order-1, dim, b2, mt),
+     fes_l2(&mesh, &fec_l2),
+     fec_rt(order-1, dim, b1, b2),
+     fes_rt(&mesh, &fec_rt),
+     e_gf(&fes_l2),
+     E_gf(&fes_l2),
+     F_gf(&fes_rt),
+     S_e_coeff(MMS::MaterialEnergySource),
+     S_E_coeff(MMS::RadiationEnergySource),
+     H_form(&fes_l2),
+     L_form(&fes_l2),
+     R_form(&fes_rt),
+     D_form(&fes_rt, &fes_l2)
+{
+   const int n_l2 = fes_l2.GetTrueVSize();
+   const int n_rt = fes_rt.GetTrueVSize();
+
+   // Unknowns: material energy, radiation energy (L2), flux (RT)
+   width = height = 2*n_l2 + n_rt;
+
+   offsets = Array<int>({0, n_l2, 2*n_l2, 2*n_l2 + n_rt});
+
+   double h_min, h_max, kappa_min, kappa_max;
+   mesh.GetCharacteristics(h_min, h_max, kappa_min, kappa_max);
+   dt = h_min*0.05/MMS::tau;
+
+   FunctionCoefficient e_coeff(MMS::InitialMaterialEnergy);
+   e_gf.ProjectCoefficient(e_coeff);
+
+   FunctionCoefficient E_coeff(MMS::InitialRadiationEnergy);
+   E_gf.ProjectCoefficient(E_coeff);
+
+   H_form.AddDomainIntegrator(new NonlinearEnergyIntegrator(*this));
+
+   L_form.AddDomainIntegrator(new MassIntegrator);
+   L_form.Assemble();
+   L_form.Finalize();
+   L.reset(L_form.ParallelAssemble());
+
+   R_form.AddDomainIntegrator(new VectorFEMassIntegrator);
+   R_form.Assemble();
+   R_form.Finalize();
+   R.reset(R_form.ParallelAssemble());
+
+   D_form.AddDomainIntegrator(new MixedScalarDivergenceIntegrator);
+   D_form.Assemble();
+   D_form.Finalize();
+   D.reset(D_form.ParallelAssemble());
+   Dt.reset(D->Transpose());
+
+   // J.SetBlock(0, 0, J00.get());
+   // J.SetBlock(0, 1, L.get(), -c*dt*sigma);
+   // J.SetBlock(1, 0, &H_form, -1.0);
+   // J.SetBlock(1, 1, &L, 1.0 + c*dt*sigma);
+   // J.SetBlock(1, 2, &D);
+   // J.SetBlock(2, 1, &Dt);
+   // J.SetBlock(2, 2, &R, -3*sigma/c/dt);
+
+   linear_solver.reset(new RadiationDiffusionLinearSolver(*this));
+
+   newton.SetAbsTol(1e-12);
+   newton.SetRelTol(1e-12);
+   newton.SetMaxIter(20);
+   newton.SetPrintLevel(IterativeSolver::PrintLevel().Iterations());
+   newton.SetSolver(*linear_solver);
+   newton.SetOperator(*this);
 }
 
-int main(int argc, char *argv[])
+void RadiationDiffusionOperator::Mult(const Vector &x, Vector &y) const
 {
-   Mpi::Init(argc, argv);
-   Hypre::Init();
+   using namespace MMS;
 
-   const char *mesh_file = "../../data/inline-quad.mesh";
-   const char *device_config = "cpu";
-   int ser_ref = 1;
-   int par_ref = 1;
-   int order = 3;
+   const int n_l2 = fes_l2.GetTrueVSize();
+   const int n_rt = fes_rt.GetTrueVSize();
 
-   OptionsParser args(argc, argv);
-   args.AddOption(&device_config, "-d", "--device",
-                  "Device configuration string, see Device::Configure().");
-   args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use.");
-   args.AddOption(&ser_ref, "-rs", "--serial-refine",
-                  "Number of times to refine the mesh in serial.");
-   args.AddOption(&par_ref, "-rp", "--parallel-refine",
-                  "Number of times to refine the mesh in parallel.");
-   args.AddOption(&order, "-o", "--order", "Polynomial degree.");
-   args.ParseCheck();
+   const Vector x_e(const_cast<Vector&>(x), offsets[0], n_l2);
+   const Vector x_E(const_cast<Vector&>(x), offsets[1], n_l2);
+   const Vector x_F(const_cast<Vector&>(x), offsets[2], n_rt);
 
-   Device device(device_config);
-   if (Mpi::Root()) { device.Print(); }
+   Vector y_e(y, offsets[0], n_l2);
+   Vector y_E(y, offsets[1], n_l2);
+   Vector y_F(y, offsets[2], n_rt);
 
-   ParMesh mesh = LoadParMesh(mesh_file, ser_ref, par_ref);
-   const int dim = mesh.Dimension();
-   MFEM_VERIFY(dim == 2 || dim == 3, "Spatial dimension must be 2 or 3.");
+   // Material energy
+   z.SetSize(n_l2);
+   L->Mult(x_e, y_e);
+   y_e *= rho;
 
-   RadiationDiffusionOperator rad_diff(mesh, order);
+   H_form.Mult(x_e, z);
+   y_e += z;
+   y_E.Set(-1, z); // Contribution to radiation energy
 
-   // const int n_l2 = rad_diff.fes_l2.GetTrueVSize();
-   // const int n_rt = rad_diff.fes_rt.GetTrueVSize();
+   L->Mult(x_E, z);
+   y_E.Add(1 + c*dt*sigma, z); // Contribution to radiation energy
+   y_e.Add(-c*dt*sigma, z);
 
-   Vector u(rad_diff.Height());
-   GridFunction u_e(&rad_diff.fes_l2, u, rad_diff.offsets[0]);
-   GridFunction u_E(&rad_diff.fes_l2, u, rad_diff.offsets[1]);
-   GridFunction u_F(&rad_diff.fes_rt, u, rad_diff.offsets[2]);
+   // Radiation energy
+   D->Mult(x_F, z);
+   y_E += z;
 
-   FunctionCoefficient e_init_coeff(MMS::InitialMaterialEnergy);
-   FunctionCoefficient E_init_coeff(MMS::InitialRadiationEnergy);
+   // Radiation flux
+   z.SetSize(n_rt);
+   R->Mult(x_F, y_F);
+   y_F *= -3*sigma/c/dt;
 
-   u_e.ProjectCoefficient(e_init_coeff);
-   u_E.ProjectCoefficient(E_init_coeff);
-   u_F = 0.0;
+   Dt->Mult(x_E, z);
+   y_F += z;
 
-   Vector k(rad_diff.Height());
-   k = 0.0;
-
-   std::cout << "\n\n === TESTING TIMESTEP ===\n\n";
-   rad_diff.ImplicitSolve(rad_diff.dt, u, k);
-
-   std::cout << "\n\n === TESTING LINEAR SOLVER ===\n\n";
-
-   {
-      // Test linear solver (Brunner-Nowack iteration)
-      Vector r(rad_diff.Height());
-      Vector x(rad_diff.Height());
-
-      r.Randomize(1);
-      x = 0.0;
-
-      RadiationDiffusionLinearSolver linsolver(rad_diff);
-      linsolver.Update(r);
-      linsolver.Mult(r, x);
-   }
-
-   std::cout << "\n\n === TESTING NEWTON ===\n\n";
-   // return 0;
-
-   {
-      struct MyOp : Operator
-      {
-         ParBilinearForm L_form;
-         ParNonlinearForm H_form;
-         std::unique_ptr<HypreParMatrix> L;
-         mutable std::unique_ptr<HypreParMatrix> J;
-         mutable Vector z;
-
-         MyOp(RadiationDiffusionOperator &rd)
-            : Operator(rd.fes_l2.GetTrueVSize()), L_form(&rd.fes_l2), H_form(&rd.fes_l2)
-         {
-            L_form.AddDomainIntegrator(new MassIntegrator);
-            L_form.Assemble();
-            L_form.Finalize();
-            L.reset(L_form.ParallelAssemble());
-            H_form.AddDomainIntegrator(new NonlinearEnergyIntegrator(rd));
-         }
-
-         void Mult(const Vector &x, Vector &y) const override
-         {
-            z.SetSize(y.Size());
-            L->Mult(x, y);
-
-            H_form.Mult(x, z);
-            y.Add(1.0, z);
-         }
-
-         Operator &GetGradient(const Vector &x) const override
-         {
-            auto &dH = dynamic_cast<HypreParMatrix&>(H_form.GetGradient(x));
-            J.reset(ParAdd(L.get(), &dH));
-            return *J;
-         }
-      };
-
-      MyOp op(rad_diff);
-
-      // Test nonlinear solve and linearization
-      ParFiniteElementSpace &fes_l2 = rad_diff.GetL2Space();
-
-      ParNonlinearForm H_form(&fes_l2);
-      H_form.AddDomainIntegrator(new NonlinearEnergyIntegrator(rad_diff));
-
-      rad_diff.e_gf.ProjectCoefficient(e_init_coeff);
-      // rad_diff.dt = 0.0;
-
-      SerialDirectSolver direct_solver;
-      NewtonSolver newton;
-      newton.SetAbsTol(1e-9);
-      newton.SetRelTol(1e-12);
-      newton.SetMaxIter(100);
-      newton.SetPrintLevel(IterativeSolver::PrintLevel().All());
-      newton.SetSolver(direct_solver);
-      newton.SetOperator(op);
-
-      Vector b; // Treated as zero
-
-      ParGridFunction x(&fes_l2), z(&fes_l2);
-      z = 0.0;
-      rad_diff.H_form.Mult(z, x);
-
-      SerialDirectSolver L_solver(*rad_diff.L);
-      L_solver.Mult(x, z);
-      x.Set(-1.0, z);
-
-      // op.Mult(x, z);
-      // std::cout << z.Normlinf() << '\n';
-      // return 0;
-
-      // x = 0.0;
-
-      newton.Mult(b, x);
-
-      // Vector z(b.Size());
-      // H_form.Mult(x, z);
-      // z -= b;
-      // std::cout << "Resnorm: " << z.Norml2() << '\n';
-      // std::cout << "b norm:  " << b.Norml2() << '\n';
-      // std::cout << "x norm:  " << x.Norml2() << '\n';
-   }
-
-   return 0;
-
-   {
-      // Test nonlinear solve and linearization
-      ParFiniteElementSpace &fes_l2 = rad_diff.GetL2Space();
-
-      ParGridFunction b(&fes_l2);
-      ParGridFunction x(&fes_l2);
-
-      // rad_diff.e_gf.Randomize(1);
-      rad_diff.dt = 1e-40;
-
-      ParNonlinearForm H_form(&fes_l2);
-      H_form.AddDomainIntegrator(new NonlinearEnergyIntegrator(rad_diff));
-
-      // x.Randomize(5);
-      // x *= 1e-2;
-      // H_form.Mult(x, b);
-      b = 0.0;
-
-      std::cout << "\ndt: " << rad_diff.dt << "\n\n";
-      std::cout << "\nb norm: " << b.Norml2() << "\n\n";
-
-      // Use petrubation of solution as initial guess
-      // Vector tmp(x.Size());
-      // tmp.Randomize(1);
-      // tmp -= 0.5;
-      // tmp *= 1e-2;
-      // tmp += 1.0;
-      // x *= tmp;
-
-      SerialDirectSolver direct_solver;
-      NewtonSolver newton;
-      newton.SetAbsTol(1e-12);
-      newton.SetRelTol(1e-12);
-      newton.SetMaxIter(100);
-      newton.SetPrintLevel(IterativeSolver::PrintLevel().All());
-      newton.SetSolver(direct_solver);
-      newton.SetOperator(H_form);
-
-      newton.Mult(b, x);
-
-      Vector z(b.Size());
-      H_form.Mult(x, z);
-      z -= b;
-      std::cout << "Resnorm: " << z.Norml2() << '\n';
-      std::cout << "b norm:  " << b.Norml2() << '\n';
-      std::cout << "x norm:  " << x.Norml2() << '\n';
-
-      // {
-      //    direct_solver.SetOperator(H_form.GetGradient(x));
-      //    direct_solver.Mult(b, x);
-      //    H_form.Mult(x, z);
-      //    z -= b;
-      //    std::cout << "Resnorm: " << z.Norml2() << '\n';
-      // }
-
-      // {
-      //    ParBilinearForm m(&fes_l2);
-      //    m.AddDomainIntegrator(new MassIntegrator);
-      //    m.Assemble();
-      //    m.Finalize();
-      //    std::unique_ptr<HypreParMatrix> M(m.ParallelAssemble());
-      //    M->Print("M.txt");
-      //    SerialDirectSolver Minv(*M);
-
-      //    x = 0.0;
-
-      //    Minv.Mult(b, x);
-      //    m.Mult(x, z);
-      //    z -= b;
-      //    std::cout << "Resnorm: " << z.Norml2() << '\n';
-      // }
-
-   }
-
-   return 0;
+   // y_F = 0.0;
 }
+
+Operator &RadiationDiffusionOperator::GetGradient(const Vector &x) const
+{
+   linear_solver->Update(x);
+   const Operator &op = *this;
+   return const_cast<Operator&>(op);
+}
+
+void RadiationDiffusionOperator::ImplicitSolve(
+   const double dt_, const Vector &x, Vector &k)
+{
+   using namespace MMS;
+
+   dt = dt_;
+
+   // Solve the system k = f(x + dt*k)
+
+   const int n_l2 = fes_l2.GetTrueVSize();
+   const int n_rt = fes_rt.GetTrueVSize();
+
+   b.SetSize(x.Size());
+   Vector b_e(b, offsets[0], n_l2);
+   Vector b_E(b, offsets[1], n_l2);
+   Vector b_F(b, offsets[2], n_rt);
+
+   const Vector x_e(const_cast<Vector&>(x), offsets[0], n_l2);
+   const Vector x_E(const_cast<Vector&>(x), offsets[1], n_l2);
+   const Vector x_F(const_cast<Vector&>(x), offsets[2], n_rt);
+
+   e_gf = x_e; // Set state needed by nonlinear operator H
+
+   z.SetSize(n_l2);
+   L->Mult(x_E, z);
+
+   z.Randomize(2);
+
+   b_e.Set(c*eta*sigma, z);
+   // TODO: add source to b_e
+
+   b_E.Set(-c*eta*sigma, z);
+   // TODO: add source to b_E
+
+   z.SetSize(n_rt);
+   Dt->Mult(x_E, z);
+   b_F.Set(-1.0/dt, z);
+   // TODO: add boundary flux term to b_F
+
+   // TEMPORARY
+   // b_F = 0.0;
+
+   k = 0.0; // zero initial guess
+
+   newton.Mult(b, k);
+}
+
+} // namespace mfem
