@@ -136,18 +136,25 @@ void RadiationDiffusionOperator::Mult(const Vector &x, Vector &y) const
    y_e.Add(-c*dt*sigma, z);
 
    // Radiation energy
-   // D->Mult(x_F, z);
-   // y_E += z;
+   D->Mult(x_F, z);
+   y_E += z;
 
    // Radiation flux
    z.SetSize(n_rt);
-   // R->Mult(x_F, y_F);
-   // y_F *= -3*sigma/c/dt;
+   R->Mult(x_F, y_F);
+   y_F *= -3*sigma/c/dt;
 
-   // Dt->Mult(x_E, z);
-   // y_F += z;
+   Dt->Mult(x_E, z);
+   y_F += z;
 
-   y_F = 0.0;
+   // y_F = 0.0;
+}
+
+Operator &RadiationDiffusionOperator::GetGradient(const Vector &x) const
+{
+   linear_solver->Update(x);
+   const Operator &op = *this;
+   return const_cast<Operator&>(op);
 }
 
 void RadiationDiffusionOperator::ImplicitSolve(
@@ -171,10 +178,12 @@ void RadiationDiffusionOperator::ImplicitSolve(
    const Vector x_E(const_cast<Vector&>(x), offsets[1], n_l2);
    const Vector x_F(const_cast<Vector&>(x), offsets[2], n_rt);
 
-   e_gf = x_e;
+   e_gf = x_e; // Set state needed by nonlinear operator H
 
    z.SetSize(n_l2);
    L->Mult(x_E, z);
+
+   z.Randomize(2);
 
    b_e.Set(c*eta*sigma, z);
    // TODO: add source to b_e
@@ -184,13 +193,14 @@ void RadiationDiffusionOperator::ImplicitSolve(
 
    z.SetSize(n_rt);
    Dt->Mult(x_E, z);
-   b_F.SetSize(-1.0/dt, z);
+   b_F.Set(-1.0/dt, z);
    // TODO: add boundary flux term to b_F
 
    // TEMPORARY
-   b_F = 0.0;
+   // b_F = 0.0;
 
    k = 0.0; // zero initial guess
+
    newton.Mult(b, k);
 }
 

@@ -100,7 +100,7 @@ int main(int argc, char *argv[])
       x = 0.0;
 
       RadiationDiffusionLinearSolver linsolver(rad_diff);
-      linsolver.Update();
+      linsolver.Update(r);
       linsolver.Mult(r, x);
    }
 

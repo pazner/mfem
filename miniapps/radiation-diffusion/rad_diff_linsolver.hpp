@@ -74,7 +74,7 @@ public:
    RadiationDiffusionLinearSolver(class RadiationDiffusionOperator &rad_diff_);
    void Mult(const Vector &b, Vector &x) const override;
    void SetOperator(const Operator &op) override;
-   void Update();
+   void Update(const Vector &x);
 };
 
 } // namespace mfem

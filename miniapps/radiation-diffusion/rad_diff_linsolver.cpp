@@ -33,19 +33,15 @@ RadiationDiffusionLinearSolver::RadiationDiffusionLinearSolver(
 
 void RadiationDiffusionLinearSolver::Mult(const Vector &b, Vector &x) const
 {
-   // J_solver->Mult(b, x);
+   J_solver->Mult(b, x);
 
-   // Brunner-Nowak iteration
-
-   const int n_eE = rad_diff.offsets[2];
-   Vector x_eE(x, 0, n_eE);
-   const Vector b_eE(const_cast<Vector&>(b), 0, n_eE);
-   r.SetSize(x.Size());
-   eE_solver->Mult(b_eE, x_eE);
-
-
-
+   // const int n_eE = rad_diff.offsets[2];
+   // Vector x_eE(x, 0, n_eE);
+   // const Vector b_eE(const_cast<Vector&>(b), 0, n_eE);
    // r.SetSize(x.Size());
+   // eE_solver->Mult(b_eE, x_eE);
+
+   r.SetSize(x.Size());
    J.Mult(x, r);
    subtract(b, r, r); // Set r = b - J*x
    const double r_norm = r.Norml2();
@@ -105,7 +101,7 @@ void RadiationDiffusionLinearSolver::Mult(const Vector &b, Vector &x) const
    // }
 }
 
-void RadiationDiffusionLinearSolver::Update()
+void RadiationDiffusionLinearSolver::Update(const Vector &x)
 {
    using namespace MMS;
 
@@ -115,6 +111,9 @@ void RadiationDiffusionLinearSolver::Update()
    HypreParMatrix &D = *rad_diff.D;
    HypreParMatrix &Dt = *rad_diff.Dt;
    HypreParMatrix &R = *rad_diff.R;
+
+   const Vector x_e(const_cast<Vector&>(x), 0, rad_diff.offsets[1]);
+   lin_coeff.b_gf = x_e;
 
    dH_form.Update();
    dH_form.Assemble();
@@ -126,9 +125,9 @@ void RadiationDiffusionLinearSolver::Update()
    J.SetBlock(0, 1, &L, -c*dt*sigma);
    J.SetBlock(1, 0, dH.get(), -1.0);
    J.SetBlock(1, 1, &L, 1.0 + c*dt*sigma);
-   // J.SetBlock(1, 2, &D);
-   // J.SetBlock(2, 1, &Dt);
-   // J.SetBlock(2, 2, &R, -3*sigma/c/dt);
+   J.SetBlock(1, 2, &D);
+   J.SetBlock(2, 1, &Dt);
+   J.SetBlock(2, 2, &R, -3*sigma/c/dt);
 
    Array2D<HypreParMatrix*> eE_blocks(2,2), EF_blocks(2,2);
    Array2D<double> eE_coeff(2,2), EF_coeff(2,2);
@@ -159,35 +158,35 @@ void RadiationDiffusionLinearSolver::Update()
    eE_solver.reset(new SerialDirectSolver(*JeE));
    EF_solver.reset(new SerialDirectSolver(*JEF));
 
-   // Array2D<HypreParMatrix*> J_blocks(3,3);
-   // Array2D<double> J_coeff(3,3);
-   // J_coeff(0, 0) = 1.0;
-   // J_coeff(0, 1) = -c*dt*sigma;
-   // J_coeff(1, 0) = -1.0;
-   // J_coeff(1, 1) = 1.0 + c*dt*sigma;
-   // J_coeff(1, 2) = 1.0;
-   // J_coeff(2, 1) = 1.0;
-   // J_coeff(2, 2) = -3*sigma/c/dt;
+   Array2D<HypreParMatrix*> J_blocks(3,3);
+   Array2D<double> J_coeff(3,3);
+   J_coeff(0, 0) = 1.0;
+   J_coeff(0, 1) = -c*dt*sigma;
+   J_coeff(1, 0) = -1.0;
+   J_coeff(1, 1) = 1.0 + c*dt*sigma;
+   J_coeff(1, 2) = 1.0;
+   J_coeff(2, 1) = 1.0;
+   J_coeff(2, 2) = -3*sigma/c/dt;
 
-   // J_blocks(0, 0) = J00.get();
-   // J_blocks(0, 1) = &L;
-   // J_blocks(0, 2) = nullptr;
-   // J_blocks(1, 0) = dH.get();
-   // J_blocks(1, 1) = &L;
-   // J_blocks(1, 2) = &D;
-   // J_blocks(2, 0) = nullptr;
-   // J_blocks(2, 1) = &Dt;
-   // J_blocks(2, 2) = &R;
+   J_blocks(0, 0) = J00.get();
+   J_blocks(0, 1) = &L;
+   J_blocks(0, 2) = nullptr;
+   J_blocks(1, 0) = dH.get();
+   J_blocks(1, 1) = &L;
+   J_blocks(1, 2) = &D;
+   J_blocks(2, 0) = nullptr;
+   J_blocks(2, 1) = &Dt;
+   J_blocks(2, 2) = &R;
 
-   // JJ.reset(HypreParMatrixFromBlocks(J_blocks, &J_coeff));
-   // J_solver.reset(new SerialDirectSolver(*JJ));
+   JJ.reset(HypreParMatrixFromBlocks(J_blocks, &J_coeff));
+   J_solver.reset(new SerialDirectSolver(*JJ));
 }
 
 void RadiationDiffusionLinearSolver::SetOperator(const Operator &op)
 {
    MFEM_VERIFY(dynamic_cast<const RadiationDiffusionOperator*>(&op),
                "Operator must be of type RadiationDiffusionOperator.");
-   Update();
+   // Update();
 }
 
 } // namespace mfem

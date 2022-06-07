@@ -92,11 +92,7 @@ public:
    double GetTimeStep() const { return dt; }
    void Mult(const Vector &x, Vector &y) const override;
    void ImplicitSolve(const double dt_, const Vector &x, Vector &k) override;
-   Operator &GetGradient(const Vector &x) const override
-   {
-      const Operator &op = *this;
-      return const_cast<Operator&>(op);
-   }
+   Operator &GetGradient(const Vector &x) const override;
    const Array<int> &GetOffsets() const { return offsets; }
    ParFiniteElementSpace &GetL2Space() { return fes_l2; }
    ParFiniteElementSpace &GetRTSpace() { return fes_rt; }
