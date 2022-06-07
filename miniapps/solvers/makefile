@@ -24,8 +24,8 @@ MFEM_LIB_FILE = mfem_is_not_built
 BLOCK_SOLVERS_SRC = div_free_solver.cpp block-solvers.cpp
 BLOCK_SOLVERS_OBJ = $(BLOCK_SOLVERS_SRC:.cpp=.o)
 
-SEQ_MINIAPPS = lor_solvers hdiv_saddle_point
-PAR_MINIAPPS = block-solvers plor_solvers
+SEQ_MINIAPPS = lor_solvers
+PAR_MINIAPPS = block-solvers plor_solvers hdiv_saddle_point
 
 ifeq ($(MFEM_USE_MPI),NO)
    MINIAPPS = $(SEQ_MINIAPPS)

@@ -113,9 +113,6 @@ void EliminateColumns(HypreParMatrix &D, const Array<int> &ess_dofs)
       const auto I = offd->i;
       const auto J = offd->j;
       auto data = offd->data;
-      // Note: could also try a different strategy, looping over nnz in the
-      // matrix and then doing a binary search in ncols_to_eliminate to see if
-      // the column should be eliminated.
       MFEM_HYPRE_FORALL(i, nrows_offd,
       {
          for (int jj=I[i]; jj<I[i+1]; ++jj)
