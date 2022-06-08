@@ -183,7 +183,7 @@ void BrunnerNowackIteration::Mult(const Vector &b, Vector &x) const
       std::cout << std::setw(15) << r_norm << std::flush;
       if (r.Norml2() < tol)
       {
-         std::cout << "       -\n";
+         std::cout << "-\n";
          break;
       }
 

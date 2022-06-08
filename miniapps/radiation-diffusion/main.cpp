@@ -76,11 +76,11 @@ int main(int argc, char *argv[])
    ParGridFunction u_E(&fes_l2, u, offsets[1]);
    ParGridFunction u_F(&fes_rt, u, offsets[2]);
 
-   FunctionCoefficient e_init_coeff(MMS::InitialMaterialEnergy);
-   FunctionCoefficient E_init_coeff(MMS::InitialRadiationEnergy);
+   FunctionCoefficient e_exact_coeff(MMS::ExactMaterialEnergy);
+   FunctionCoefficient E_exact_coeff(MMS::ExactRadiationEnergy);
 
-   u_e.ProjectCoefficient(e_init_coeff);
-   u_E.ProjectCoefficient(E_init_coeff);
+   u_e.ProjectCoefficient(e_exact_coeff);
+   u_E.ProjectCoefficient(E_exact_coeff);
    u_F = 0.0;
 
    ParaViewDataCollection pv("RadiationDiffusion", &mesh);
@@ -88,14 +88,6 @@ int main(int argc, char *argv[])
    pv.RegisterField("e", &u_e);
    pv.RegisterField("E", &u_E);
    pv.RegisterField("F", &u_F);
-
-   ParGridFunction u_e_exact(&fes_l2);
-   ParGridFunction u_E_exact(&fes_l2);
-   FunctionCoefficient e_exact_coeff(MMS::ExactMaterialEnergy);
-   FunctionCoefficient E_exact_coeff(MMS::ExactRadiationEnergy);
-
-   pv.RegisterField("e_exact", &u_e_exact);
-   pv.RegisterField("E_exact", &u_E_exact);
 
    SDIRK33Solver ode;
    ode.Init(rad_diff);
@@ -123,8 +115,6 @@ int main(int argc, char *argv[])
 
       e_exact_coeff.SetTime(t);
       E_exact_coeff.SetTime(t);
-      u_e_exact.ProjectCoefficient(e_exact_coeff);
-      u_E_exact.ProjectCoefficient(E_exact_coeff);
 
       pv.SetCycle(pv.GetCycle() + 1);
       pv.SetTime(t);
