@@ -35,18 +35,20 @@ void NonlinearEnergyOperator::Mult(const Vector &x, Vector &y) const
    Vector y_e(y, offsets[0], n_l2);
    Vector y_E(y, offsets[1], n_l2);
 
-   // Material energy
+   // Material energy mass term
    z.SetSize(n_l2);
-   rad_diff.L->Mult(x_e, y_e);
+   rad_diff.L->Mult(x_e, y_e); // Contribution to material energy
    y_e *= rho;
 
+   // Material energy nonlinear term
    rad_diff.H_form.Mult(x_e, z);
-   y_e += z;
+   y_e += z; // Contribution to material energy
    y_E.Set(-1, z); // Contribution to radiation energy
 
+   // Radiation energy mass term
    rad_diff.L->Mult(x_E, z);
    y_E.Add(1 + c*dt*sigma, z); // Contribution to radiation energy
-   y_e.Add(-c*dt*sigma, z);
+   y_e.Add(-c*dt*sigma, z); // Contribution to material energy
 }
 
 Operator &NonlinearEnergyOperator::GetGradient(const Vector &x) const
@@ -141,21 +143,29 @@ void BrunnerNowackIteration::ApplyFullOperator(const Vector &x, Vector &y) const
 void BrunnerNowackIteration::Mult(const Vector &b, Vector &x) const
 {
    const int maxit = 100;
-   const double tol = 1e-12;
+   const double tol = 1e-6;
 
    std::cout << " Brunner-Nowack iteration\n"
              << " It.    Resnorm        Newton its.    Linear its.\n"
              << "=================================================\n";
 
+   const int n_l2 = rad_diff.fes_l2.GetTrueVSize();
+   const int n_rt = rad_diff.fes_rt.GetTrueVSize();
    const int n_eE = rad_diff.offsets[2];
    const int n_EF = rad_diff.offsets[3] - rad_diff.offsets[1];
 
    Vector x_eE(x, 0, n_eE);
    Vector x_EF(x, rad_diff.offsets[1], n_EF);
 
+   Vector x_F(x, rad_diff.offsets[2], n_rt);
+
    r.SetSize(x.Size());
    Vector r_eE(r, 0, n_eE);
+   Vector r_E(r, rad_diff.offsets[1], n_l2);
    Vector r_EF(r, rad_diff.offsets[1], n_EF);
+
+   const Vector b_eE(const_cast<Vector&>(b), 0, n_eE);
+   const Vector b_EF(const_cast<Vector&>(b), rad_diff.offsets[1], n_EF);
 
    c_eE.SetSize(n_eE);
    c_EF.SetSize(n_EF);
@@ -166,34 +176,39 @@ void BrunnerNowackIteration::Mult(const Vector &b, Vector &x) const
       // Compute full residual
       ApplyFullOperator(x, r);
       subtract(b, r, r); // Set r = b - J*x
+
       const double r_norm = r.Norml2();
-      // std::cout << std::setw(10) << std::scientific << r_norm << std::endl;
-      std::cout << std::setw(10) << std::scientific << r_norm << '\t';
-      if (r.Norml2() < tol) { break; }
+      std::cout << std::setw(8) << std::scientific << r_norm << std::flush;
+      if (r.Norml2() < tol)
+      {
+         std::cout << "       -" << std::endl;
+         break;
+      }
+
+      // Modify right-hand side keeping radiation flux fixed
+      r_eE = b_eE;
+      z.SetSize(n_l2);
+      rad_diff.D->Mult(x_F, z);
+      r_E -= z;
 
       // Nonlinear solve for correction to x_e, x_E
-      eE_solver.Mult(r_eE, c_eE);
-
-      // Update x given the correction c_EE
-      x_eE += c_eE;
+      eE_solver.Mult(r_eE, x_eE);
+      std::cout << "       " << eE_solver.GetNumIterations() << std::flush;
 
       // Compute residual again
       ApplyFullOperator(x, r);
       subtract(b, r, r); // Set r = b - J*x
-      std::cout << std::setw(10) << std::scientific << r.Norml2() << '\n';
-      if (r.Norml2() < tol) { break; }
 
       // Linear solve for correction to x_E, x_F
+      c_EF = 0.0;
       EF_solver.Mult(r_EF, c_EF);
+      std::cout << std::endl;
 
       // Update x given the correction c_EF
       x_EF += c_EF;
    }
 }
 
-void BrunnerNowackIteration::SetOperator(const Operator &op)
-{
-
-}
+void BrunnerNowackIteration::SetOperator(const Operator &op) { }
 
 } // namespace mfem

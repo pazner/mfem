@@ -27,6 +27,9 @@ RadiationDiffusionLinearSolver::RadiationDiffusionLinearSolver(
    Array2D<HypreParMatrix*> EF_blocks(2,2);
    Array2D<double> EF_coeff(2,2);
 
+   // TODO: this depends on dt, need to update if dt changes
+   // (e.g. for DIRK methods)
+
    EF_blocks(0,0) = rad_diff.L.get();
    EF_blocks(0,1) = rad_diff.D.get();
    EF_blocks(1,0) = rad_diff.Dt.get();
