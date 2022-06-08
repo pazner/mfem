@@ -23,18 +23,6 @@ double rad(double x, double y)
    return sqrt(x*x + y*y);
 }
 
-double InitialMaterialEnergy(const Vector &xvec)
-{
-   const double x = xvec[0], y = xvec[1];
-   return Cv*T0*(1 - 0.5*cos(omega * rad(x,y)));
-}
-
-double InitialRadiationEnergy(const Vector &xvec)
-{
-   const double x = xvec[0], y = xvec[1];
-   return a*pow(T0*1.5, 4)*(1 + 0.5 * cos(omega * rad(x,y)));
-}
-
 double ExactMaterialEnergy(const Vector &xvec, double t)
 {
    const double x = xvec[0], y = xvec[1];
