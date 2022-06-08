@@ -114,7 +114,8 @@ int main(int argc, char *argv[])
    while (t < tf)
    {
       if (t + dt > tf) { dt = tf - t; }
-      std::cout << "=== Step " << ++i << std::setprecision(2)
+      std::cout << "=== Step " << std::left << std::setw(5) << ++i
+                << std::setprecision(2) << std::scientific
                 << " t = " << t
                 << " dt = " << dt
                 << " ===\n" << std::endl;

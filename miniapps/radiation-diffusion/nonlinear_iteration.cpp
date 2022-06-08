@@ -173,6 +173,8 @@ void BrunnerNowackIteration::Mult(const Vector &b, Vector &x) const
    c_eE.SetSize(n_eE);
    c_EF.SetSize(n_EF);
 
+   std::cout << std::scientific << std::left << std::setprecision(2);
+
    for (int it = 0; it < maxit; ++it)
    {
       std::cout << " " << std::setw(3) << it << "    " << std::flush;
@@ -181,7 +183,7 @@ void BrunnerNowackIteration::Mult(const Vector &b, Vector &x) const
       subtract(b, r, r); // Set r = b - J*x
 
       const double r_norm = r.Norml2();
-      std::cout << std::setw(8) << std::scientific << r_norm << std::flush;
+      std::cout << std::setw(15) << r_norm << std::flush;
       if (r.Norml2() < tol)
       {
          std::cout << "       -\n";
@@ -196,7 +198,7 @@ void BrunnerNowackIteration::Mult(const Vector &b, Vector &x) const
 
       // Nonlinear solve for correction to x_e, x_E
       eE_solver.Mult(r_eE, x_eE);
-      std::cout << "       " << eE_solver.GetNumIterations() << std::flush;
+      std::cout << std::setw(15) << eE_solver.GetNumIterations() << std::flush;
 
       // Compute residual again
       ApplyFullOperator(x, r);
