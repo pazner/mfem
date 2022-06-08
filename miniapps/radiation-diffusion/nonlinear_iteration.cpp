@@ -142,9 +142,6 @@ void BrunnerNowackIteration::ApplyFullOperator(const Vector &x, Vector &y) const
 
 void BrunnerNowackIteration::Mult(const Vector &b, Vector &x) const
 {
-   // Rebuild the linear solver if necessary
-   EF_solver.Setup();
-
    const int maxit = 100;
    const double tol = 1e-6;
 

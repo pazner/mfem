@@ -105,6 +105,7 @@ void RadiationDiffusionOperator::ImplicitSolve(
    add(1.0/dt, b_n, -1.0/dt, z, b_F); // Include the boundary flux term.
 
    k = 0.0; // zero initial guess
+   nonlinear_solver->Setup();
    nonlinear_solver->Mult(b, k);
 }
 

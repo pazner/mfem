@@ -49,6 +49,7 @@ public:
    BrunnerNowackIteration(RadiationDiffusionOperator &rad_diff_);
    void Mult(const Vector &b, Vector &x) const override;
    void SetOperator(const Operator &op) override;
+   void Setup() { EF_solver.Setup(); }
 };
 
 } // namespace mfem

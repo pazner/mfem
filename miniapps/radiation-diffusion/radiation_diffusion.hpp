@@ -86,6 +86,8 @@ public:
    ParFiniteElementSpace &GetL2Space() { return fes_l2; }
    /// Get the RT space used for the radiation flux.
    ParFiniteElementSpace &GetRTSpace() { return fes_rt; }
+   /// Return the associated MPI communicator
+   MPI_Comm GetComm() const { return fes_l2.GetComm(); }
 };
 
 } // namespace mfem
