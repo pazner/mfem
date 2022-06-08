@@ -22,6 +22,7 @@ namespace mfem
 
 class RadiationDiffusionOperator : public TimeDependentOperator
 {
+   // TODO: delete these friends
    friend class NonlinearEnergyIntegrator;
    friend class RadiationDiffusionLinearSolver;
    friend class T4Coefficient;
@@ -30,40 +31,40 @@ class RadiationDiffusionOperator : public TimeDependentOperator
    // TODO:
    // private:
 public:
-   static constexpr int b1 = BasisType::GaussLobatto;
-   static constexpr int b2 = BasisType::IntegratedGLL;
-   static constexpr int mt = FiniteElement::INTEGRAL;
+   static constexpr int b1 = BasisType::GaussLobatto; ///< "closed basis"
+   static constexpr int b2 = BasisType::IntegratedGLL; ///< "open basis"
 
-   const int dim; // Spatial dimension
+   const int dim; ///< Spatial dimension.
 
-   // Finite element space for material and radiation energy
-   L2_FECollection fec_l2;
-   ParFiniteElementSpace fes_l2;
+   L2_FECollection fec_l2; ///< L2 collection.
+   ParFiniteElementSpace fes_l2; ///< L2 space for material and radiation energy.
 
-   // Finite element space for radiation flux
-   RT_FECollection fec_rt;
-   ParFiniteElementSpace fes_rt;
+   RT_FECollection fec_rt; ///< RT collection.
+   ParFiniteElementSpace fes_rt; ///< RT space for radiation flux.
 
-   ParGridFunction e_gf; // Material energy, needed for H integrator
+   ParGridFunction e_gf; ///< Material energy, needed for H integrator
    FunctionCoefficient S_e_coeff, S_E_coeff; // Source term coefficients
 
-   ParNonlinearForm H_form; // Nonlinear energy term
-   ParBilinearForm L_form; // L2 mass matrix
-   ParBilinearForm R_form; // RT mass matrix
-   ParMixedBilinearForm D_form; // RT -> L2 divergence
+   ParNonlinearForm H_form; ///< Nonlinear energy term.
+   ParBilinearForm L_form; ///< L2 mass matrix.
+   ParBilinearForm R_form; ///< RT mass matrix.
+   ParMixedBilinearForm D_form; ///< RT -> L2 divergence.
 
-   // Assembled matrices
-   std::unique_ptr<HypreParMatrix> L;
-   std::unique_ptr<HypreParMatrix> D, Dt;
-   std::unique_ptr<HypreParMatrix> R;
+   std::unique_ptr<HypreParMatrix> L; ///< Assembled L2 mass matrix.
+   std::unique_ptr<HypreParMatrix> D; ///< Assembled divergence form.
+   std::unique_ptr<HypreParMatrix> Dt; ///< The transpose of @ref D.
+   std::unique_ptr<HypreParMatrix> R; ///< Assembled RT mass matrix.
 
+   /// Brunner-Nowack nonlinear (outer) iterative solver.
    std::unique_ptr<BrunnerNowackIteration> nonlinear_solver;
 
    Array<int> offsets;
 
-   double dt;
+   // TODO: propagate the time step to the solvers/nonlinear operators
+   double dt; ///< Time step.
 
-   mutable Vector b, z;
+   mutable Vector b; ///< Right-hand side for nonlinear solve.
+   mutable Vector z; ///< Used as a temporary vector for computations.
 
 public:
    RadiationDiffusionOperator(ParMesh &mesh, int order);

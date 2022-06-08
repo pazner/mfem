@@ -17,7 +17,7 @@ namespace mfem
 
 RadiationDiffusionOperator::RadiationDiffusionOperator(ParMesh &mesh, int order)
    : dim(mesh.Dimension()),
-     fec_l2(order-1, dim, b2, mt),
+     fec_l2(order-1, dim, b2, FiniteElement::INTEGRAL),
      fes_l2(&mesh, &fec_l2),
      fec_rt(order-1, dim, b1, b2),
      fes_rt(&mesh, &fec_rt),
