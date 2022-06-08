@@ -14,10 +14,10 @@
 //                     ----------------------------------
 //
 // This miniapp solves a simple radiation-diffusion test case as described in
-// the paper
+// the paper:
 //
-// T. A. Brunner, Development of a grey nonlinear thermal radiation diffusion
-// verification problem (2006).
+//    T. A. Brunner, Development of a grey nonlinear thermal radiation diffusion
+//    verification problem (2006). SAND2006-4030C.
 
 #include "mfem.hpp"
 
@@ -67,9 +67,6 @@ int main(int argc, char *argv[])
 
    RadiationDiffusionOperator rad_diff(mesh, order);
 
-   // const int n_l2 = rad_diff.fes_l2.GetTrueVSize();
-   // const int n_rt = rad_diff.fes_rt.GetTrueVSize();
-
    Vector u(rad_diff.Height());
    ParGridFunction u_e(&rad_diff.fes_l2, u, rad_diff.offsets[0]);
    ParGridFunction u_E(&rad_diff.fes_l2, u, rad_diff.offsets[1]);
@@ -81,9 +78,6 @@ int main(int argc, char *argv[])
    u_e.ProjectCoefficient(e_init_coeff);
    u_E.ProjectCoefficient(E_init_coeff);
    u_F = 0.0;
-
-   Vector k(rad_diff.Height());
-   k = 0.0;
 
    ParaViewDataCollection pv("RadiationDiffusion", &mesh);
    pv.SetPrefixPath("ParaView");
@@ -99,7 +93,6 @@ int main(int argc, char *argv[])
    pv.RegisterField("e_exact", &u_e_exact);
    pv.RegisterField("E_exact", &u_E_exact);
 
-   // BackwardEulerSolver ode;
    SDIRK33Solver ode;
    ode.Init(rad_diff);
 
@@ -111,11 +104,12 @@ int main(int argc, char *argv[])
    }
 
    double t = 0.0;
-   const double tf = 1*dt;
+   const double tf = 0.1/MMS::tau;
    int i = 0;
 
    while (t < tf)
    {
+      if (t + dt > tf) { dt = tf - t; }
       std::cout << "=== Step " << ++i << std::setprecision(2)
                 << " t = " << t
                 << " dt = " << dt

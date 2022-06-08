@@ -20,7 +20,12 @@ namespace mfem
 namespace MMS
 {
 
-// See Table I from reference [1]
+// For problem specification, see the paper
+//
+// [1] T. A. Brunner, Development of a grey nonlinear thermal radiation
+//     diffusion verification problem (2006). SAND2006-4030C.
+
+// For the definition of the constants, see Table I from reference [1].
 // static constexpr double rho   = 2;
 // static constexpr double Cv    = 3;
 // static constexpr double sigma = 4;
