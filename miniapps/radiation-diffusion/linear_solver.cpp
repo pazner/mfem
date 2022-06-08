@@ -16,8 +16,8 @@
 namespace mfem
 {
 
-HypreParMatrix *DiagonalInverse(Vector &diag_vec,
-                                const ParFiniteElementSpace &fes)
+HypreParMatrix *DiagonalInverse(
+   Vector &diag_vec, const ParFiniteElementSpace &fes)
 {
    diag_vec.HostReadWrite();
    for (int i=0; i<diag_vec.Size(); ++i) { diag_vec[i] = 1.0/diag_vec[i]; }
@@ -142,8 +142,6 @@ void RadiationDiffusionLinearSolver::Mult(const Vector &b, Vector &x) const
 
    xF = xF_prime;
    L_inv->Mult(xE_prime, xE);
-
-   // EF_solver->Mult(b, x);
 }
 
 void RadiationDiffusionLinearSolver::SetOperator(const Operator &op) { }

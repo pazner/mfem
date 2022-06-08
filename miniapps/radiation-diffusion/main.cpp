@@ -20,7 +20,6 @@
 //    verification problem (2006). SAND2006-4030C.
 
 #include "mfem.hpp"
-
 #include "radiation_diffusion.hpp"
 
 using namespace std;

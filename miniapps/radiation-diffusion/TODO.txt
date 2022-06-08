@@ -1,0 +1,8 @@
+Radiation-Diffusion Miniapp To-Do List
+
+- [ ] Nonlinear solver element-by-element
+- [ ] Partial assembly
+- [ ] Non-unit coefficients in MMS
+- [ ] Parallelization
+- [ ] Change of basis in saddle-point solver
+- [ ] Better organization (friend classes, nonlinear integrator, etc.)
