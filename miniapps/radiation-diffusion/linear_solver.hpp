@@ -84,6 +84,8 @@ private:
    ConstantCoefficient L_coeff, R_coeff;
 
    double dt_prev;
+
+   mutable Vector b_prime, x_prime;
 public:
    RadiationDiffusionLinearSolver(class RadiationDiffusionOperator &rad_diff_);
    /// Build the linear operator and solver. Must be called when dt changes.

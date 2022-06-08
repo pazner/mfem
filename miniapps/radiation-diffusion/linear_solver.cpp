@@ -49,8 +49,8 @@ RadiationDiffusionLinearSolver::RadiationDiffusionLinearSolver(
 
    offsets.SetSize(3);
    offsets[0] = 0;
-   offsets[1] = fes_rt.GetTrueVSize();
-   offsets[2] = offsets[1] + fes_l2.GetTrueVSize();
+   offsets[1] = fes_l2.GetTrueVSize();
+   offsets[2] = offsets[1] + fes_rt.GetTrueVSize();
 
    minres.SetAbsTol(0.0);
    minres.SetRelTol(1e-12);
@@ -100,14 +100,14 @@ void RadiationDiffusionLinearSolver::Setup()
 
    // Set up the block operators
    A_block.reset(new BlockOperator(offsets));
-   A_block->SetBlock(0, 0, R.Ptr());
-   A_block->SetBlock(0, 1, Dt.get());
-   A_block->SetBlock(1, 0, D.get());
-   A_block->SetBlock(1, 1, L_inv.get(), -1.0);
+   A_block->SetBlock(0, 0, L_inv.get());
+   A_block->SetBlock(0, 1, D.get());
+   A_block->SetBlock(1, 0, Dt.get());
+   A_block->SetBlock(1, 1, R.Ptr(), -1.0);
 
    D_prec.reset(new BlockDiagonalPreconditioner(offsets));
-   D_prec->SetDiagonalBlock(0, &R_inv);
-   D_prec->SetDiagonalBlock(1, &S_inv);
+   D_prec->SetDiagonalBlock(0, &S_inv);
+   D_prec->SetDiagonalBlock(1, &R_inv);
 
    minres.SetOperator(*A_block);
    minres.SetPreconditioner(*D_prec);
@@ -115,7 +115,35 @@ void RadiationDiffusionLinearSolver::Setup()
 
 void RadiationDiffusionLinearSolver::Mult(const Vector &b, Vector &x) const
 {
-   minres.Mult(b, x);
+   b_prime.SetSize(b.Size());
+   x_prime.SetSize(x.Size());
+
+   // Transform RHS
+   Vector bE_prime(b_prime, offsets[0], offsets[1]-offsets[0]);
+   Vector bF_prime(b_prime, offsets[1], offsets[2]-offsets[1]);
+
+   const Vector bE(const_cast<Vector&>(b), offsets[0], offsets[1]-offsets[0]);
+   const Vector bF(const_cast<Vector&>(b), offsets[1], offsets[2]-offsets[1]);
+
+   // TODO: incorporate change of basis here
+   L_inv->Mult(bE, bE_prime);
+   bF_prime = bF;
+
+   // Solve the transformed system
+   x_prime = 0.0;
+   minres.Mult(b_prime, x_prime);
+
+   // Transform the solution
+   Vector xE_prime(x_prime, offsets[0], offsets[1]-offsets[0]);
+   Vector xF_prime(x_prime, offsets[1], offsets[2]-offsets[1]);
+
+   Vector xE(x, offsets[0], offsets[1]-offsets[0]);
+   Vector xF(x, offsets[1], offsets[2]-offsets[1]);
+
+   xF = xF_prime;
+   L_inv->Mult(xE_prime, xE);
+
+   // EF_solver->Mult(b, x);
 }
 
 void RadiationDiffusionLinearSolver::SetOperator(const Operator &op) { }
