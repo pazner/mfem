@@ -52,11 +52,16 @@ class RadiationDiffusionLinearSolver : public Solver
 {
 private:
    class RadiationDiffusionOperator &rad_diff;
-   std::unique_ptr<HypreParMatrix> JEF;
-   std::unique_ptr<Solver> EF_solver;
+   mutable double dt_prev; // Time step used to form the operator.
+   mutable std::unique_ptr<HypreParMatrix> JEF;
+   mutable std::unique_ptr<Solver> EF_solver;
 public:
    RadiationDiffusionLinearSolver(class RadiationDiffusionOperator &rad_diff_);
+   /// Build the linear operator and solver. Must be called when dt changes.
+   void Setup() const;
+   /// Solve the linear system for material and radiation energy.
    void Mult(const Vector &b, Vector &x) const override;
+   /// No-op.
    void SetOperator(const Operator &op) override;
 };
 

@@ -142,6 +142,9 @@ void BrunnerNowackIteration::ApplyFullOperator(const Vector &x, Vector &y) const
 
 void BrunnerNowackIteration::Mult(const Vector &b, Vector &x) const
 {
+   // Rebuild the linear solver if necessary
+   EF_solver.Setup();
+
    const int maxit = 100;
    const double tol = 1e-6;
 
@@ -181,7 +184,7 @@ void BrunnerNowackIteration::Mult(const Vector &b, Vector &x) const
       std::cout << std::setw(8) << std::scientific << r_norm << std::flush;
       if (r.Norml2() < tol)
       {
-         std::cout << "       -" << std::endl;
+         std::cout << "       -\n";
          break;
       }
 
@@ -202,11 +205,14 @@ void BrunnerNowackIteration::Mult(const Vector &b, Vector &x) const
       // Linear solve for correction to x_E, x_F
       c_EF = 0.0;
       EF_solver.Mult(r_EF, c_EF);
-      std::cout << std::endl;
+      // std::cout << "       " << eE_solver.GetNumIterations() << std::endl;
+      // TODO: print out the number of linear iterations
+      std::cout << "              " << "-" << std::endl;
 
       // Update x given the correction c_EF
       x_EF += c_EF;
    }
+   std::cout << std::endl;
 }
 
 void BrunnerNowackIteration::SetOperator(const Operator &op) { }

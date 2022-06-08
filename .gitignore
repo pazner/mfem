@@ -260,6 +260,7 @@ miniapps/performance/mesh.*
 miniapps/performance/sol.*
 
 miniapps/radiation-diffusion/radiation_diffusion
+miniapps/radiation-diffusion/ParaView
 
 miniapps/shifted/distance
 miniapps/shifted/ParaViewDistance

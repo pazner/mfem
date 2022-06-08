@@ -22,12 +22,16 @@ RadiationDiffusionOperator::RadiationDiffusionOperator(ParMesh &mesh, int order)
      fec_rt(order-1, dim, b1, b2),
      fes_rt(&mesh, &fec_rt),
      e_gf(&fes_l2),
-     S_e_coeff(MMS::MaterialEnergySource),
-     S_E_coeff(MMS::RadiationEnergySource),
      H_form(&fes_l2),
      L_form(&fes_l2),
      R_form(&fes_rt),
-     D_form(&fes_rt, &fes_l2)
+     D_form(&fes_rt, &fes_l2),
+     Q_e_coeff(MMS::MaterialEnergySource),
+     S_E_coeff(MMS::RadiationEnergySource),
+     E_bdr_coeff(MMS::ExactRadiationEnergy),
+     Q_e(&fes_l2),
+     S_E(&fes_l2),
+     b_n(&fes_rt)
 {
    const int n_l2 = fes_l2.GetTrueVSize();
    const int n_rt = fes_rt.GetTrueVSize();
@@ -37,9 +41,7 @@ RadiationDiffusionOperator::RadiationDiffusionOperator(ParMesh &mesh, int order)
 
    offsets = Array<int>({0, n_l2, 2*n_l2, 2*n_l2 + n_rt});
 
-   double h_min, h_max, kappa_min, kappa_max;
-   mesh.GetCharacteristics(h_min, h_max, kappa_min, kappa_max);
-   dt = h_min*0.05/MMS::tau;
+   dt = 0.0;
 
    H_form.AddDomainIntegrator(new NonlinearEnergyIntegrator(*this));
 
@@ -59,6 +61,10 @@ RadiationDiffusionOperator::RadiationDiffusionOperator(ParMesh &mesh, int order)
    D.reset(D_form.ParallelAssemble());
    Dt.reset(D->Transpose());
 
+   Q_e.AddDomainIntegrator(new DomainLFIntegrator(Q_e_coeff));
+   S_E.AddDomainIntegrator(new DomainLFIntegrator(S_E_coeff));
+   b_n.AddBoundaryIntegrator(new VectorFEBoundaryFluxLFIntegrator(E_bdr_coeff));
+
    nonlinear_solver.reset(new BrunnerNowackIteration(*this));
 }
 
@@ -66,8 +72,6 @@ void RadiationDiffusionOperator::ImplicitSolve(
    const double dt_, const Vector &x, Vector &k)
 {
    using namespace MMS;
-
-   dt = dt_;
 
    // Solve the system k = f(x + dt*k)
 
@@ -82,27 +86,42 @@ void RadiationDiffusionOperator::ImplicitSolve(
    const Vector x_e(const_cast<Vector&>(x), offsets[0], n_l2);
    const Vector x_E(const_cast<Vector&>(x), offsets[1], n_l2);
 
+   // TODO: should refactor both of these
+   dt = dt_;
    e_gf = x_e; // Set state needed by nonlinear operator H
 
+   // Form the right-hand side by moving all terms that do not depend on k
+   // into the vector b.
    z.SetSize(n_l2);
    L->Mult(x_E, z);
 
-   z.Randomize(2);
-
    b_e.Set(c*eta*sigma, z);
-   // TODO: add source to b_e
+   b_e += Q_e;
 
    b_E.Set(-c*eta*sigma, z);
-   // TODO: add source to b_E
+   b_E += S_E;
 
    z.SetSize(n_rt);
    Dt->Mult(x_E, z);
-   b_F.Set(-1.0/dt, z);
-   // TODO: add boundary flux term to b_F
+   add(1.0/dt, b_n, -1.0/dt, z, b_F); // Include the boundary flux term.
 
    k = 0.0; // zero initial guess
-
    nonlinear_solver->Mult(b, k);
+}
+
+void RadiationDiffusionOperator::SetTime(const double t_)
+{
+   t = t_;
+
+   // Set the time for the time-dependent coefficients
+   Q_e_coeff.SetTime(t);
+   S_E_coeff.SetTime(t);
+   E_bdr_coeff.SetTime(t);
+
+   // Reassemble the source terms
+   Q_e.Assemble();
+   S_E.Assemble();
+   b_n.Assemble();
 }
 
 } // namespace mfem

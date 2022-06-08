@@ -43,12 +43,19 @@ public:
    ParFiniteElementSpace fes_rt; ///< RT space for radiation flux.
 
    ParGridFunction e_gf; ///< Material energy, needed for H integrator
-   FunctionCoefficient S_e_coeff, S_E_coeff; // Source term coefficients
 
    ParNonlinearForm H_form; ///< Nonlinear energy term.
    ParBilinearForm L_form; ///< L2 mass matrix.
    ParBilinearForm R_form; ///< RT mass matrix.
    ParMixedBilinearForm D_form; ///< RT -> L2 divergence.
+
+   FunctionCoefficient Q_e_coeff; ///< Material energy source coefficient.
+   FunctionCoefficient S_E_coeff; ///< Radiation energy source coefficient.
+   FunctionCoefficient E_bdr_coeff; ///< Radiation energy boundary condition.
+
+   ParLinearForm Q_e; ///< Material energy source term.
+   ParLinearForm S_E; ///< Radiation energy source term.
+   ParLinearForm b_n; ///< Radiation energy boundary term (in flux equation).
 
    std::unique_ptr<HypreParMatrix> L; ///< Assembled L2 mass matrix.
    std::unique_ptr<HypreParMatrix> D; ///< Assembled divergence form.
@@ -60,15 +67,18 @@ public:
 
    Array<int> offsets;
 
-   // TODO: propagate the time step to the solvers/nonlinear operators
    double dt; ///< Time step.
 
    mutable Vector b; ///< Right-hand side for nonlinear solve.
    mutable Vector z; ///< Used as a temporary vector for computations.
 
 public:
+   /// Construct the radiation-diffusion operator given @a mesh and @a order.
    RadiationDiffusionOperator(ParMesh &mesh, int order);
+   /// Solve the system k = f(x + dt*k), needed for DIRK-type time integration.
    void ImplicitSolve(const double dt_, const Vector &x, Vector &k) override;
+   /// Set the current time, update the source terms.
+   void SetTime(const double t_) override;
 };
 
 } // namespace mfem
