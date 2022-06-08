@@ -24,13 +24,14 @@ class RadiationDiffusionOperator : public TimeDependentOperator
 {
    // TODO: delete these friends
    friend class NonlinearEnergyIntegrator;
+   friend class NonlinearEnergyOperator;
    friend class RadiationDiffusionLinearSolver;
+   friend class BrunnerNowackIteration;
    friend class T4Coefficient;
    friend class T4DerivativeCoefficient;
 
    // TODO:
-   // private:
-public:
+private:
    static constexpr int b1 = BasisType::GaussLobatto; ///< "closed basis"
    static constexpr int b2 = BasisType::IntegratedGLL; ///< "open basis"
 
@@ -79,6 +80,12 @@ public:
    void ImplicitSolve(const double dt_, const Vector &x, Vector &k) override;
    /// Set the current time, update the source terms.
    void SetTime(const double t_) override;
+   /// Get the offsets array for the block vector of unknowns.
+   const Array<int> &GetOffsets() const { return offsets; }
+   /// Get the L2 space used for the material and radiation energies.
+   ParFiniteElementSpace &GetL2Space() { return fes_l2; }
+   /// Get the RT space used for the radiation flux.
+   ParFiniteElementSpace &GetRTSpace() { return fes_rt; }
 };
 
 } // namespace mfem

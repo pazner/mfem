@@ -86,7 +86,6 @@ void RadiationDiffusionOperator::ImplicitSolve(
    const Vector x_e(const_cast<Vector&>(x), offsets[0], n_l2);
    const Vector x_E(const_cast<Vector&>(x), offsets[1], n_l2);
 
-   // TODO: should refactor both of these
    dt = dt_;
    e_gf = x_e; // Set state needed by nonlinear operator H
 

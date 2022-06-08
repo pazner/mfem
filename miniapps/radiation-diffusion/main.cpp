@@ -67,10 +67,14 @@ int main(int argc, char *argv[])
 
    RadiationDiffusionOperator rad_diff(mesh, order);
 
+   ParFiniteElementSpace &fes_l2 = rad_diff.GetL2Space();
+   ParFiniteElementSpace &fes_rt = rad_diff.GetRTSpace();
+   const Array<int> &offsets = rad_diff.GetOffsets();
+
    Vector u(rad_diff.Height());
-   ParGridFunction u_e(&rad_diff.fes_l2, u, rad_diff.offsets[0]);
-   ParGridFunction u_E(&rad_diff.fes_l2, u, rad_diff.offsets[1]);
-   ParGridFunction u_F(&rad_diff.fes_rt, u, rad_diff.offsets[2]);
+   ParGridFunction u_e(&fes_l2, u, offsets[0]);
+   ParGridFunction u_E(&fes_l2, u, offsets[1]);
+   ParGridFunction u_F(&fes_rt, u, offsets[2]);
 
    FunctionCoefficient e_init_coeff(MMS::InitialMaterialEnergy);
    FunctionCoefficient E_init_coeff(MMS::InitialRadiationEnergy);
@@ -85,8 +89,8 @@ int main(int argc, char *argv[])
    pv.RegisterField("E", &u_E);
    pv.RegisterField("F", &u_F);
 
-   ParGridFunction u_e_exact(&rad_diff.fes_l2);
-   ParGridFunction u_E_exact(&rad_diff.fes_l2);
+   ParGridFunction u_e_exact(&fes_l2);
+   ParGridFunction u_E_exact(&fes_l2);
    FunctionCoefficient e_exact_coeff(MMS::ExactMaterialEnergy);
    FunctionCoefficient E_exact_coeff(MMS::ExactRadiationEnergy);
 
