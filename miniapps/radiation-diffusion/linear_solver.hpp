@@ -52,17 +52,48 @@ class RadiationDiffusionLinearSolver : public Solver
 {
 private:
    class RadiationDiffusionOperator &rad_diff;
-   mutable double dt_prev; // Time step used to form the operator.
-   mutable std::unique_ptr<HypreParMatrix> JEF;
-   mutable std::unique_ptr<Solver> EF_solver;
+   MINRESSolver minres;
+
+   static constexpr int b1 = BasisType::GaussLobatto;
+   static constexpr int b2 = BasisType::IntegratedGLL;
+   static constexpr int mt = FiniteElement::INTEGRAL;
+
+   L2_FECollection fec_l2;
+   ParFiniteElementSpace fes_l2;
+
+   RT_FECollection fec_rt;
+   ParFiniteElementSpace fes_rt;
+
+   ParBilinearForm mass_rt;
+
+   // Components needed for the block operator
+   OperatorHandle R;
+   std::unique_ptr<HypreParMatrix> D, Dt;
+   std::unique_ptr<Operator> L_inv;
+
+   // Components needed for the preconditioner
+   OperatorJacobiSmoother R_inv;
+   HypreBoomerAMG S_inv;
+
+   std::unique_ptr<HypreParMatrix> S;
+
+   Array<int> offsets, ess_dofs;
+   std::unique_ptr<BlockOperator> A_block;
+   std::unique_ptr<BlockDiagonalPreconditioner> D_prec;
+
+   ConstantCoefficient L_coeff, R_coeff;
+
+   double dt_prev;
 public:
    RadiationDiffusionLinearSolver(class RadiationDiffusionOperator &rad_diff_);
    /// Build the linear operator and solver. Must be called when dt changes.
-   void Setup() const;
+   void Setup();
    /// Solve the linear system for material and radiation energy.
    void Mult(const Vector &b, Vector &x) const override;
    /// No-op.
    void SetOperator(const Operator &op) override;
+   /// Get the number of MINRES iterations.
+   int GetNumIterations() const { return minres.GetNumIterations(); }
 };
 
 } // namespace mfem

@@ -204,9 +204,7 @@ void BrunnerNowackIteration::Mult(const Vector &b, Vector &x) const
       // Linear solve for correction to x_E, x_F
       c_EF = 0.0;
       EF_solver.Mult(r_EF, c_EF);
-      // std::cout << "       " << eE_solver.GetNumIterations() << std::endl;
-      // TODO: print out the number of linear iterations
-      std::cout << "              " << "-" << std::endl;
+      std::cout << EF_solver.GetNumIterations() << std::endl;
 
       // Update x given the correction c_EF
       x_EF += c_EF;
