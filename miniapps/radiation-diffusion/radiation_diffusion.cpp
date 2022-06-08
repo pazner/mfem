@@ -10,6 +10,7 @@
 // CONTRIBUTING.md for details.
 
 #include "radiation_diffusion.hpp"
+#include "energy_integrator.hpp"
 
 namespace mfem
 {
@@ -21,8 +22,6 @@ RadiationDiffusionOperator::RadiationDiffusionOperator(ParMesh &mesh, int order)
      fec_rt(order-1, dim, b1, b2),
      fes_rt(&mesh, &fec_rt),
      e_gf(&fes_l2),
-     E_gf(&fes_l2),
-     F_gf(&fes_rt),
      S_e_coeff(MMS::MaterialEnergySource),
      S_E_coeff(MMS::RadiationEnergySource),
      H_form(&fes_l2),
@@ -33,7 +32,7 @@ RadiationDiffusionOperator::RadiationDiffusionOperator(ParMesh &mesh, int order)
    const int n_l2 = fes_l2.GetTrueVSize();
    const int n_rt = fes_rt.GetTrueVSize();
 
-   // Unknowns: material energy, radiation energy (L2), flux (RT)
+   // Unknowns: material energy, radiation energy (L2), radiation flux (RT)
    width = height = 2*n_l2 + n_rt;
 
    offsets = Array<int>({0, n_l2, 2*n_l2, 2*n_l2 + n_rt});
@@ -41,12 +40,6 @@ RadiationDiffusionOperator::RadiationDiffusionOperator(ParMesh &mesh, int order)
    double h_min, h_max, kappa_min, kappa_max;
    mesh.GetCharacteristics(h_min, h_max, kappa_min, kappa_max);
    dt = h_min*0.05/MMS::tau;
-
-   FunctionCoefficient e_coeff(MMS::InitialMaterialEnergy);
-   e_gf.ProjectCoefficient(e_coeff);
-
-   FunctionCoefficient E_coeff(MMS::InitialRadiationEnergy);
-   E_gf.ProjectCoefficient(E_coeff);
 
    H_form.AddDomainIntegrator(new NonlinearEnergyIntegrator(*this));
 
@@ -66,72 +59,7 @@ RadiationDiffusionOperator::RadiationDiffusionOperator(ParMesh &mesh, int order)
    D.reset(D_form.ParallelAssemble());
    Dt.reset(D->Transpose());
 
-   // J.SetBlock(0, 0, J00.get());
-   // J.SetBlock(0, 1, L.get(), -c*dt*sigma);
-   // J.SetBlock(1, 0, &H_form, -1.0);
-   // J.SetBlock(1, 1, &L, 1.0 + c*dt*sigma);
-   // J.SetBlock(1, 2, &D);
-   // J.SetBlock(2, 1, &Dt);
-   // J.SetBlock(2, 2, &R, -3*sigma/c/dt);
-
-   linear_solver.reset(new RadiationDiffusionLinearSolver(*this));
-
-   newton.SetAbsTol(1e-12);
-   newton.SetRelTol(1e-12);
-   newton.SetMaxIter(20);
-   newton.SetPrintLevel(IterativeSolver::PrintLevel().Iterations());
-   newton.SetSolver(*linear_solver);
-   newton.SetOperator(*this);
-}
-
-void RadiationDiffusionOperator::Mult(const Vector &x, Vector &y) const
-{
-   using namespace MMS;
-
-   const int n_l2 = fes_l2.GetTrueVSize();
-   const int n_rt = fes_rt.GetTrueVSize();
-
-   const Vector x_e(const_cast<Vector&>(x), offsets[0], n_l2);
-   const Vector x_E(const_cast<Vector&>(x), offsets[1], n_l2);
-   const Vector x_F(const_cast<Vector&>(x), offsets[2], n_rt);
-
-   Vector y_e(y, offsets[0], n_l2);
-   Vector y_E(y, offsets[1], n_l2);
-   Vector y_F(y, offsets[2], n_rt);
-
-   // Material energy
-   z.SetSize(n_l2);
-   L->Mult(x_e, y_e);
-   y_e *= rho;
-
-   H_form.Mult(x_e, z);
-   y_e += z;
-   y_E.Set(-1, z); // Contribution to radiation energy
-
-   L->Mult(x_E, z);
-   y_E.Add(1 + c*dt*sigma, z); // Contribution to radiation energy
-   y_e.Add(-c*dt*sigma, z);
-
-   // Radiation energy
-   D->Mult(x_F, z);
-   y_E += z;
-
-   // Radiation flux
-   z.SetSize(n_rt);
-   R->Mult(x_F, y_F);
-   y_F *= -3*sigma/c/dt;
-
-   Dt->Mult(x_E, z);
-   y_F += z;
-
-   // y_F = 0.0;
-}
-
-Operator &RadiationDiffusionOperator::GetGradient(const Vector &x) const
-{
-   linear_solver->Update(x);
-   const Operator &op = *this;
-   return const_cast<Operator&>(op);
+   nonlinear_solver.reset(new BrunnerNowackIteration(*this));
 }
 
 void RadiationDiffusionOperator::ImplicitSolve(
@@ -153,7 +81,6 @@ void RadiationDiffusionOperator::ImplicitSolve(
 
    const Vector x_e(const_cast<Vector&>(x), offsets[0], n_l2);
    const Vector x_E(const_cast<Vector&>(x), offsets[1], n_l2);
-   const Vector x_F(const_cast<Vector&>(x), offsets[2], n_rt);
 
    e_gf = x_e; // Set state needed by nonlinear operator H
 
@@ -173,12 +100,9 @@ void RadiationDiffusionOperator::ImplicitSolve(
    b_F.Set(-1.0/dt, z);
    // TODO: add boundary flux term to b_F
 
-   // TEMPORARY
-   // b_F = 0.0;
-
    k = 0.0; // zero initial guess
 
-   newton.Mult(b, k);
+   nonlinear_solver->Mult(b, k);
 }
 
 } // namespace mfem

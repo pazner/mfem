@@ -25,7 +25,6 @@ struct SerialDirectSolver : Solver
    UMFPackSolver solver;
 
    SerialDirectSolver() { }
-
    SerialDirectSolver(HypreParMatrix &A)
    {
       A.GetDiag(diag);
@@ -53,28 +52,12 @@ class RadiationDiffusionLinearSolver : public Solver
 {
 private:
    class RadiationDiffusionOperator &rad_diff;
-   T4DerivativeCoefficient lin_coeff;
-   ParBilinearForm dH_form;
-   BlockOperator J;
-
-   std::unique_ptr<HypreParMatrix> dH, J00, JeE, JEF;
-   std::unique_ptr<Solver> eE_solver, EF_solver;
-
-   std::unique_ptr<HypreParMatrix> JJ;
-   std::unique_ptr<Solver> J_solver;
-
-   mutable ParGridFunction ke_star, kE_star, F_star;
-   mutable Vector r, c_eE, c_EF;
-
-protected:
-   double ComputeResidual() const;
-   void SolveEnergies() const;
-
+   std::unique_ptr<HypreParMatrix> JEF;
+   std::unique_ptr<Solver> EF_solver;
 public:
    RadiationDiffusionLinearSolver(class RadiationDiffusionOperator &rad_diff_);
    void Mult(const Vector &b, Vector &x) const override;
    void SetOperator(const Operator &op) override;
-   void Update(const Vector &x);
 };
 
 } // namespace mfem
