@@ -85,6 +85,7 @@ void RadiationDiffusionLinearSolver::Setup()
 
    // Recreate the DG mass inverse with the new coefficient
    L_inv.reset(new DGMassInverse(fes_l2, L_coeff));
+   // L_inv.reset(new DGMassInverse_Direct(fes_l2, L_coeff));
 
    // Form the updated approximate Schur complement
    Vector R_diag(fes_rt.GetTrueVSize());
@@ -117,8 +118,8 @@ void RadiationDiffusionLinearSolver::Setup()
    D_prec->SetDiagonalBlock(0, &S_inv);
    D_prec->SetDiagonalBlock(1, &R_inv);
 
-   minres.SetOperator(*A_block);
    minres.SetPreconditioner(*D_prec);
+   minres.SetOperator(*A_block);
 }
 
 void RadiationDiffusionLinearSolver::Mult(const Vector &b, Vector &x) const
@@ -140,7 +141,7 @@ void RadiationDiffusionLinearSolver::Mult(const Vector &b, Vector &x) const
    basis_rt.MultTranspose(bF, bF_prime);
 
    // Solve the transformed system
-   x_prime = 0.0;
+   x_prime = 0.0; // TODO: minres.iterative_mode = false?
    minres.Mult(b_prime, x_prime);
 
    // Transform the solution

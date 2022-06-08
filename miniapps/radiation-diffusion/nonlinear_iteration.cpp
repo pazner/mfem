@@ -203,7 +203,6 @@ void BrunnerNowackIteration::Mult(const Vector &b, Vector &x) const
       subtract(b, r, r); // Set r = b - J*x
 
       // Linear solve for correction to x_E, x_F
-      c_EF = 0.0;
       EF_solver.Mult(r_EF, c_EF);
       std::cout << EF_solver.GetNumIterations() << std::endl;
 

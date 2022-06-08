@@ -94,6 +94,9 @@ public:
    void SetAbsTol(const double abs_tol_);
    /// Set the maximum number of iterations.
    void SetMaxIter(const double max_iter_);
+   /// Sets whether or not to use the second Mult argument as the initial guess.
+   void SetIterativeMode(const bool it_mode_) { iterative_mode = it_mode_; }
+
    ~DGMassInverse();
 
    void Setup();

@@ -148,6 +148,7 @@ void DGMassInverse::DGMassCGIteration(const Vector &b_, Vector &u_) const
    const double ABSTOL = abs_tol;
    const double MAXIT = max_iter;
 
+   const bool it_mode = iterative_mode;
    const bool change_basis = (d2q != nullptr);
 
    // b is the right-hand side (if no change of basis, this just points to the
@@ -186,9 +187,12 @@ void DGMassInverse::DGMassCGIteration(const Vector &b_, Vector &u_) const
       {
          // Transform RHS
          DGMassBasis<DIM,D1D,MAX_D1D>(e, NE, q2d_Bt, b_orig, b2, d1d);
-         // Transform initial guess
-         // Double check that "in-place" eval is OK here
-         DGMassBasis<DIM,D1D,MAX_D1D>(e, NE, d2q_B, u, u, d1d);
+         if (it_mode)
+         {
+            // Transform initial guess
+            // Double check that "in-place" eval is OK here
+            DGMassBasis<DIM,D1D,MAX_D1D>(e, NE, d2q_B, u, u, d1d);
+         }
       }
 
       const int tid = MFEM_THREAD_ID(x) + NB*MFEM_THREAD_ID(y);
@@ -196,15 +200,33 @@ void DGMassInverse::DGMassCGIteration(const Vector &b_, Vector &u_) const
       // double final_norm;
       // bool converged;
 
-      DGMassApply<DIM,D1D,Q1D>(e, NE, B, Bt, pa_data, u, r, d1d, q1d);
-      DGMassAxpy(e, NE, ND, 1.0, b, -1.0, r, r); // r = b - r
+      if (it_mode)
+      {
+         DGMassApply<DIM,D1D,Q1D>(e, NE, B, Bt, pa_data, u, r, d1d, q1d);
+         DGMassAxpy(e, NE, ND, 1.0, b, -1.0, r, r); // r = b - r
+      }
+      else
+      {
+         const int BX = MFEM_THREAD_SIZE(x);
+         const int BY = MFEM_THREAD_SIZE(y);
+         const int tid = MFEM_THREAD_ID(x) + BX*MFEM_THREAD_ID(y);
+         const int bxy = BX*BY;
+         const auto B = ConstDeviceMatrix(b, ND, NE);
+         auto U = DeviceMatrix(u, ND, NE);
+         auto R = DeviceMatrix(r, ND, NE);
+         for (int i = tid; i < ND; i += bxy)
+         {
+            U(i, e) = 0.0;
+            R(i, e) = B(i, e);
+         }
+         MFEM_SYNC_THREAD;
+      }
 
       // TODO: get rid of extra memory usage for z
       DGMassPreconditioner(e, NE, ND, dinv, r, z);
       DGMassAxpy(e, NE, ND, 1.0, z, 0.0, z, d); // d = z
 
-      double nom0 = DGMassDot<NB>(e, NE, ND, d, r);
-      double nom = nom0;
+      double nom = DGMassDot<NB>(e, NE, ND, d, r);
       // MFEM_ASSERT(IsFinite(nom), "nom = " << nom);
 
       if (nom < 0.0)
