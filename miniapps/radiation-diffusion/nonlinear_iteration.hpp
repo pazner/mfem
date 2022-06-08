@@ -32,7 +32,7 @@ public:
    Operator &GetGradient(const Vector &x) const override;
 };
 
-class BrunnerNowackIteration : public Solver
+class BrunnerNowackIteration : public IterativeSolver
 {
 private:
    RadiationDiffusionOperator &rad_diff;

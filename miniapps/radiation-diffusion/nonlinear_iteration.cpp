@@ -83,16 +83,17 @@ Operator &NonlinearEnergyOperator::GetGradient(const Vector &x) const
 
 BrunnerNowackIteration::BrunnerNowackIteration(
    RadiationDiffusionOperator &rad_diff_)
-   : rad_diff(rad_diff_),
+   : IterativeSolver(rad_diff_.GetComm()),
+     rad_diff(rad_diff_),
      N_eE(rad_diff),
      EF_solver(rad_diff)
 {
+   height = width = rad_diff.Height();
    eE_solver.SetMaxIter(20);
    eE_solver.SetRelTol(1e-8);
    eE_solver.SetAbsTol(1e-8);
    eE_solver.SetOperator(N_eE);
    eE_solver.SetSolver(J_eE_solver);
-   // eE_solver.SetPrintLevel(IterativeSolver::PrintLevel().All());
    eE_solver.SetPrintLevel(IterativeSolver::PrintLevel().None());
 }
 
@@ -169,7 +170,7 @@ void BrunnerNowackIteration::Mult(const Vector &b, Vector &x) const
    c_eE.SetSize(n_eE);
    c_EF.SetSize(n_EF);
 
-   const double b_norm = b.Norml2();
+   const double b_norm = Norm(b);
 
    std::cout << std::scientific << std::left << std::setprecision(2);
 
@@ -180,7 +181,7 @@ void BrunnerNowackIteration::Mult(const Vector &b, Vector &x) const
       ApplyFullOperator(x, r);
       subtract(b, r, r); // Set r = b - J*x
 
-      const double r_norm = r.Norml2();
+      const double r_norm = Norm(r);
       std::cout << std::setw(15) << r_norm << std::flush;
       if (r_norm/b_norm < tol)
       {
