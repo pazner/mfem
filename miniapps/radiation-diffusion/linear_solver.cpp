@@ -38,6 +38,8 @@ RadiationDiffusionLinearSolver::RadiationDiffusionLinearSolver(
      fes_l2(rad_diff.fes_l2.GetParMesh(), &fec_l2),
      fec_rt(rad_diff.fec_l2.GetOrder(), rad_diff.dim, b1, b2),
      fes_rt(rad_diff.fes_l2.GetParMesh(), &fec_rt),
+     basis_l2(&fes_l2, &rad_diff.fes_l2),
+     basis_rt(&fes_rt, &rad_diff.fes_rt),
      mass_rt(&fes_rt),
      dt_prev(0.0)
 {
@@ -56,6 +58,12 @@ RadiationDiffusionLinearSolver::RadiationDiffusionLinearSolver(
    minres.SetRelTol(1e-12);
    minres.SetMaxIter(500);
    minres.SetPrintLevel(IterativeSolver::PrintLevel().None());
+
+   basis_l2.AddDomainInterpolator(new IdentityInterpolator);
+   basis_rt.AddDomainInterpolator(new IdentityInterpolator);
+
+   basis_l2.Assemble();
+   basis_rt.Assemble();
 
    S_inv.SetPrintLevel(0);
 }
@@ -125,9 +133,11 @@ void RadiationDiffusionLinearSolver::Mult(const Vector &b, Vector &x) const
    const Vector bE(const_cast<Vector&>(b), offsets[0], offsets[1]-offsets[0]);
    const Vector bF(const_cast<Vector&>(b), offsets[1], offsets[2]-offsets[1]);
 
-   // TODO: incorporate change of basis here
-   L_inv->Mult(bE, bE_prime);
-   bF_prime = bF;
+   z.SetSize(bE.Size());
+   L_inv->Mult(bE, z);
+
+   basis_l2.MultTranspose(z, bE_prime);
+   basis_rt.MultTranspose(bF, bF_prime);
 
    // Solve the transformed system
    x_prime = 0.0;
@@ -140,8 +150,10 @@ void RadiationDiffusionLinearSolver::Mult(const Vector &b, Vector &x) const
    Vector xE(x, offsets[0], offsets[1]-offsets[0]);
    Vector xF(x, offsets[1], offsets[2]-offsets[1]);
 
-   xF = xF_prime;
-   L_inv->Mult(xE_prime, xE);
+   L_inv->Mult(xE_prime, z);
+
+   basis_l2.Mult(z, xE);
+   basis_rt.Mult(xF_prime, xF);
 }
 
 void RadiationDiffusionLinearSolver::SetOperator(const Operator &op) { }

@@ -2,7 +2,7 @@ Radiation-Diffusion Miniapp To-Do List
 
 - Methods and Discretization
    - [ ] Nonlinear solver element-by-element
-   - [ ] Change of basis in saddle-point solver
+   - [x] Change of basis in saddle-point solver
    - [ ] Non-unit coefficients in MMS
    - [ ] 3D support
 - Performance

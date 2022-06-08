@@ -33,7 +33,7 @@ class RadiationDiffusionOperator : public TimeDependentOperator
    // TODO:
 private:
    static constexpr int b1 = BasisType::GaussLobatto; ///< "closed basis"
-   static constexpr int b2 = BasisType::IntegratedGLL; ///< "open basis"
+   static constexpr int b2 = BasisType::GaussLegendre; ///< "open basis"
 
    const int dim; ///< Spatial dimension.
 

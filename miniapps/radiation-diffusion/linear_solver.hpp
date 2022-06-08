@@ -58,11 +58,15 @@ private:
    static constexpr int b2 = BasisType::IntegratedGLL;
    static constexpr int mt = FiniteElement::INTEGRAL;
 
+   // L2 and RT spaces, using the interpolation-histopolation bases
    L2_FECollection fec_l2;
    ParFiniteElementSpace fes_l2;
 
    RT_FECollection fec_rt;
    ParFiniteElementSpace fes_rt;
+
+   // Change of basis operators
+   ParDiscreteLinearOperator basis_l2, basis_rt;
 
    ParBilinearForm mass_rt;
 
@@ -85,7 +89,7 @@ private:
 
    double dt_prev;
 
-   mutable Vector b_prime, x_prime;
+   mutable Vector b_prime, x_prime, z;
 public:
    RadiationDiffusionLinearSolver(class RadiationDiffusionOperator &rad_diff_);
    /// Build the linear operator and solver. Must be called when dt changes.
