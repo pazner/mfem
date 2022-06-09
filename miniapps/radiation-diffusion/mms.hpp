@@ -38,7 +38,6 @@ static constexpr double omega = 2.13503497e+1;
 
 static constexpr double eta = 1;
 
-double rad(double x, double y);
 double ExactMaterialEnergy(const Vector &xvec, double t);
 double ExactRadiationEnergy(const Vector &xvec, double t);
 double MaterialEnergySource(const Vector &xvec, double t);

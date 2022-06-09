@@ -18,22 +18,24 @@ namespace mfem
 namespace MMS
 {
 
-double rad(double x, double y)
+double rad(const Vector &x)
 {
-   return sqrt(x*x + y*y);
+   const int dim = x.Size();
+   if (dim == 1) { return x[0]; }
+   else if (dim == 2) { return sqrt(x[0]*x[0] + x[1]*x[1]); }
+   else if (dim == 3) { return sqrt(x[0]*x[0] + x[1]*x[1] + x[2]*x[2]); }
+   else { return 0.0; }
 }
 
 double ExactMaterialEnergy(const Vector &xvec, double t)
 {
-   const double x = xvec[0], y = xvec[1];
-   const double r = rad(x,y);
+   const double r = rad(xvec);
    return Cv * T0 * (1 - 0.5 * exp(-tau * t) * cos(omega * r));
 }
 
 double ExactRadiationEnergy(const Vector &xvec, double t)
 {
-   const double x = xvec[0], y = xvec[1];
-   const double r = rad(x,y);
+   const double r = rad(xvec);
    const double exponent = exp(-tau * t);
    const double Trad     = T0 * (1 + 0.5 * exponent);
    return a * pow(Trad, 4) * (1 + 0.5 * exponent * cos(omega * r));
@@ -41,10 +43,8 @@ double ExactRadiationEnergy(const Vector &xvec, double t)
 
 double MaterialEnergySource(const Vector &xvec, double t)
 {
-   const double x = xvec[0], y = xvec[1];
-
    const double exponent = exp(-tau * t);
-   const double cosine   = cos(omega * rad(x,y));
+   const double cosine   = cos(omega * rad(xvec));
    const double Tmat     = T0 * (1 - 0.5 * exponent * cosine);
    const double Trad     = T0 * (1 + 0.5 * exponent);
    const double E        = a * pow(Trad, 4) * (1 + 0.5 * exponent * cosine);
@@ -55,8 +55,7 @@ double MaterialEnergySource(const Vector &xvec, double t)
 
 double RadiationEnergySource(const Vector &xvec, double t)
 {
-   const double x = xvec[0], y = xvec[1];
-   const double r = rad(x,y);
+   const double r = rad(xvec);
    const double exponent = exp(-tau * t);
    const double cosine   = cos(omega * r);
    const double Tmat     = T0 * (1 - 0.5 * exponent * cosine);
