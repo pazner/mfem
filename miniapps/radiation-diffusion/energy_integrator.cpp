@@ -30,10 +30,7 @@ double T4Coefficient::Eval(ElementTransformation &Tr,
    const double e_np1 = e_val + dt*k_val;
    const double T = e_np1/Cv;
 
-   return c*eta*sigma*pow(T, 4);
-   // return c*eta*sigma*T;
-   // return T;
-   // return e_val/Cv + dt*k_val/Cv;
+   return a*c*eta*sigma*pow(T, 4);
 }
 
 T4DerivativeCoefficient::T4DerivativeCoefficient(
@@ -51,10 +48,7 @@ double T4DerivativeCoefficient::Eval(ElementTransformation &Tr,
    const double k_val = b_gf.GetValue(Tr, ip);
    const double e_np1 = e_val + dt*k_val;
 
-   return 4*c*eta*sigma*dt*pow(Cv, -4)*pow(e_np1, 3);
-   // return c*eta*sigma*dt/Cv;
-   // return dt/Cv;
-   // return dt/Cv;
+   return 4*a*c*eta*sigma*dt*pow(Cv, -4)*pow(e_np1, 3);
 }
 
 NonlinearEnergyIntegrator::NonlinearEnergyIntegrator(
