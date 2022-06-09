@@ -54,9 +54,13 @@ private:
    FunctionCoefficient S_E_coeff; ///< Radiation energy source coefficient.
    FunctionCoefficient E_bdr_coeff; ///< Radiation energy boundary condition.
 
-   ParLinearForm Q_e; ///< Material energy source term.
-   ParLinearForm S_E; ///< Radiation energy source term.
-   ParLinearForm b_n; ///< Radiation energy boundary term (in flux equation).
+   ParLinearForm Q_e_form; ///< Material energy source term.
+   ParLinearForm S_E_form; ///< Radiation energy source term.
+   ParLinearForm b_n_form; ///< Radiation energy boundary term (in flux eqn).
+
+   Vector Q_e; ///< True-dof version of Q_e_form.
+   Vector S_E; ///< True-dof version of S_E_form.
+   Vector b_n; ///< True-dof version of b_n_form.
 
    std::unique_ptr<HypreParMatrix> L; ///< Assembled L2 mass matrix.
    std::unique_ptr<HypreParMatrix> D; ///< Assembled divergence form.

@@ -70,23 +70,28 @@ int main(int argc, char *argv[])
    ParFiniteElementSpace &fes_rt = rad_diff.GetRTSpace();
    const Array<int> &offsets = rad_diff.GetOffsets();
 
-   Vector u(rad_diff.Height());
-   ParGridFunction u_e(&fes_l2, u, offsets[0]);
-   ParGridFunction u_E(&fes_l2, u, offsets[1]);
-   ParGridFunction u_F(&fes_rt, u, offsets[2]);
+   BlockVector u(offsets);
+
+   ParGridFunction e_gf(&fes_l2);
+   ParGridFunction E_gf(&fes_l2);
+   ParGridFunction F_gf(&fes_rt);
 
    FunctionCoefficient e_exact_coeff(MMS::ExactMaterialEnergy);
    FunctionCoefficient E_exact_coeff(MMS::ExactRadiationEnergy);
 
-   u_e.ProjectCoefficient(e_exact_coeff);
-   u_E.ProjectCoefficient(E_exact_coeff);
-   u_F = 0.0;
+   e_gf.ProjectCoefficient(e_exact_coeff);
+   E_gf.ProjectCoefficient(E_exact_coeff);
+   F_gf = 0.0;
+
+   e_gf.ParallelProject(u.GetBlock(0));
+   E_gf.ParallelProject(u.GetBlock(1));
+   u.GetBlock(2) = 0.0;
 
    ParaViewDataCollection pv("RadiationDiffusion", &mesh);
    pv.SetPrefixPath("ParaView");
-   pv.RegisterField("e", &u_e);
-   pv.RegisterField("E", &u_E);
-   pv.RegisterField("F", &u_F);
+   pv.RegisterField("e", &e_gf);
+   pv.RegisterField("E", &E_gf);
+   pv.RegisterField("F", &F_gf);
 
    SDIRK33Solver ode;
    ode.Init(rad_diff);
@@ -105,15 +110,19 @@ int main(int argc, char *argv[])
    while (t < tf)
    {
       if (t + dt > tf) { dt = tf - t; }
-      std::cout << "=== Step " << std::left << std::setw(5) << ++i
-                << std::setprecision(2) << std::scientific
-                << " t = " << t
-                << " dt = " << dt
-                << " ===\n" << std::endl;
+      if (Mpi::Root())
+      {
+         std::cout << "=== Step " << std::left << std::setw(5) << ++i
+                   << std::setprecision(2) << std::scientific
+                   << " t = " << t
+                   << " dt = " << dt
+                   << " ===\n" << std::endl;
+      }
       ode.Step(u, t, dt);
 
-      e_exact_coeff.SetTime(t);
-      E_exact_coeff.SetTime(t);
+      e_gf.SetFromTrueDofs(u.GetBlock(0));
+      E_gf.SetFromTrueDofs(u.GetBlock(1));
+      F_gf.SetFromTrueDofs(u.GetBlock(2));
 
       pv.SetCycle(pv.GetCycle() + 1);
       pv.SetTime(t);
@@ -126,18 +135,21 @@ int main(int argc, char *argv[])
    double e_norm, E_norm;
    {
       ConstantCoefficient zero(0.0);
-      e_norm = u_e.ComputeL2Error(zero);
-      E_norm = u_E.ComputeL2Error(zero);
+      e_norm = e_gf.ComputeL2Error(zero);
+      E_norm = E_gf.ComputeL2Error(zero);
    }
 
-   double e_error = u_e.ComputeL2Error(e_exact_coeff);
-   double E_error = u_E.ComputeL2Error(E_exact_coeff);
+   double e_error = e_gf.ComputeL2Error(e_exact_coeff);
+   double E_error = E_gf.ComputeL2Error(E_exact_coeff);
 
-   std::cout << "Absolute errors:\n"
-             << "Material energy error:  " << e_error << '\n'
-             << "Radiation energy error: " << E_error << "\n\n"
-             << "Relative errors:\n"
-             << "Material energy error:  " << e_error/e_norm << '\n'
-             << "Radiation energy error: " << E_error/E_norm << std::endl;
+   if (Mpi::Root())
+   {
+      std::cout << "Absolute errors:\n"
+                << "Material energy error:  " << e_error << '\n'
+                << "Radiation energy error: " << E_error << "\n\n"
+                << "Relative errors:\n"
+                << "Material energy error:  " << e_error/e_norm << '\n'
+                << "Radiation energy error: " << E_error/E_norm << std::endl;
+   }
    return 0;
 }

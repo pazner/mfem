@@ -95,6 +95,11 @@ BrunnerNowackIteration::BrunnerNowackIteration(
    eE_solver.SetOperator(N_eE);
    eE_solver.SetSolver(J_eE_solver);
    eE_solver.SetPrintLevel(IterativeSolver::PrintLevel().None());
+
+   int rank;
+   MPI_Comm_rank(rad_diff.GetComm(), &rank);
+   if (rank == 0) { print_options.Iterations(); }
+   else { print_options.None(); }
 }
 
 void BrunnerNowackIteration::ApplyFullOperator(const Vector &x, Vector &y) const
@@ -146,8 +151,13 @@ void BrunnerNowackIteration::Mult(const Vector &b, Vector &x) const
    const int maxit = 100;
    const double tol = 1e-6;
 
-   std::cout << " It.    Resnorm        Newton its.    Linear its.\n"
-             << "=================================================\n";
+   const bool print = print_options.iterations;
+
+   if (print)
+   {
+      std::cout << " It.    Resnorm        Newton its.    Linear its.\n"
+                << "=================================================\n";
+   }
 
    const int n_l2 = rad_diff.fes_l2.GetTrueVSize();
    const int n_rt = rad_diff.fes_rt.GetTrueVSize();
@@ -176,16 +186,19 @@ void BrunnerNowackIteration::Mult(const Vector &b, Vector &x) const
 
    for (int it = 0; it < maxit; ++it)
    {
-      std::cout << " " << std::setw(3) << it << "    " << std::flush;
+      if (print)
+      {
+         std::cout << " " << std::setw(3) << it << "    " << std::flush;
+      }
       // Compute full residual
       ApplyFullOperator(x, r);
       subtract(b, r, r); // Set r = b - J*x
 
       const double r_norm = Norm(r);
-      std::cout << std::setw(15) << r_norm << std::flush;
+      if (print) { std::cout << std::setw(15) << r_norm << std::flush; }
       if (r_norm/b_norm < tol)
       {
-         std::cout << "-\n";
+         if (print) { std::cout << "-\n"; }
          break;
       }
 
@@ -197,7 +210,10 @@ void BrunnerNowackIteration::Mult(const Vector &b, Vector &x) const
 
       // Nonlinear solve for correction to x_e, x_E
       eE_solver.Mult(r_eE, x_eE);
-      std::cout << std::setw(15) << eE_solver.GetNumIterations() << std::flush;
+      if (print )
+      {
+         std::cout << std::setw(15) << eE_solver.GetNumIterations() << std::flush;
+      }
 
       // Compute residual again
       ApplyFullOperator(x, r);
@@ -205,12 +221,12 @@ void BrunnerNowackIteration::Mult(const Vector &b, Vector &x) const
 
       // Linear solve for correction to x_E, x_F
       EF_solver.Mult(r_EF, c_EF);
-      std::cout << EF_solver.GetNumIterations() << std::endl;
+      if (print) { std::cout << EF_solver.GetNumIterations() << std::endl; }
 
       // Update x given the correction c_EF
       x_EF += c_EF;
    }
-   std::cout << std::endl;
+   if (print) { std::cout << std::endl; }
 }
 
 void BrunnerNowackIteration::SetOperator(const Operator &op) { }

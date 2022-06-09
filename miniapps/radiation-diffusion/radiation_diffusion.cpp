@@ -29,9 +29,9 @@ RadiationDiffusionOperator::RadiationDiffusionOperator(ParMesh &mesh, int order)
      Q_e_coeff(MMS::MaterialEnergySource),
      S_E_coeff(MMS::RadiationEnergySource),
      E_bdr_coeff(MMS::ExactRadiationEnergy),
-     Q_e(&fes_l2),
-     S_E(&fes_l2),
-     b_n(&fes_rt)
+     Q_e_form(&fes_l2),
+     S_E_form(&fes_l2),
+     b_n_form(&fes_rt)
 {
    const int n_l2 = fes_l2.GetTrueVSize();
    const int n_rt = fes_rt.GetTrueVSize();
@@ -61,9 +61,10 @@ RadiationDiffusionOperator::RadiationDiffusionOperator(ParMesh &mesh, int order)
    D.reset(D_form.ParallelAssemble());
    Dt.reset(D->Transpose());
 
-   Q_e.AddDomainIntegrator(new DomainLFIntegrator(Q_e_coeff));
-   S_E.AddDomainIntegrator(new DomainLFIntegrator(S_E_coeff));
-   b_n.AddBoundaryIntegrator(new VectorFEBoundaryFluxLFIntegrator(E_bdr_coeff));
+   Q_e_form.AddDomainIntegrator(new DomainLFIntegrator(Q_e_coeff));
+   S_E_form.AddDomainIntegrator(new DomainLFIntegrator(S_E_coeff));
+   b_n_form.AddBoundaryIntegrator(new VectorFEBoundaryFluxLFIntegrator(
+                                     E_bdr_coeff));
 
    nonlinear_solver.reset(new BrunnerNowackIteration(*this));
 }
@@ -87,7 +88,7 @@ void RadiationDiffusionOperator::ImplicitSolve(
    const Vector x_E(const_cast<Vector&>(x), offsets[1], n_l2);
 
    dt = dt_;
-   e_gf = x_e; // Set state needed by nonlinear operator H
+   e_gf.SetFromTrueDofs(x_e);  // Set state needed by nonlinear operator H
 
    // Form the right-hand side by moving all terms that do not depend on k
    // into the vector b.
@@ -118,10 +119,20 @@ void RadiationDiffusionOperator::SetTime(const double t_)
    S_E_coeff.SetTime(t);
    E_bdr_coeff.SetTime(t);
 
+   Q_e.SetSize(fes_l2.GetTrueVSize());
+   S_E.SetSize(fes_l2.GetTrueVSize());
+   b_n.SetSize(fes_rt.GetTrueVSize());
+
    // Reassemble the source terms
-   Q_e.Assemble();
-   S_E.Assemble();
-   b_n.Assemble();
+   Q_e_form.Assemble();
+   Q_e_form.ParallelAssemble(Q_e);
+
+   S_E_form.Assemble();
+   S_E_form.ParallelAssemble(S_E);
+
+   b_n_form.Assemble();
+   b_n_form.ParallelAssemble(b_n);
+
 }
 
 } // namespace mfem

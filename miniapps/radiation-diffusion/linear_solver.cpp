@@ -65,6 +65,12 @@ RadiationDiffusionLinearSolver::RadiationDiffusionLinearSolver(
    basis_l2.Assemble();
    basis_rt.Assemble();
 
+   basis_l2.Finalize();
+   basis_rt.Finalize();
+
+   B_l2.reset(basis_l2.ParallelAssemble());
+   B_rt.reset(basis_rt.ParallelAssemble());
+
    S_inv.SetPrintLevel(0);
 }
 
@@ -137,8 +143,8 @@ void RadiationDiffusionLinearSolver::Mult(const Vector &b, Vector &x) const
    z.SetSize(bE.Size());
    L_inv->Mult(bE, z);
 
-   basis_l2.MultTranspose(z, bE_prime);
-   basis_rt.MultTranspose(bF, bF_prime);
+   B_l2->MultTranspose(z, bE_prime);
+   B_rt->MultTranspose(bF, bF_prime);
 
    // Solve the transformed system
    x_prime = 0.0; // TODO: minres.iterative_mode = false?
@@ -153,8 +159,8 @@ void RadiationDiffusionLinearSolver::Mult(const Vector &b, Vector &x) const
 
    L_inv->Mult(xE_prime, z);
 
-   basis_l2.Mult(z, xE);
-   basis_rt.Mult(xF_prime, xF);
+   B_l2->Mult(z, xE);
+   B_rt->Mult(xF_prime, xF);
 }
 
 void RadiationDiffusionLinearSolver::SetOperator(const Operator &op) { }

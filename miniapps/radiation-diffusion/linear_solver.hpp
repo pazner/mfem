@@ -67,6 +67,7 @@ private:
 
    // Change of basis operators
    ParDiscreteLinearOperator basis_l2, basis_rt;
+   std::unique_ptr<HypreParMatrix> B_l2, B_rt;
 
    ParBilinearForm mass_rt;
 
