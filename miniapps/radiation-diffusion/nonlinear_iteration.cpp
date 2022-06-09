@@ -157,7 +157,8 @@ void BrunnerNowackIteration::Mult(const Vector &b, Vector &x) const
    if (print)
    {
       std::cout << " It.    Resnorm        Newton its.    Linear its.\n"
-                << "=================================================\n";
+                << "=================================================\n"
+                << std::scientific << std::left << std::setprecision(2);
    }
 
    const int n_l2 = rad_diff.fes_l2.GetTrueVSize();
@@ -182,8 +183,6 @@ void BrunnerNowackIteration::Mult(const Vector &b, Vector &x) const
    c_EF.SetSize(n_EF);
 
    const double b_norm = Norm(b);
-
-   std::cout << std::scientific << std::left << std::setprecision(2);
 
    for (int it = 0; it < maxit; ++it)
    {
