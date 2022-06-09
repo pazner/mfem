@@ -7,7 +7,7 @@ Radiation-Diffusion Miniapp To-Do List
    - [ ] 3D support
 - Performance
    - [ ] Partial assembly
-   - [ ] Parallelization
+   - [x] Parallelization
    - [ ] Device support
 - Code Quality
    - [ ] Better organization (friend classes, nonlinear integrator, etc.)
