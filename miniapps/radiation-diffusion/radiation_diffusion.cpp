@@ -53,11 +53,7 @@ RadiationDiffusionOperator::RadiationDiffusionOperator(ParMesh &mesh, int order)
    R_form.AddDomainIntegrator(new VectorFEMassIntegrator);
    R_form.Assemble();
    R_form.Finalize();
-   Array<int> empty;
-   OperatorHandle R_op;
-   R_form.FormSystemMatrix(empty, R_op);
-   R.reset(R_op.Is<HypreParMatrix>());
-   R_op.SetOperatorOwner(false);
+   R.reset(R_form.ParallelAssemble());
 
    D_form.AddDomainIntegrator(new MixedScalarDivergenceIntegrator);
    D_form.Assemble();
@@ -155,6 +151,8 @@ void RadiationDiffusionOperator::ComputeFlux(Vector &x) const
    add(-coeff, b_n, coeff, b, b);
 
    Array<int> empty;
+   OperatorHandle R_op;
+   const_cast<ParBilinearForm&>(R_form).FormSystemMatrix(empty, R_op);
    OperatorJacobiSmoother jacobi(R_form, empty);
 
    CGSolver cg(GetComm());
