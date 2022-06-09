@@ -86,6 +86,7 @@ BrunnerNowackIteration::BrunnerNowackIteration(
    : IterativeSolver(rad_diff_.GetComm()),
      rad_diff(rad_diff_),
      N_eE(rad_diff),
+     eE_solver(rad_diff.GetComm()),
      EF_solver(rad_diff)
 {
    height = width = rad_diff.Height();
