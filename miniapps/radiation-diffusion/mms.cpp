@@ -64,11 +64,9 @@ double RadiationEnergySource(const Vector &xvec, double t)
    const double E        = a * pow(Trad, 4) * (1 + 0.5 * exponent * cosine);
    return -0.5 * tau * exponent * a * pow(Trad, 3) *
           (4 * T0 + (Trad + 2 * T0 * exponent) * cosine)
-          +
-          c * exponent * a * pow(Trad, 4) / (6 * sigma) *
+          + c * exponent * a * pow(Trad, 4) / (6 * sigma) *
           (omega*omega * cosine + omega * sin(omega * r) / r)
-          -
-          c * sigma * (a * pow(Tmat, 4) - E);
+          - c * sigma * (a * pow(Tmat, 4) - E);
 }
 
 } // namespace MMS

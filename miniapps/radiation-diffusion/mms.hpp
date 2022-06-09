@@ -26,25 +26,15 @@ namespace MMS
 //     diffusion verification problem (2006). SAND2006-4030C.
 
 // For the definition of the constants, see Table I from reference [1].
-// static constexpr double rho   = 2;
-// static constexpr double Cv    = 3;
-// static constexpr double sigma = 4;
-// static constexpr double T0    = 1e5;
+static constexpr double rho   = 2;
+static constexpr double Cv    = 3;
+static constexpr double sigma = 4;
+static constexpr double T0    = 1e5;
 
-// static constexpr double c     = 2.99792458e+8;
-// static constexpr double a     = 7.56576651e-16;
-// static constexpr double tau   = 2.27761040e+9;
-// static constexpr double omega = 2.13503497e+1;
-
-static constexpr double rho   = 1.0;
-static constexpr double Cv    = 1.0;
-static constexpr double sigma = 1.0;
-static constexpr double T0    = 1.0;
-
-static constexpr double c     = 1.0;
-static constexpr double a     = 1.0;
-static constexpr double tau   = 1.0;
-static constexpr double omega = 1.0;
+static constexpr double c     = 2.99792458e+8;
+static constexpr double a     = 7.56576651e-16;
+static constexpr double tau   = 2.27761040e+9;
+static constexpr double omega = 2.13503497e+1;
 
 static constexpr double eta = 1;
 
