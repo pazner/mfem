@@ -4,10 +4,12 @@ Radiation-Diffusion Miniapp To-Do List
    - [ ] Nonlinear solver element-by-element
    - [x] Change of basis in saddle-point solver
    - [x] Non-unit coefficients in MMS
-   - [ ] 3D support
+   - [x] 3D support
+
 - Performance
    - [ ] Partial assembly
-   - [x] Parallelization
    - [ ] Device support
+   - [x] Parallelization
+
 - Code Quality
    - [ ] Better organization (friend classes, nonlinear integrator, etc.)
