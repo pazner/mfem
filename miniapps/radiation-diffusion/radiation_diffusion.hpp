@@ -92,6 +92,8 @@ public:
    ParFiniteElementSpace &GetRTSpace() { return fes_rt; }
    /// Return the associated MPI communicator
    MPI_Comm GetComm() const { return fes_l2.GetComm(); }
+   /// Compute the radiation flux, given material and radiation energy
+   void ComputeFlux(Vector &x) const;
 };
 
 } // namespace mfem

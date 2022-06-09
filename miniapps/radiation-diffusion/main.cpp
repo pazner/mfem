@@ -79,19 +79,28 @@ int main(int argc, char *argv[])
    FunctionCoefficient e_exact_coeff(MMS::ExactMaterialEnergy);
    FunctionCoefficient E_exact_coeff(MMS::ExactRadiationEnergy);
 
+   // Use the initial condition for the material and radiation energy
    e_gf.ProjectCoefficient(e_exact_coeff);
    E_gf.ProjectCoefficient(E_exact_coeff);
-   F_gf = 0.0;
 
    e_gf.ParallelProject(u.GetBlock(0));
    E_gf.ParallelProject(u.GetBlock(1));
-   u.GetBlock(2) = 0.0;
+
+   // Compute the initial radiation flux given e and E
+   rad_diff.ComputeFlux(u);
+   F_gf.SetFromTrueDofs(u.GetBlock(2));
 
    ParaViewDataCollection pv("RadiationDiffusion", &mesh);
    pv.SetPrefixPath("ParaView");
    pv.RegisterField("e", &e_gf);
    pv.RegisterField("E", &E_gf);
    pv.RegisterField("F", &F_gf);
+   pv.SetHighOrderOutput(true);
+   pv.SetLevelsOfDetail(order);
+
+   pv.SetCycle(0);
+   pv.SetTime(0);
+   pv.Save();
 
    SDIRK33Solver ode;
    ode.Init(rad_diff);

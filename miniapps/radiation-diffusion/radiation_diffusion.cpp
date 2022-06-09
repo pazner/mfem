@@ -53,7 +53,11 @@ RadiationDiffusionOperator::RadiationDiffusionOperator(ParMesh &mesh, int order)
    R_form.AddDomainIntegrator(new VectorFEMassIntegrator);
    R_form.Assemble();
    R_form.Finalize();
-   R.reset(R_form.ParallelAssemble());
+   Array<int> empty;
+   OperatorHandle R_op;
+   R_form.FormSystemMatrix(empty, R_op);
+   R.reset(R_op.Is<HypreParMatrix>());
+   R_op.SetOperatorOwner(false);
 
    D_form.AddDomainIntegrator(new MixedScalarDivergenceIntegrator);
    D_form.Assemble();
@@ -67,6 +71,8 @@ RadiationDiffusionOperator::RadiationDiffusionOperator(ParMesh &mesh, int order)
                                      E_bdr_coeff));
 
    nonlinear_solver.reset(new BrunnerNowackIteration(*this));
+
+   SetTime(0);
 }
 
 void RadiationDiffusionOperator::ImplicitSolve(
@@ -133,6 +139,33 @@ void RadiationDiffusionOperator::SetTime(const double t_)
    b_n_form.Assemble();
    b_n_form.ParallelAssemble(b_n);
 
+}
+
+void RadiationDiffusionOperator::ComputeFlux(Vector &x) const
+{
+   const int n_l2 = fes_l2.GetTrueVSize();
+   const int n_rt = fes_rt.GetTrueVSize();
+
+   const Vector x_E(x, offsets[1], n_l2);
+   Vector x_F(x, offsets[2], n_rt);
+
+   b.SetSize(n_rt);
+   Dt->Mult(x_E, b);
+   double coeff = MMS::c/MMS::sigma/3.0;
+   add(-coeff, b_n, coeff, b, b);
+
+   Array<int> empty;
+   OperatorJacobiSmoother jacobi(R_form, empty);
+
+   CGSolver cg(GetComm());
+   cg.SetRelTol(1e-12);
+   cg.SetMaxIter(200);
+   cg.SetOperator(*R);
+   cg.SetPreconditioner(jacobi);
+   cg.SetPrintLevel(IterativeSolver::PrintLevel().None());
+
+   x_F = 0.0;
+   cg.Mult(b, x_F);
 }
 
 } // namespace mfem
