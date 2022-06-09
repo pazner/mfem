@@ -123,12 +123,21 @@ int main(int argc, char *argv[])
    e_exact_coeff.SetTime(t);
    E_exact_coeff.SetTime(t);
 
+   double e_norm, E_norm;
+   {
+      ConstantCoefficient zero(0.0);
+      e_norm = u_e.ComputeL2Error(zero);
+      E_norm = u_E.ComputeL2Error(zero);
+   }
+
    double e_error = u_e.ComputeL2Error(e_exact_coeff);
    double E_error = u_E.ComputeL2Error(E_exact_coeff);
 
-   std::cout << '\n'
+   std::cout << "Absolute errors:\n"
              << "Material energy error:  " << e_error << '\n'
-             << "Radiation energy error: " << E_error << std::endl;
-
+             << "Radiation energy error: " << E_error << "\n\n"
+             << "Relative errors:\n"
+             << "Material energy error:  " << e_error/e_norm << '\n'
+             << "Radiation energy error: " << E_error/E_norm << std::endl;
    return 0;
 }
