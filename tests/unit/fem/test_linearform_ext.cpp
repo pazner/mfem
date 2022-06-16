@@ -132,7 +132,7 @@ struct LinearFormExtTest
    }
 };
 
-TEST_CASE("Linear Form Extension", "[LinearformExt], [CUDA]")
+TEST_CASE("Linear Form Extension", "[LinearFormExtension], [CUDA]")
 {
    const bool all = launch_all_non_regression_tests;
 
@@ -141,10 +141,10 @@ TEST_CASE("Linear Form Extension", "[LinearformExt], [CUDA]")
                      "../../data/fichera.mesh", "../../data/fichera-q3.mesh") :
       GENERATE("../../data/star-q3.mesh", "../../data/fichera-q3.mesh");
    const auto p = all ? GENERATE(1,2,3,4,5,6) : GENERATE(1,3);
-   const auto gll = GENERATE(false, true);
 
    SECTION("Scalar")
    {
+      const auto gll = GENERATE(false, true);
       const auto problem = GENERATE(LinearFormExtTest::DLFEval,
                                     LinearFormExtTest::QLFEval,
                                     LinearFormExtTest::DLFGrad);
@@ -153,6 +153,7 @@ TEST_CASE("Linear Form Extension", "[LinearformExt], [CUDA]")
 
    SECTION("Vector")
    {
+      const auto gll = GENERATE(false, true);
       const auto vdim = all ? GENERATE(1,5,7) : GENERATE(1,5);
       const auto ordering = GENERATE(Ordering::byVDIM, Ordering::byNODES);
       const auto problem = GENERATE(LinearFormExtTest::VDLFEval,
