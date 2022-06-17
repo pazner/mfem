@@ -19,35 +19,6 @@
 namespace mfem
 {
 
-struct SerialDirectSolver : Solver
-{
-   SparseMatrix diag;
-   UMFPackSolver solver;
-
-   SerialDirectSolver() { }
-   SerialDirectSolver(HypreParMatrix &A)
-   {
-      A.GetDiag(diag);
-      solver.SetOperator(diag);
-   }
-   void Mult(const Vector &x, Vector &y) const
-   {
-      solver.Mult(x, y);
-   }
-   void SetOperator(const Operator &A_)
-   {
-      if (auto *A = dynamic_cast<const HypreParMatrix*>(&A_))
-      {
-         A->GetDiag(diag);
-         solver.SetOperator(diag);
-      }
-      else
-      {
-         MFEM_ABORT("Must be a HypreParMatrix.");
-      }
-   }
-};
-
 class RadiationDiffusionLinearSolver : public Solver
 {
 private:
