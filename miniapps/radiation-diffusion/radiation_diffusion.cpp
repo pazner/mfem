@@ -25,7 +25,6 @@ RadiationDiffusionOperator::RadiationDiffusionOperator(ParMesh &mesh_,
      fes_rt(&mesh, &fec_rt),
      e_gf(&fes_l2),
      H(*this),
-     H_form(&fes_l2),
      L_form(&fes_l2),
      R_form(&fes_rt),
      D_form(&fes_rt, &fes_l2),
@@ -45,8 +44,6 @@ RadiationDiffusionOperator::RadiationDiffusionOperator(ParMesh &mesh_,
    offsets = Array<int>({0, n_l2, 2*n_l2, 2*n_l2 + n_rt});
 
    dt = 0.0;
-
-   H_form.AddDomainIntegrator(new NonlinearEnergyIntegrator(*this));
 
    L_form.AddDomainIntegrator(new MassIntegrator);
    L_form.SetAssemblyLevel(AssemblyLevel::PARTIAL);
@@ -137,7 +134,6 @@ void RadiationDiffusionOperator::SetTime(const double t_)
 
    b_n_form.Assemble();
    b_n_form.ParallelAssemble(b_n);
-
 }
 
 void RadiationDiffusionOperator::ComputeFlux(Vector &x) const

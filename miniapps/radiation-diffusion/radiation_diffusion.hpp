@@ -50,7 +50,6 @@ private:
    ParGridFunction e_gf; ///< Material energy, needed for H integrator
 
    MaterialEnergyOperator H; ///< Nonlinear energy term.
-   ParNonlinearForm H_form; ///< Nonlinear energy term.
    ParBilinearForm L_form; ///< L2 mass matrix.
    ParBilinearForm R_form; ///< RT mass matrix.
    ParMixedBilinearForm D_form; ///< RT -> L2 divergence.
