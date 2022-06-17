@@ -83,7 +83,7 @@ class MaterialEnergyOperator : public Operator
 {
    friend class LinearizedMaterialEnergyOperator;
 private:
-   RadiationDiffusionOperator &rad_diff;
+   FiniteElementSpace &fes;
    QuadratureSpace qs;
    QuadratureInterpolator qinterp;
    mutable QuadratureFunction qf;
@@ -99,7 +99,7 @@ private:
 
    double dt;
 public:
-   MaterialEnergyOperator(RadiationDiffusionOperator &rad_diff_);
+   MaterialEnergyOperator(FiniteElementSpace &fes_);
 
    void SetMaterialEnergy(const Vector &e_gf) const;
 

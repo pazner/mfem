@@ -76,21 +76,20 @@ void NonlinearEnergyIntegrator::AssembleElementGrad(
    mass.AssembleElementMatrix(el, Tr, elmat);
 }
 
-MaterialEnergyOperator::MaterialEnergyOperator(RadiationDiffusionOperator
-                                               &rad_diff_)
-   : Operator(rad_diff_.fes_l2.GetTrueVSize()),
-     rad_diff(rad_diff_),
-     qs(&rad_diff.GetMesh(), 2*rad_diff.fes_l2.GetMaxElementOrder()),
-     qinterp(rad_diff.fes_l2, qs),
+MaterialEnergyOperator::MaterialEnergyOperator(FiniteElementSpace &fes_)
+   : Operator(fes_.GetTrueVSize()),
+     fes(fes_),
+     qs(fes.GetMesh(), 2*fes.GetMaxElementOrder()),
+     qinterp(fes, qs),
      qf(&qs),
      coeff(qf),
      lf_integrator(coeff),
-     geom(rad_diff.GetMesh().GetGeometricFactors(qs.GetElementIntRule(0),
-                                                 GeometricFactors::DETERMINANTS)),
+     geom(fes.GetMesh()->GetGeometricFactors(qs.GetElementIntRule(0),
+                                             GeometricFactors::DETERMINANTS)),
      linearized_op(*this),
      e_q(qs.GetSize()),
      x_q(qs.GetSize()),
-     markers(rad_diff.GetMesh().GetNE()),
+     markers(fes.GetMesh()->GetNE()),
      dt(0.0)
 {
    markers = 1;
@@ -110,7 +109,7 @@ void MaterialEnergyOperator::Mult(const Vector &x, Vector &y) const
    qinterp.Values(x, x_q);
 
    Vector qf_vals;
-   for (int e = 0; e < rad_diff.GetMesh().GetNE(); ++e)
+   for (int e = 0; e < fes.GetMesh()->GetNE(); ++e)
    {
       const IntegrationRule &ir = qs.GetElementIntRule(e);
       qf.GetElementValues(e, qf_vals);
@@ -127,7 +126,7 @@ void MaterialEnergyOperator::Mult(const Vector &x, Vector &y) const
    }
 
    y = 0.0;
-   lf_integrator.AssembleDevice(rad_diff.fes_l2, markers, y);
+   lf_integrator.AssembleDevice(fes, markers, y);
 }
 
 LinearizedMaterialEnergyOperator &MaterialEnergyOperator::GetLinearizedOperator(
@@ -146,7 +145,7 @@ Operator &MaterialEnergyOperator::GetGradient(const Vector &x) const
 
 LinearizedMaterialEnergyOperator::LinearizedMaterialEnergyOperator(
    MaterialEnergyOperator &H_)
-   : Operator(H_.rad_diff.GetL2Space().GetTrueVSize()),
+   : Operator(H_.fes.GetTrueVSize()),
      H(H_),
      qf(&H.qs),
      coeff(qf),
@@ -171,7 +170,7 @@ void LinearizedMaterialEnergyOperator::SetLinearizationState(
    H.qinterp.Values(x, x_q);
 
    Vector qf_vals;
-   for (int e = 0; e < H.rad_diff.GetMesh().GetNE(); ++e)
+   for (int e = 0; e < H.fes.GetMesh()->GetNE(); ++e)
    {
       const IntegrationRule &ir = H.qs.GetElementIntRule(e);
       qf.GetElementValues(e, qf_vals);
@@ -186,7 +185,7 @@ void LinearizedMaterialEnergyOperator::SetLinearizationState(
       }
    }
 
-   mass_integrator.AssemblePA(H.rad_diff.GetL2Space());
+   mass_integrator.AssemblePA(H.fes);
 }
 
 } // namespace mfem
