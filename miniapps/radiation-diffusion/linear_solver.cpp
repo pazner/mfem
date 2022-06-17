@@ -74,11 +74,10 @@ RadiationDiffusionLinearSolver::RadiationDiffusionLinearSolver(
    S_inv.SetPrintLevel(0);
 }
 
-void RadiationDiffusionLinearSolver::Setup()
+void RadiationDiffusionLinearSolver::Setup(const double dt)
 {
    using namespace MMS;
 
-   const double dt = rad_diff.dt;
    if (dt == dt_prev) { return; }
    dt_prev = dt;
 

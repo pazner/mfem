@@ -14,22 +14,37 @@
 
 #include "mfem.hpp"
 #include "linear_solver.hpp"
+#include "energy_integrator.hpp"
 
 namespace mfem
 {
 
-class RadiationDiffusionOperator;
+class LinearizedEnergyOperator : public Operator
+{
+   RadiationDiffusionOperator &rad_diff;
+   mutable Vector z;
+   double dt;
+   const Operator *dH;
+public:
+   LinearizedEnergyOperator(RadiationDiffusionOperator &rad_diff_);
+   void Mult(const Vector &x, Vector &y) const;
+   void SetTimeStep(const double dt_) { dt = dt_; }
+   void SetLinearizedMaterialOperator(const Operator &dH_) { dH = &dH_; }
+};
 
 class NonlinearEnergyOperator : public Operator
 {
+   friend class LinearizedEnergyOperator;
 private:
    RadiationDiffusionOperator &rad_diff;
    mutable Vector z;
-   mutable std::unique_ptr<HypreParMatrix> J, J00;
+   mutable LinearizedEnergyOperator linearized_op;
+   double dt;
 public:
    NonlinearEnergyOperator(RadiationDiffusionOperator &rad_diff_);
    void Mult(const Vector &x, Vector &y) const override;
    Operator &GetGradient(const Vector &x) const override;
+   void Setup(const double dt);
 };
 
 class BrunnerNowackIteration : public IterativeSolver
@@ -39,8 +54,8 @@ private:
    mutable Vector c_eE, c_EF, r, z;
 
    NonlinearEnergyOperator N_eE;
+   GMRESSolver J_eE_solver;
    NewtonSolver eE_solver;
-   SerialDirectSolver J_eE_solver;
    RadiationDiffusionLinearSolver EF_solver;
 
    void ApplyFullOperator(const Vector &x, Vector &y) const;
@@ -49,7 +64,11 @@ public:
    BrunnerNowackIteration(RadiationDiffusionOperator &rad_diff_);
    void Mult(const Vector &b, Vector &x) const override;
    void SetOperator(const Operator &op) override;
-   void Setup() { EF_solver.Setup(); }
+   void Setup(const double dt)
+   {
+      N_eE.Setup(dt);
+      EF_solver.Setup(dt);
+   }
 };
 
 } // namespace mfem

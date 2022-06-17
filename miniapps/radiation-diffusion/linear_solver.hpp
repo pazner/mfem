@@ -94,7 +94,7 @@ private:
 public:
    RadiationDiffusionLinearSolver(class RadiationDiffusionOperator &rad_diff_);
    /// Build the linear operator and solver. Must be called when dt changes.
-   void Setup();
+   void Setup(const double dt);
    /// Solve the linear system for material and radiation energy.
    void Mult(const Vector &b, Vector &x) const override;
    /// No-op.

@@ -15,19 +15,56 @@
 namespace mfem
 {
 
+LinearizedEnergyOperator::LinearizedEnergyOperator(
+   RadiationDiffusionOperator &rad_diff_)
+   : Operator(rad_diff_.offsets[2]),
+     rad_diff(rad_diff_),
+     dH(nullptr) { }
+
+void LinearizedEnergyOperator::Mult(const Vector &x, Vector &y) const
+{
+   using namespace MMS;
+
+   const int n_l2 = rad_diff.fes_l2.GetTrueVSize();
+   const Array<int> &offsets = rad_diff.GetOffsets();
+
+   const Vector x_e(const_cast<Vector&>(x), offsets[0], n_l2);
+   const Vector x_E(const_cast<Vector&>(x), offsets[1], n_l2);
+
+   Vector y_e(y, offsets[0], n_l2);
+   Vector y_E(y, offsets[1], n_l2);
+
+   z.SetSize(n_l2);
+
+   // Material energy mass matrix
+   rad_diff.L->Mult(x_e, z);
+   y_e.Set(rho, z);
+
+   // Material energy linearized term
+   dH->Mult(x_e, z);
+   y_e.Add(1.0, z);
+   y_E.Set(-1.0, z);
+
+   // Radiation energy mass matrix
+   rad_diff.L->Mult(x_E, z);
+   y_E.Add(1 + c*dt*sigma, z);
+   y_e.Add(-c*dt*sigma, z);
+}
+
 NonlinearEnergyOperator::NonlinearEnergyOperator(
    RadiationDiffusionOperator &rad_diff_)
    : Operator(rad_diff_.offsets[2]),
-     rad_diff(rad_diff_)
+     rad_diff(rad_diff_),
+     linearized_op(rad_diff),
+     dt(0.0)
 { }
 
 void NonlinearEnergyOperator::Mult(const Vector &x, Vector &y) const
 {
    using namespace MMS;
 
-   const double dt = rad_diff.dt;
    const int n_l2 = rad_diff.fes_l2.GetTrueVSize();
-   const Array<int> &offsets = rad_diff.offsets;
+   const Array<int> &offsets = rad_diff.GetOffsets();
 
    const Vector x_e(const_cast<Vector&>(x), offsets[0], n_l2);
    const Vector x_E(const_cast<Vector&>(x), offsets[1], n_l2);
@@ -41,7 +78,7 @@ void NonlinearEnergyOperator::Mult(const Vector &x, Vector &y) const
    y_e *= rho;
 
    // Material energy nonlinear term
-   rad_diff.H_form.Mult(x_e, z);
+   rad_diff.H.Mult(x_e, z);
    y_e += z; // Contribution to material energy
    y_E.Set(-1, z); // Contribution to radiation energy
 
@@ -53,32 +90,25 @@ void NonlinearEnergyOperator::Mult(const Vector &x, Vector &y) const
 
 Operator &NonlinearEnergyOperator::GetGradient(const Vector &x) const
 {
-   using namespace MMS;
+   const int n_l2 = rad_diff.fes_l2.GetTrueVSize();
+   const Array<int> &offsets = rad_diff.GetOffsets();
 
-   const Vector x_e(const_cast<Vector&>(x), 0, rad_diff.fes_l2.GetTrueVSize());
+   // Linearize the nonlinear H operator about x_e
+   const Vector x_e(const_cast<Vector&>(x), offsets[0], n_l2);
+   const Operator &dH = rad_diff.H.GetGradient(x_e);
+   linearized_op.SetLinearizedMaterialOperator(dH);
+   linearized_op.SetTimeStep(dt);
 
-   Operator &dH = rad_diff.H_form.GetGradient(x_e);
-   auto *dH_matrix = dynamic_cast<HypreParMatrix*>(&dH);
+   // Return the block linearized operator
+   const Operator &op = linearized_op;
+   return const_cast<Operator&>(op);
+}
 
-   MFEM_VERIFY(dH_matrix != nullptr, "");
-
-   J00.reset(Add(rho, *rad_diff.L, 1.0, *dH_matrix));
-
-   Array2D<HypreParMatrix*> eE_blocks(2,2);
-   eE_blocks(0,0) = J00.get();
-   eE_blocks(0,1) = rad_diff.L.get();
-   eE_blocks(1,0) = dH_matrix;
-   eE_blocks(1,1) = rad_diff.L.get();
-
-   Array2D<double> eE_coeff(2,2);
-   eE_coeff(0,0) = 1.0;
-   eE_coeff(0,1) = -c*rad_diff.dt*sigma;
-   eE_coeff(1,0) = -1.0;
-   eE_coeff(1,1) = 1.0 + c*rad_diff.dt*sigma;
-
-   J.reset(HypreParMatrixFromBlocks(eE_blocks, &eE_coeff));
-
-   return *J;
+void NonlinearEnergyOperator::Setup(const double dt_)
+{
+   dt = dt_;
+   rad_diff.H.SetTimeStep(dt);
+   rad_diff.H.SetMaterialEnergy(rad_diff.e_gf);
 }
 
 BrunnerNowackIteration::BrunnerNowackIteration(
@@ -86,10 +116,17 @@ BrunnerNowackIteration::BrunnerNowackIteration(
    : IterativeSolver(rad_diff_.GetComm()),
      rad_diff(rad_diff_),
      N_eE(rad_diff),
+     J_eE_solver(rad_diff.GetComm()),
      eE_solver(rad_diff.GetComm()),
      EF_solver(rad_diff)
 {
    height = width = rad_diff.Height();
+
+   J_eE_solver.SetMaxIter(1000);
+   J_eE_solver.SetRelTol(1e-14);
+   J_eE_solver.SetAbsTol(1e-14);
+   J_eE_solver.SetPrintLevel(IterativeSolver::PrintLevel().None());
+
    eE_solver.SetMaxIter(20);
    eE_solver.SetRelTol(1e-8);
    eE_solver.SetAbsTol(1e-8);
@@ -126,7 +163,8 @@ void BrunnerNowackIteration::ApplyFullOperator(const Vector &x, Vector &y) const
    y_e *= rho;
 
    // Material energy nonlinear term
-   rad_diff.H_form.Mult(x_e, z);
+   rad_diff.H.Mult(x_e, z);
+
    y_e += z; // Contribution to material energy
    y_E.Set(-1, z); // Contribution to radiation energy
 

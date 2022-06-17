@@ -19,21 +19,23 @@
 namespace mfem
 {
 
+class RadiationDiffusionOperator;
+
 class T4Coefficient : public Coefficient
 {
-   class RadiationDiffusionOperator &rad_diff;
+   RadiationDiffusionOperator &rad_diff;
 public:
    ParGridFunction b_gf;
-   T4Coefficient(class RadiationDiffusionOperator &rad_diff_);
+   T4Coefficient(RadiationDiffusionOperator &rad_diff_);
    double Eval(ElementTransformation &Tr, const IntegrationPoint &ip);
 };
 
 class T4DerivativeCoefficient : public Coefficient
 {
-   class RadiationDiffusionOperator &rad_diff;
+   RadiationDiffusionOperator &rad_diff;
 public:
    ParGridFunction b_gf;
-   T4DerivativeCoefficient(class RadiationDiffusionOperator &rad_diff_);
+   T4DerivativeCoefficient(RadiationDiffusionOperator &rad_diff_);
    double Eval(ElementTransformation &Tr, const IntegrationPoint &ip);
 };
 
@@ -48,7 +50,7 @@ class NonlinearEnergyIntegrator : public NonlinearFormIntegrator
    Array<int> dofs;
 
 public:
-   NonlinearEnergyIntegrator(class RadiationDiffusionOperator &rad_diff_);
+   NonlinearEnergyIntegrator(RadiationDiffusionOperator &rad_diff_);
 
    virtual void AssembleElementVector(const FiniteElement &el,
                                       ElementTransformation &Tr,
@@ -57,6 +59,57 @@ public:
    virtual void AssembleElementGrad(const FiniteElement &el,
                                     ElementTransformation &Tr,
                                     const Vector &elfun, DenseMatrix &elmat);
+};
+
+// Computes the action of the linearized operator dH(k_e), linearized about
+// a given state.
+class LinearizedMaterialEnergyOperator : public Operator
+{
+   class MaterialEnergyOperator &H;
+   mutable QuadratureFunction qf;
+   QuadratureFunctionCoefficient coeff;
+   mutable MassIntegrator mass_integrator;
+   mutable Vector x_q; // Linearization state x evaluated at quadrature points
+public:
+   LinearizedMaterialEnergyOperator(class MaterialEnergyOperator &H_);
+
+   void SetLinearizationState(const Vector &x) const;
+
+   void Mult(const Vector &x, Vector &y) const;
+};
+
+// Computes the action of the operator H(k_e)
+class MaterialEnergyOperator : public Operator
+{
+   friend class LinearizedMaterialEnergyOperator;
+private:
+   RadiationDiffusionOperator &rad_diff;
+   QuadratureSpace qs;
+   QuadratureInterpolator qinterp;
+   mutable QuadratureFunction qf;
+   QuadratureFunctionCoefficient coeff;
+   mutable DomainLFIntegrator lf_integrator;
+   const GeometricFactors *geom;
+   LinearizedMaterialEnergyOperator linearized_op;
+
+   mutable Vector e_q; // Material energy evaluated at quadrature points
+   mutable Vector x_q; // Input vector x evaluated at quadrature points
+
+   Array<int> markers; // Needed for lf_integrator.AssembleDevice
+
+   double dt;
+public:
+   MaterialEnergyOperator(RadiationDiffusionOperator &rad_diff_);
+
+   void SetMaterialEnergy(const Vector &e_gf) const;
+
+   void Mult(const Vector &x, Vector &y) const override;
+
+   void SetTimeStep(const double dt_) { dt = dt_; }
+
+   LinearizedMaterialEnergyOperator &GetLinearizedOperator(const Vector &x);
+
+   Operator &GetGradient(const Vector &x) const override;
 };
 
 } // namespace mfem

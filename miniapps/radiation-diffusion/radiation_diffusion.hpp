@@ -24,16 +24,20 @@ class RadiationDiffusionOperator : public TimeDependentOperator
 {
    // TODO: delete these friends
    friend class NonlinearEnergyIntegrator;
+   friend class LinearizedEnergyOperator;
    friend class NonlinearEnergyOperator;
    friend class RadiationDiffusionLinearSolver;
    friend class BrunnerNowackIteration;
    friend class T4Coefficient;
    friend class T4DerivativeCoefficient;
+   friend class MaterialEnergyOperator;
 
    // TODO:
 private:
    static constexpr int b1 = BasisType::GaussLobatto; ///< "closed basis"
    static constexpr int b2 = BasisType::GaussLegendre; ///< "open basis"
+
+   ParMesh &mesh; ///< The underlying mesh.
 
    const int dim; ///< Spatial dimension.
 
@@ -45,6 +49,7 @@ private:
 
    ParGridFunction e_gf; ///< Material energy, needed for H integrator
 
+   MaterialEnergyOperator H; ///< Nonlinear energy term.
    ParNonlinearForm H_form; ///< Nonlinear energy term.
    ParBilinearForm L_form; ///< L2 mass matrix.
    ParBilinearForm R_form; ///< RT mass matrix.
@@ -79,13 +84,17 @@ private:
 
 public:
    /// Construct the radiation-diffusion operator given @a mesh and @a order.
-   RadiationDiffusionOperator(ParMesh &mesh, int order);
+   RadiationDiffusionOperator(ParMesh &mesh_, int order);
    /// Solve the system k = f(x + dt*k), needed for DIRK-type time integration.
    void ImplicitSolve(const double dt_, const Vector &x, Vector &k) override;
    /// Set the current time, update the source terms.
    void SetTime(const double t_) override;
    /// Get the offsets array for the block vector of unknowns.
    const Array<int> &GetOffsets() const { return offsets; }
+   /// Get the mesh (const version).
+   const ParMesh &GetMesh() const { return mesh; }
+   /// Get the mesh (non-const version).
+   ParMesh &GetMesh() { return mesh; }
    /// Get the L2 space used for the material and radiation energies.
    ParFiniteElementSpace &GetL2Space() { return fes_l2; }
    /// Get the RT space used for the radiation flux.

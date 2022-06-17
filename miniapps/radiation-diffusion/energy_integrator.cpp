@@ -30,7 +30,9 @@ double T4Coefficient::Eval(ElementTransformation &Tr,
    const double e_np1 = e_val + dt*k_val;
    const double T = e_np1/Cv;
 
-   return a*c*eta*sigma*pow(T, 4);
+   const double ans = a*c*eta*sigma*pow(T, 4);
+
+   return ans;
 }
 
 T4DerivativeCoefficient::T4DerivativeCoefficient(
@@ -72,6 +74,119 @@ void NonlinearEnergyIntegrator::AssembleElementGrad(
    fes.GetElementDofs(Tr.ElementNo, dofs);
    deriv_coeff.b_gf.SetSubVector(dofs, elfun);
    mass.AssembleElementMatrix(el, Tr, elmat);
+}
+
+MaterialEnergyOperator::MaterialEnergyOperator(RadiationDiffusionOperator
+                                               &rad_diff_)
+   : Operator(rad_diff_.fes_l2.GetTrueVSize()),
+     rad_diff(rad_diff_),
+     qs(&rad_diff.GetMesh(), 2*rad_diff.fes_l2.GetMaxElementOrder()),
+     qinterp(rad_diff.fes_l2, qs),
+     qf(&qs),
+     coeff(qf),
+     lf_integrator(coeff),
+     geom(rad_diff.GetMesh().GetGeometricFactors(qs.GetElementIntRule(0),
+                                                 GeometricFactors::DETERMINANTS)),
+     linearized_op(*this),
+     e_q(qs.GetSize()),
+     x_q(qs.GetSize()),
+     markers(rad_diff.GetMesh().GetNE()),
+     dt(0.0)
+{
+   markers = 1;
+}
+
+void MaterialEnergyOperator::SetMaterialEnergy(const Vector &e_gf) const
+{
+   qinterp.Values(e_gf, e_q);
+}
+
+void MaterialEnergyOperator::Mult(const Vector &x, Vector &y) const
+{
+   using namespace MMS;
+
+   const int nq_per_el = qs.GetElementIntRule(0).Size();
+
+   qinterp.Values(x, x_q);
+
+   Vector qf_vals;
+   for (int e = 0; e < rad_diff.GetMesh().GetNE(); ++e)
+   {
+      const IntegrationRule &ir = qs.GetElementIntRule(e);
+      qf.GetElementValues(e, qf_vals);
+      for (int i = 0; i < ir.Size(); ++i)
+      {
+         const double det_J = geom->detJ[i + e*nq_per_el];
+         const double e_val = e_q[i + e*nq_per_el]/det_J;
+         const double k_val = x_q[i + e*nq_per_el]/det_J;
+         const double e_np1 = e_val + dt*k_val;
+         const double T = e_np1/Cv;
+         const double ans = a*c*eta*sigma*pow(T, 4);
+         qf_vals[i] = ans;
+      }
+   }
+
+   y = 0.0;
+   lf_integrator.AssembleDevice(rad_diff.fes_l2, markers, y);
+}
+
+LinearizedMaterialEnergyOperator &MaterialEnergyOperator::GetLinearizedOperator(
+   const Vector &x)
+{
+   linearized_op.SetLinearizationState(x);
+   return linearized_op;
+}
+
+Operator &MaterialEnergyOperator::GetGradient(const Vector &x) const
+{
+   linearized_op.SetLinearizationState(x);
+   const Operator &op = linearized_op;
+   return const_cast<Operator&>(op);
+}
+
+LinearizedMaterialEnergyOperator::LinearizedMaterialEnergyOperator(
+   MaterialEnergyOperator &H_)
+   : Operator(H_.rad_diff.GetL2Space().GetTrueVSize()),
+     H(H_),
+     qf(&H.qs),
+     coeff(qf),
+     mass_integrator(coeff),
+     x_q(H.qs.GetSize())
+{ }
+
+void LinearizedMaterialEnergyOperator::Mult(const Vector &x, Vector &y) const
+{
+   y = 0.0;
+   mass_integrator.AddMultPA(x, y);
+}
+
+void LinearizedMaterialEnergyOperator::SetLinearizationState(
+   const Vector &x) const
+{
+   using namespace MMS;
+
+   const int nq_per_el = H.qs.GetElementIntRule(0).Size();
+   const double dt = H.dt;
+
+   H.qinterp.Values(x, x_q);
+
+   Vector qf_vals;
+   for (int e = 0; e < H.rad_diff.GetMesh().GetNE(); ++e)
+   {
+      const IntegrationRule &ir = H.qs.GetElementIntRule(e);
+      qf.GetElementValues(e, qf_vals);
+      for (int i = 0; i < ir.Size(); ++i)
+      {
+         const double det_J = H.geom->detJ[i + e*nq_per_el];
+         const double e_val = H.e_q[i + e*nq_per_el]/det_J;
+         const double k_val = x_q[i + e*nq_per_el]/det_J;
+         const double e_np1 = e_val + dt*k_val;
+         const double ans = 4*a*c*eta*sigma*dt*pow(Cv, -4)*pow(e_np1, 3);
+         qf_vals[i] = ans;
+      }
+   }
+
+   mass_integrator.AssemblePA(H.rad_diff.GetL2Space());
 }
 
 } // namespace mfem
