@@ -33,7 +33,8 @@ RadiationDiffusionOperator::RadiationDiffusionOperator(ParMesh &mesh_,
      E_bdr_coeff(MMS::ExactRadiationEnergy),
      Q_e_form(&fes_l2),
      S_E_form(&fes_l2),
-     b_n_form(&fes_rt)
+     b_n_form(&fes_rt),
+     diag_L(fes_l2.GetTrueVSize())
 {
    const int n_l2 = fes_l2.GetTrueVSize();
    const int n_rt = fes_rt.GetTrueVSize();
@@ -49,6 +50,7 @@ RadiationDiffusionOperator::RadiationDiffusionOperator(ParMesh &mesh_,
    L_form.SetAssemblyLevel(AssemblyLevel::PARTIAL);
    L_form.Assemble();
    L_form.FormSystemMatrix(empty, L);
+   L_form.AssembleDiagonal(diag_L);
 
    R_form.AddDomainIntegrator(new VectorFEMassIntegrator);
    R_form.SetAssemblyLevel(AssemblyLevel::PARTIAL);

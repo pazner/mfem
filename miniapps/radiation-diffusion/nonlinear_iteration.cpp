@@ -111,6 +111,62 @@ void NonlinearEnergyOperator::Setup(const double dt_)
    rad_diff.H.SetMaterialEnergy(rad_diff.e_gf);
 }
 
+void EnergyBlockJacobi::Mult(const Vector &x, Vector &y) const
+{
+   const int n_l2 = diag_dH.Size();
+
+   const Vector x_e(const_cast<Vector&>(x), 0, n_l2);
+   const Vector x_E(const_cast<Vector&>(x), n_l2, n_l2);
+
+   Vector y_e(y, 0, n_l2);
+   Vector y_E(y, n_l2, n_l2);
+
+   for (int i = 0; i < n_l2; ++i)
+   {
+      double x_e_i = x_e[i];
+      double x_E_i = x_E[i];
+
+      y_e[i] = block_jacobi[0 + 4*i]*x_e_i + block_jacobi[2 + 4*i]*x_E_i;
+      y_E[i] = block_jacobi[1 + 4*i]*x_e_i + block_jacobi[3 + 4*i]*x_E_i;
+   }
+}
+
+void EnergyBlockJacobi::SetOperator(const Operator &op)
+{
+   auto *linearized_op = dynamic_cast<const LinearizedEnergyOperator*>(&op);
+   MFEM_VERIFY(linearized_op != nullptr, "Wrong operator type.");
+   const RadiationDiffusionOperator &rad_diff = linearized_op->rad_diff;
+
+   const int n_l2 = rad_diff.fes_l2.GetTrueVSize();
+
+   diag_dH.SetSize(n_l2);
+   linearized_op->dH->AssembleDiagonal(diag_dH);
+
+   const double dt = linearized_op->dt;
+
+   block_jacobi.SetSize(4*n_l2);
+
+   using namespace MMS;
+
+   for (int i = 0; i < n_l2; ++i)
+   {
+      const double dL = rad_diff.diag_L[i];
+      const double dH = diag_dH[i];
+
+      const double J_11 = rho*dL + dH;
+      const double J_12 = -c*dt*sigma*dL;
+      const double J_21 = -dH;
+      const double J_22 = (1 + c*dt*sigma)*dL;
+
+      const double det_J_inv = 1.0/(J_11*J_22 - J_12*J_21);
+
+      block_jacobi[0 + 4*i] = J_22*det_J_inv; // (1,1)
+      block_jacobi[1 + 4*i] = -J_21*det_J_inv; // (2,1)
+      block_jacobi[2 + 4*i] = -J_12*det_J_inv; // (1,2)
+      block_jacobi[3 + 4*i] = J_11*det_J_inv; // (2,2)
+   }
+}
+
 BrunnerNowackIteration::BrunnerNowackIteration(
    RadiationDiffusionOperator &rad_diff_)
    : IterativeSolver(rad_diff_.GetComm()),
@@ -126,6 +182,7 @@ BrunnerNowackIteration::BrunnerNowackIteration(
    J_eE_solver.SetRelTol(1e-14);
    J_eE_solver.SetAbsTol(1e-14);
    J_eE_solver.SetPrintLevel(IterativeSolver::PrintLevel().None());
+   J_eE_solver.SetPreconditioner(J_eE_preconditioner);
 
    eE_solver.SetMaxIter(20);
    eE_solver.SetRelTol(1e-8);

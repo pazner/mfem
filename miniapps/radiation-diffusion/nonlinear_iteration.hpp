@@ -27,6 +27,7 @@ namespace mfem
 // This is the linearization/Jacobian of NonlinearEnergyOperator.
 class LinearizedEnergyOperator : public Operator
 {
+   friend class EnergyBlockJacobi;
    RadiationDiffusionOperator &rad_diff;
    mutable Vector z;
    double dt;
@@ -56,6 +57,16 @@ public:
    void Setup(const double dt);
 };
 
+class EnergyBlockJacobi : public Solver
+{
+private:
+   Vector block_jacobi;
+   Vector diag_dH;
+public:
+   void Mult(const Vector &x, Vector &y) const;
+   void SetOperator(const Operator &op);
+};
+
 class BrunnerNowackIteration : public IterativeSolver
 {
 private:
@@ -64,6 +75,7 @@ private:
 
    NonlinearEnergyOperator N_eE;
    GMRESSolver J_eE_solver;
+   EnergyBlockJacobi J_eE_preconditioner;
    NewtonSolver eE_solver;
    RadiationDiffusionLinearSolver EF_solver;
 

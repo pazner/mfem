@@ -24,6 +24,7 @@ class RadiationDiffusionOperator : public TimeDependentOperator
 {
    friend class LinearizedEnergyOperator;
    friend class NonlinearEnergyOperator;
+   friend class EnergyBlockJacobi;
    friend class RadiationDiffusionLinearSolver;
    friend class BrunnerNowackIteration;
 private:
@@ -63,6 +64,8 @@ private:
    std::unique_ptr<HypreParMatrix> D; ///< Assembled divergence form.
    std::unique_ptr<HypreParMatrix> Dt; ///< The transpose of @ref D.
    OperatorHandle R; ///< Assembled RT mass matrix.
+
+   Vector diag_L; ///< Diagonal of the L2 mass matrix.
 
    /// Brunner-Nowack nonlinear (outer) iterative solver.
    std::unique_ptr<BrunnerNowackIteration> nonlinear_solver;
