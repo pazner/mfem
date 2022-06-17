@@ -124,6 +124,7 @@ void RadiationDiffusionLinearSolver::Setup(const double dt)
 
    minres.SetPreconditioner(*D_prec);
    minres.SetOperator(*A_block);
+   minres.iterative_mode = false;
 }
 
 void RadiationDiffusionLinearSolver::Mult(const Vector &b, Vector &x) const
@@ -145,7 +146,6 @@ void RadiationDiffusionLinearSolver::Mult(const Vector &b, Vector &x) const
    B_rt->MultTranspose(bF, bF_prime);
 
    // Solve the transformed system
-   x_prime = 0.0; // TODO: minres.iterative_mode = false?
    minres.Mult(b_prime, x_prime);
 
    // Transform the solution
