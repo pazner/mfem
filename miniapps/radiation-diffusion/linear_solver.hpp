@@ -22,12 +22,13 @@ namespace mfem
 class RadiationDiffusionLinearSolver : public Solver
 {
 private:
-   class RadiationDiffusionOperator &rad_diff;
    MINRESSolver minres;
 
    static constexpr int b1 = BasisType::GaussLobatto;
    static constexpr int b2 = BasisType::IntegratedGLL;
    static constexpr int mt = FiniteElement::INTEGRAL;
+
+   const int order;
 
    // L2 and RT spaces, using the interpolation-histopolation bases
    L2_FECollection fec_l2;
@@ -63,7 +64,9 @@ private:
 
    mutable Vector b_prime, x_prime, z;
 public:
-   RadiationDiffusionLinearSolver(class RadiationDiffusionOperator &rad_diff_);
+   RadiationDiffusionLinearSolver(ParMesh &mesh,
+                                  ParFiniteElementSpace &fes_rt_,
+                                  ParFiniteElementSpace &fes_l2_);
    /// Build the linear operator and solver. Must be called when dt changes.
    void Setup(const double dt);
    /// Solve the linear system for material and radiation energy.

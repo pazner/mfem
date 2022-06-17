@@ -30,16 +30,15 @@ HypreParMatrix *DiagonalInverse(
 }
 
 RadiationDiffusionLinearSolver::RadiationDiffusionLinearSolver(
-   RadiationDiffusionOperator &rad_diff_)
-   : Solver(rad_diff_.Height()),
-     rad_diff(rad_diff_),
-     minres(rad_diff.GetComm()),
-     fec_l2(rad_diff.fec_l2.GetOrder(), rad_diff.dim, b2, mt),
-     fes_l2(rad_diff.fes_l2.GetParMesh(), &fec_l2),
-     fec_rt(rad_diff.fec_l2.GetOrder(), rad_diff.dim, b1, b2),
-     fes_rt(rad_diff.fes_l2.GetParMesh(), &fec_rt),
-     basis_l2(&fes_l2, &rad_diff.fes_l2),
-     basis_rt(&fes_rt, &rad_diff.fes_rt),
+   ParMesh &mesh, ParFiniteElementSpace &fes_rt_, ParFiniteElementSpace &fes_l2_)
+   : minres(mesh.GetComm()),
+     order(fes_rt_.GetMaxElementOrder()),
+     fec_l2(order - 1, mesh.Dimension(), b2, mt),
+     fes_l2(&mesh, &fec_l2),
+     fec_rt(order - 1, mesh.Dimension(), b1, b2),
+     fes_rt(&mesh, &fec_rt),
+     basis_l2(&fes_l2, &fes_l2_),
+     basis_rt(&fes_rt, &fes_rt_),
      mass_rt(&fes_rt),
      dt_prev(0.0)
 {

@@ -19,6 +19,8 @@
 namespace mfem
 {
 
+class RadiationDiffusionOperator;
+
 // Class to compute the action of the linearized operator
 //
 // [ rho*L + dH         -c*dt*sigma*L    ]
