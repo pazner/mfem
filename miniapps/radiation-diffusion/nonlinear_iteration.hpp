@@ -19,6 +19,12 @@
 namespace mfem
 {
 
+// Class to compute the action of the linearized operator
+//
+// [ rho*L + dH         -c*dt*sigma*L    ]
+// [     -dH          (1 + c*dt*sigma)*L ]
+//
+// This is the linearization/Jacobian of NonlinearEnergyOperator.
 class LinearizedEnergyOperator : public Operator
 {
    RadiationDiffusionOperator &rad_diff;
@@ -32,6 +38,9 @@ public:
    void SetLinearizedMaterialOperator(const Operator &dH_) { dH = &dH_; }
 };
 
+// Class to compute the action of the nonlinear operator
+// [ rho*L + H         -c*dt*sigma*L    ]
+// [     -H          (1 + c*dt*sigma)*L ]
 class NonlinearEnergyOperator : public Operator
 {
    friend class LinearizedEnergyOperator;
