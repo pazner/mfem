@@ -19,48 +19,6 @@
 namespace mfem
 {
 
-class RadiationDiffusionOperator;
-
-class T4Coefficient : public Coefficient
-{
-   RadiationDiffusionOperator &rad_diff;
-public:
-   ParGridFunction b_gf;
-   T4Coefficient(RadiationDiffusionOperator &rad_diff_);
-   double Eval(ElementTransformation &Tr, const IntegrationPoint &ip);
-};
-
-class T4DerivativeCoefficient : public Coefficient
-{
-   RadiationDiffusionOperator &rad_diff;
-public:
-   ParGridFunction b_gf;
-   T4DerivativeCoefficient(RadiationDiffusionOperator &rad_diff_);
-   double Eval(ElementTransformation &Tr, const IntegrationPoint &ip);
-};
-
-class NonlinearEnergyIntegrator : public NonlinearFormIntegrator
-{
-   ParFiniteElementSpace &fes;
-   T4Coefficient coeff;
-   DomainLFIntegrator integ;
-
-   T4DerivativeCoefficient deriv_coeff;
-   MassIntegrator mass;
-   Array<int> dofs;
-
-public:
-   NonlinearEnergyIntegrator(RadiationDiffusionOperator &rad_diff_);
-
-   virtual void AssembleElementVector(const FiniteElement &el,
-                                      ElementTransformation &Tr,
-                                      const Vector &elfun, Vector &elvect);
-
-   virtual void AssembleElementGrad(const FiniteElement &el,
-                                    ElementTransformation &Tr,
-                                    const Vector &elfun, DenseMatrix &elmat);
-};
-
 // Computes the action of the linearized operator dH(k_e), linearized about
 // a given state.
 class LinearizedMaterialEnergyOperator : public Operator

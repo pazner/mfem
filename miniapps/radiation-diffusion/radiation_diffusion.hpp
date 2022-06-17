@@ -22,17 +22,10 @@ namespace mfem
 
 class RadiationDiffusionOperator : public TimeDependentOperator
 {
-   // TODO: delete these friends
-   friend class NonlinearEnergyIntegrator;
    friend class LinearizedEnergyOperator;
    friend class NonlinearEnergyOperator;
    friend class RadiationDiffusionLinearSolver;
    friend class BrunnerNowackIteration;
-   friend class T4Coefficient;
-   friend class T4DerivativeCoefficient;
-   friend class MaterialEnergyOperator;
-
-   // TODO:
 private:
    static constexpr int b1 = BasisType::GaussLobatto; ///< "closed basis"
    static constexpr int b2 = BasisType::GaussLegendre; ///< "open basis"
