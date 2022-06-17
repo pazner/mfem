@@ -15,13 +15,16 @@
 namespace mfem
 {
 
-RadiationDiffusionOperator::RadiationDiffusionOperator(ParMesh &mesh, int order)
-   : dim(mesh.Dimension()),
+RadiationDiffusionOperator::RadiationDiffusionOperator(ParMesh &mesh_,
+                                                       int order)
+   : mesh(mesh_),
+     dim(mesh.Dimension()),
      fec_l2(order-1, dim, b2, FiniteElement::INTEGRAL),
      fes_l2(&mesh, &fec_l2),
      fec_rt(order-1, dim, b1, b2),
      fes_rt(&mesh, &fec_rt),
      e_gf(&fes_l2),
+     H(*this),
      H_form(&fes_l2),
      L_form(&fes_l2),
      R_form(&fes_rt),
@@ -46,14 +49,14 @@ RadiationDiffusionOperator::RadiationDiffusionOperator(ParMesh &mesh, int order)
    H_form.AddDomainIntegrator(new NonlinearEnergyIntegrator(*this));
 
    L_form.AddDomainIntegrator(new MassIntegrator);
+   L_form.SetAssemblyLevel(AssemblyLevel::PARTIAL);
    L_form.Assemble();
-   L_form.Finalize();
-   L.reset(L_form.ParallelAssemble());
+   L_form.FormSystemMatrix(empty, L);
 
    R_form.AddDomainIntegrator(new VectorFEMassIntegrator);
+   R_form.SetAssemblyLevel(AssemblyLevel::PARTIAL);
    R_form.Assemble();
-   R_form.Finalize();
-   R.reset(R_form.ParallelAssemble());
+   R_form.FormSystemMatrix(empty, R);
 
    D_form.AddDomainIntegrator(new MixedScalarDivergenceIntegrator);
    D_form.Assemble();
@@ -150,9 +153,6 @@ void RadiationDiffusionOperator::ComputeFlux(Vector &x) const
    double coeff = MMS::c/MMS::sigma/3.0;
    add(-coeff, b_n, coeff, b, b);
 
-   Array<int> empty;
-   OperatorHandle R_op;
-   const_cast<ParBilinearForm&>(R_form).FormSystemMatrix(empty, R_op);
    OperatorJacobiSmoother jacobi(R_form, empty);
 
    CGSolver cg(GetComm());

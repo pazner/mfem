@@ -67,10 +67,10 @@ private:
    Vector S_E; ///< True-dof version of S_E_form.
    Vector b_n; ///< True-dof version of b_n_form.
 
-   std::unique_ptr<HypreParMatrix> L; ///< Assembled L2 mass matrix.
+   OperatorHandle L; ///< L2 mass matrix.
    std::unique_ptr<HypreParMatrix> D; ///< Assembled divergence form.
    std::unique_ptr<HypreParMatrix> Dt; ///< The transpose of @ref D.
-   std::unique_ptr<HypreParMatrix> R; ///< Assembled RT mass matrix.
+   OperatorHandle R; ///< Assembled RT mass matrix.
 
    /// Brunner-Nowack nonlinear (outer) iterative solver.
    std::unique_ptr<BrunnerNowackIteration> nonlinear_solver;
@@ -81,6 +81,8 @@ private:
 
    mutable Vector b; ///< Right-hand side for nonlinear solve.
    mutable Vector z; ///< Used as a temporary vector for computations.
+
+   Array<int> empty;
 
 public:
    /// Construct the radiation-diffusion operator given @a mesh and @a order.
