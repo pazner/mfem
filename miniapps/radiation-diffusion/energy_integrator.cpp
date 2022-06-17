@@ -60,6 +60,11 @@ void LinearizedMaterialEnergyOperator::SetLinearizationState(
    mass_integrator.AssemblePA(H.fes);
 }
 
+void LinearizedMaterialEnergyOperator::AssembleDiagonal(Vector &diag) const
+{
+   mass_integrator.AssembleDiagonalPA(diag);
+}
+
 MaterialEnergyOperator::MaterialEnergyOperator(FiniteElementSpace &fes_)
    : Operator(fes_.GetTrueVSize()),
      fes(fes_),

@@ -33,7 +33,9 @@ public:
 
    void SetLinearizationState(const Vector &x) const;
 
-   void Mult(const Vector &x, Vector &y) const;
+   void Mult(const Vector &x, Vector &y) const override;
+
+   void AssembleDiagonal(Vector &diag) const override;
 };
 
 // Computes the action of the operator H(k_e)
