@@ -8,7 +8,7 @@ Radiation-Diffusion Miniapp To-Do List
 
 - Performance
    - [ ] Partial assembly
-      - [ ] Mixed diverence integrator
+      - [x] Mixed diverence integrator
       - [ ] Change of basis
    - [ ] Device support
    - [x] Parallelization
@@ -24,7 +24,6 @@ Radiation-Diffusion Miniapp To-Do List
 Overall to-dos:
 
 - [ ] Clean up DG mass inverse interface
-- [ ] Coefficient support
 
 Element-by-element solver:
 

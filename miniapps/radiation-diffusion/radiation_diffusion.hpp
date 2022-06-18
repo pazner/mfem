@@ -61,8 +61,8 @@ private:
    Vector b_n; ///< True-dof version of b_n_form.
 
    OperatorHandle L; ///< L2 mass matrix.
-   std::unique_ptr<HypreParMatrix> D; ///< Assembled divergence form.
-   std::unique_ptr<HypreParMatrix> Dt; ///< The transpose of @ref D.
+   OperatorHandle D; ///< Assembled divergence form.
+   OperatorHandle Dt; ///< The transpose of @ref D.
    OperatorHandle R; ///< Assembled RT mass matrix.
 
    Vector diag_L; ///< Diagonal of the L2 mass matrix.

@@ -57,11 +57,12 @@ RadiationDiffusionOperator::RadiationDiffusionOperator(ParMesh &mesh_,
    R_form.Assemble();
    R_form.FormSystemMatrix(empty, R);
 
-   D_form.AddDomainIntegrator(new MixedScalarDivergenceIntegrator);
+   D_form.AddDomainIntegrator(new VectorFEDivergenceIntegrator);
+   D_form.SetAssemblyLevel(AssemblyLevel::PARTIAL);
    D_form.Assemble();
-   D_form.Finalize();
-   D.reset(D_form.ParallelAssemble());
-   Dt.reset(D->Transpose());
+   D_form.FormRectangularSystemMatrix(empty, empty, D);
+
+   Dt.Reset(new TransposeOperator(*D));
 
    Q_e_form.AddDomainIntegrator(new DomainLFIntegrator(Q_e_coeff));
    S_E_form.AddDomainIntegrator(new DomainLFIntegrator(S_E_coeff));
