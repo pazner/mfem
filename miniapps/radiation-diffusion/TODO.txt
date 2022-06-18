@@ -1,7 +1,6 @@
 Radiation-Diffusion Miniapp To-Do List
 
 - Methods and Discretization
-   - [ ] Nonlinear solver element-by-element
    - [x] Change of basis in saddle-point solver
    - [x] Non-unit coefficients in MMS
    - [x] 3D support
@@ -10,11 +9,13 @@ Radiation-Diffusion Miniapp To-Do List
    - [ ] Partial assembly
       - [x] Mixed diverence integrator
       - [ ] Change of basis
+      - [ ] Nonlinear solver on device
+         - [ ] Block Jacobi preconditioner on device
    - [ ] Device support
    - [x] Parallelization
 
 - Code Quality
-   - [ ] Better organization (friend classes, nonlinear integrator, etc.)
+   - [x] Better organization (friend classes, nonlinear integrator, etc.)
 
 - Interface
    - [ ] Allow saddle-point solver to accept two coefficients as input
@@ -25,6 +26,6 @@ Overall to-dos:
 
 - [ ] Clean up DG mass inverse interface
 
-Element-by-element solver:
+Future work:
 
-- Parallelization on GPU?
+- [ ] Nonlinear solver element-by-element
