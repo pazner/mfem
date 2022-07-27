@@ -209,7 +209,6 @@ void DGMassInverse::DGMassCGIteration(const Vector &b_, Vector &u_) const
       {
          const int BX = MFEM_THREAD_SIZE(x);
          const int BY = MFEM_THREAD_SIZE(y);
-         const int tid = MFEM_THREAD_ID(x) + BX*MFEM_THREAD_ID(y);
          const int bxy = BX*BY;
          const auto B = ConstDeviceMatrix(b, ND, NE);
          auto U = DeviceMatrix(u, ND, NE);
@@ -332,6 +331,7 @@ void DGMassInverse::Mult(const Vector &Mu, Vector &u) const
    {
       switch (id)
       {
+         case 0x11: return DGMassCGIteration<2,1,1>(Mu, u);
          case 0x22: return DGMassCGIteration<2,2,2>(Mu, u);
          case 0x33: return DGMassCGIteration<2,3,3>(Mu, u);
          case 0x35: return DGMassCGIteration<2,3,5>(Mu, u);
