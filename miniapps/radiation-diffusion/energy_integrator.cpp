@@ -40,7 +40,7 @@ void LinearizedMaterialEnergyOperator::SetLinearizationState(
 
    const int ne = H.fes.GetMesh()->GetNE();
    const int nq_per_el = H.qs.GetElementIntRule(0).Size();
-   const double dt = H.dt;
+   const double DT = H.dt;
 
    H.qinterp.Values(x, x_q);
 
@@ -54,8 +54,8 @@ void LinearizedMaterialEnergyOperator::SetLinearizationState(
       const double det_J = d_detJ[ii];
       const double e_val = d_e[ii]/det_J;
       const double k_val = d_k[ii]/det_J;
-      const double e_np1 = e_val + dt*k_val;
-      const double ans = 4*a*c*eta*sigma*dt*pow(Cv, -4)*pow(e_np1, 3);
+      const double e_np1 = e_val + DT*k_val;
+      const double ans = 4*a*c*eta*sigma*DT*pow(Cv, -4)*pow(e_np1, 3);
       d_qf[ii] = ans;
    });
 
@@ -107,14 +107,18 @@ void MaterialEnergyOperator::Mult(const Vector &x, Vector &y) const
    const double *d_k = x_q.Read();
    double *d_qf = qf.Write();
 
+   const double DT = dt; // Assign to local so we don't access *this from kernel
+
    MFEM_FORALL(ii, ne*nq_per_el,
    {
       const double det_J = d_detJ[ii];
       const double e_val = d_e[ii]/det_J;
       const double k_val = d_k[ii]/det_J;
-      const double e_np1 = e_val + dt*k_val;
+
+      const double e_np1 = e_val + DT*k_val;
       const double T = e_np1/Cv;
       const double ans = a*c*eta*sigma*pow(T, 4);
+
       d_qf[ii] = ans;
    });
 
