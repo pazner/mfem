@@ -145,6 +145,10 @@ void RadiationDiffusionLinearSolver::Mult(const Vector &b, Vector &x) const
    B_l2->MultTranspose(z, bE_prime);
    B_rt->MultTranspose(bF, bF_prime);
 
+   // Update the monolithic transformed RHS
+   bE_prime.SyncAliasMemory(b_prime);
+   bF_prime.SyncAliasMemory(b_prime);
+
    // Solve the transformed system
    minres.Mult(b_prime, x_prime);
 
@@ -159,6 +163,10 @@ void RadiationDiffusionLinearSolver::Mult(const Vector &b, Vector &x) const
 
    B_l2->Mult(z, xE);
    B_rt->Mult(xF_prime, xF);
+
+   // Update the monolithic solution vector
+   xE.SyncAliasMemory(x);
+   xF.SyncAliasMemory(x);
 }
 
 void RadiationDiffusionLinearSolver::SetOperator(const Operator &op) { }

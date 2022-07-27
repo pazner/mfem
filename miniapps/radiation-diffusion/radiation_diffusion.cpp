@@ -80,7 +80,6 @@ void RadiationDiffusionOperator::ImplicitSolve(
    using namespace MMS;
 
    // Solve the system k = f(x + dt*k)
-
    const int n_l2 = fes_l2.GetTrueVSize();
    const int n_rt = fes_rt.GetTrueVSize();
 
@@ -109,6 +108,11 @@ void RadiationDiffusionOperator::ImplicitSolve(
    z.SetSize(n_rt);
    Dt->Mult(x_E, z);
    add(1.0/dt, b_n, -1.0/dt, z, b_F); // Include the boundary flux term.
+
+   // Sync from b subvectors to monolithic vector
+   b_e.SyncAliasMemory(b);
+   b_E.SyncAliasMemory(b);
+   b_F.SyncAliasMemory(b);
 
    k = 0.0; // zero initial guess
    nonlinear_solver->Setup(dt);
@@ -163,6 +167,8 @@ void RadiationDiffusionOperator::ComputeFlux(Vector &x) const
 
    x_F = 0.0;
    cg.Mult(b, x_F);
+
+   x_F.SyncAliasMemory(x);
 }
 
 } // namespace mfem

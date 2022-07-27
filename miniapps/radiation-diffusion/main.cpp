@@ -85,6 +85,8 @@ int main(int argc, char *argv[])
 
    e_gf.ParallelProject(u.GetBlock(0));
    E_gf.ParallelProject(u.GetBlock(1));
+   u.GetBlock(2) = 0.0;
+   u.SyncFromBlocks();
 
    // Compute the initial radiation flux given e and E
    rad_diff.ComputeFlux(u);
@@ -129,6 +131,7 @@ int main(int argc, char *argv[])
       }
       ode.Step(u, t, dt);
 
+      u.SyncToBlocks();
       e_gf.SetFromTrueDofs(u.GetBlock(0));
       E_gf.SetFromTrueDofs(u.GetBlock(1));
       F_gf.SetFromTrueDofs(u.GetBlock(2));

@@ -51,6 +51,9 @@ void LinearizedEnergyOperator::Mult(const Vector &x, Vector &y) const
    rad_diff.L->Mult(x_E, z);
    y_E.Add(1 + c*dt*sigma, z);
    y_e.Add(-c*dt*sigma, z);
+
+   y_e.SyncAliasMemory(y);
+   y_E.SyncAliasMemory(y);
 }
 
 NonlinearEnergyOperator::NonlinearEnergyOperator(
@@ -88,6 +91,9 @@ void NonlinearEnergyOperator::Mult(const Vector &x, Vector &y) const
    rad_diff.L->Mult(x_E, z);
    y_E.Add(1 + c*dt*sigma, z); // Contribution to radiation energy
    y_e.Add(-c*dt*sigma, z); // Contribution to material energy
+
+   y_e.SyncAliasMemory(y);
+   y_E.SyncAliasMemory(y);
 }
 
 Operator &NonlinearEnergyOperator::GetGradient(const Vector &x) const
@@ -249,6 +255,10 @@ void BrunnerNowackIteration::ApplyFullOperator(const Vector &x, Vector &y) const
 
    rad_diff.Dt->Mult(x_E, z);
    y_F += z;
+
+   y_e.SyncAliasMemory(y);
+   y_E.SyncAliasMemory(y);
+   y_F.SyncAliasMemory(y);
 }
 
 void BrunnerNowackIteration::Mult(const Vector &b, Vector &x) const
@@ -272,7 +282,6 @@ void BrunnerNowackIteration::Mult(const Vector &b, Vector &x) const
 
    Vector x_eE(x, 0, n_eE);
    Vector x_EF(x, rad_diff.offsets[1], n_EF);
-
    Vector x_F(x, rad_diff.offsets[2], n_rt);
 
    r.SetSize(x.Size());
@@ -286,6 +295,11 @@ void BrunnerNowackIteration::Mult(const Vector &b, Vector &x) const
    c_eE.SetSize(n_eE);
    c_EF.SetSize(n_EF);
 
+   auto sync = [](Vector &v1, const Vector &v2) { v1.SyncAliasMemory(v2); };
+   auto sync_x = [&]() { sync(x_eE, x); sync(x_EF, x); sync(x_F, x); };
+   auto sync_r = [&]() { sync(r_eE, r); sync(r_E, r); sync(r_EF, r); };
+   auto sync_xr = [&]() { sync_x(); sync_r(); };
+
    const double b_norm = Norm(b);
 
    for (int it = 0; it < maxit; ++it)
@@ -295,6 +309,7 @@ void BrunnerNowackIteration::Mult(const Vector &b, Vector &x) const
          std::cout << " " << std::setw(3) << it << "    " << std::flush;
       }
       // Compute full residual
+      sync_xr();
       ApplyFullOperator(x, r);
       subtract(b, r, r); // Set r = b - J*x
 
@@ -310,7 +325,16 @@ void BrunnerNowackIteration::Mult(const Vector &b, Vector &x) const
       r_eE = b_eE;
       z.SetSize(n_l2);
       rad_diff.D->Mult(x_F, z);
+
+      // r_eE has been modified, update r_E
+      r_eE.SyncAliasMemory(r);
+      r_E.SyncMemory(r);
+
       r_E -= z;
+
+      // r_E has been modified, update r_eE
+      r_E.SyncAliasMemory(r);
+      r_eE.SyncMemory(r);
 
       // Nonlinear solve for correction to x_e, x_E
       eE_solver.Mult(r_eE, x_eE);
@@ -320,10 +344,12 @@ void BrunnerNowackIteration::Mult(const Vector &b, Vector &x) const
       }
 
       // Compute residual again
+      sync_xr();
       ApplyFullOperator(x, r);
       subtract(b, r, r); // Set r = b - J*x
 
       // Linear solve for correction to x_E, x_F
+      r_EF.SyncMemory(r);
       EF_solver.Mult(r_EF, c_EF);
       if (print) { std::cout << EF_solver.GetNumIterations() << std::endl; }
 
@@ -331,6 +357,8 @@ void BrunnerNowackIteration::Mult(const Vector &b, Vector &x) const
       x_EF += c_EF;
    }
    if (print) { std::cout << std::endl; }
+
+   sync_x();
 }
 
 void BrunnerNowackIteration::SetOperator(const Operator &op) { }
