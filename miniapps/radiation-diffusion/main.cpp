@@ -45,6 +45,7 @@ int main(int argc, char *argv[])
    int ser_ref = 1;
    int par_ref = 1;
    int order = 3;
+   bool visualization = true;
 
    OptionsParser args(argc, argv);
    args.AddOption(&device_config, "-d", "--device",
@@ -55,6 +56,8 @@ int main(int argc, char *argv[])
    args.AddOption(&par_ref, "-rp", "--parallel-refine",
                   "Number of times to refine the mesh in parallel.");
    args.AddOption(&order, "-o", "--order", "Polynomial degree.");
+   args.AddOption(&visualization, "-vis", "--visualization", "-no-vis",
+                  "--no-visualization", "Enable or disable ParaView output.");
    args.ParseCheck();
 
    Device device(device_config);
@@ -100,9 +103,12 @@ int main(int argc, char *argv[])
    pv.SetHighOrderOutput(true);
    pv.SetLevelsOfDetail(order);
 
-   pv.SetCycle(0);
-   pv.SetTime(0);
-   pv.Save();
+   if (visualization)
+   {
+      pv.SetCycle(0);
+      pv.SetTime(0);
+      pv.Save();
+   }
 
    SDIRK33Solver ode;
    ode.Init(rad_diff);
@@ -118,6 +124,14 @@ int main(int argc, char *argv[])
    const double tf = 0.1/MMS::tau;
    int i = 0;
 
+   auto sync_gridfunctions = [&]()
+   {
+      u.SyncToBlocks();
+      e_gf.SetFromTrueDofs(u.GetBlock(0));
+      E_gf.SetFromTrueDofs(u.GetBlock(1));
+      F_gf.SetFromTrueDofs(u.GetBlock(2));
+   };
+
    while (t < tf)
    {
       if (t + dt > tf) { dt = tf - t; }
@@ -131,15 +145,16 @@ int main(int argc, char *argv[])
       }
       ode.Step(u, t, dt);
 
-      u.SyncToBlocks();
-      e_gf.SetFromTrueDofs(u.GetBlock(0));
-      E_gf.SetFromTrueDofs(u.GetBlock(1));
-      F_gf.SetFromTrueDofs(u.GetBlock(2));
-
-      pv.SetCycle(pv.GetCycle() + 1);
-      pv.SetTime(t);
-      pv.Save();
+      if (visualization)
+      {
+         sync_gridfunctions();
+         pv.SetCycle(pv.GetCycle() + 1);
+         pv.SetTime(t);
+         pv.Save();
+      }
    }
+
+   sync_gridfunctions();
 
    e_exact_coeff.SetTime(t);
    E_exact_coeff.SetTime(t);
