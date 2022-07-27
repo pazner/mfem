@@ -1810,12 +1810,7 @@ VectorFEDivergenceIntegrator::AssemblePA(const FiniteElementSpace &trial_fes,
    if (test_el->GetMapType() == FiniteElement::INTEGRAL)
    {
       geom = mesh->GetGeometricFactors(*ir, GeometricFactors::DETERMINANTS);
-      const double *detJ = geom->detJ.Read();
-      double *c = coeff.ReadWrite();
-      MFEM_FORALL(i, ne*nq,
-      {
-         c[i] /= detJ[i];
-      });
+      coeff /= geom->detJ;
    }
    else
    {
