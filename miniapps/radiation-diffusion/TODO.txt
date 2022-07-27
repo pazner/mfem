@@ -10,6 +10,7 @@ Radiation-Diffusion Miniapp To-Do List
       - [x] Mixed diverence integrator
       - [ ] Change of basis
       - [ ] Nonlinear solver on device
+         - [ ] Evaluation of coefficients/Q-functions on device
          - [ ] Block Jacobi preconditioner on device
    - [ ] Device support
    - [x] Parallelization

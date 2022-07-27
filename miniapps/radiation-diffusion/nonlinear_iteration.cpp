@@ -12,6 +12,8 @@
 #include "nonlinear_iteration.hpp"
 #include "radiation_diffusion.hpp"
 
+#include "general/forall.hpp"
+
 namespace mfem
 {
 
@@ -115,20 +117,22 @@ void EnergyBlockJacobi::Mult(const Vector &x, Vector &y) const
 {
    const int n_l2 = diag_dH.Size();
 
-   const Vector x_e(const_cast<Vector&>(x), 0, n_l2);
-   const Vector x_E(const_cast<Vector&>(x), n_l2, n_l2);
+   const double *x_e = x.Read();
+   const double *x_E = x_e + n_l2;
 
-   Vector y_e(y, 0, n_l2);
-   Vector y_E(y, n_l2, n_l2);
+   double *y_e = y.Write();
+   double *y_E = y_e + n_l2;
 
-   for (int i = 0; i < n_l2; ++i)
+   const double *J = block_jacobi.Read();
+
+   MFEM_FORALL(i, n_l2,
    {
       double x_e_i = x_e[i];
       double x_E_i = x_E[i];
 
-      y_e[i] = block_jacobi[0 + 4*i]*x_e_i + block_jacobi[2 + 4*i]*x_E_i;
-      y_E[i] = block_jacobi[1 + 4*i]*x_e_i + block_jacobi[3 + 4*i]*x_E_i;
-   }
+      y_e[i] = J[0 + 4*i]*x_e_i + J[2 + 4*i]*x_E_i;
+      y_E[i] = J[1 + 4*i]*x_e_i + J[3 + 4*i]*x_E_i;
+   });
 }
 
 void EnergyBlockJacobi::SetOperator(const Operator &op)
@@ -148,23 +152,27 @@ void EnergyBlockJacobi::SetOperator(const Operator &op)
 
    using namespace MMS;
 
-   for (int i = 0; i < n_l2; ++i)
-   {
-      const double dL = rad_diff.diag_L[i];
-      const double dH = diag_dH[i];
+   const double *d_L = rad_diff.diag_L.Read();
+   const double *d_dH = diag_dH.Read();
+   double *d_J = block_jacobi.Write();
 
-      const double J_11 = rho*dL + dH;
-      const double J_12 = -c*dt*sigma*dL;
+   MFEM_FORALL(i, n_l2,
+   {
+      const double L = d_L[i];
+      const double dH = d_dH[i];
+
+      const double J_11 = rho*L + dH;
+      const double J_12 = -c*dt*sigma*L;
       const double J_21 = -dH;
-      const double J_22 = (1 + c*dt*sigma)*dL;
+      const double J_22 = (1 + c*dt*sigma)*L;
 
       const double det_J_inv = 1.0/(J_11*J_22 - J_12*J_21);
 
-      block_jacobi[0 + 4*i] = J_22*det_J_inv; // (1,1)
-      block_jacobi[1 + 4*i] = -J_21*det_J_inv; // (2,1)
-      block_jacobi[2 + 4*i] = -J_12*det_J_inv; // (1,2)
-      block_jacobi[3 + 4*i] = J_11*det_J_inv; // (2,2)
-   }
+      d_J[0 + 4*i] = J_22*det_J_inv; // (1,1)
+      d_J[1 + 4*i] = -J_21*det_J_inv; // (2,1)
+      d_J[2 + 4*i] = -J_12*det_J_inv; // (1,2)
+      d_J[3 + 4*i] = J_11*det_J_inv; // (2,2)
+   });
 }
 
 BrunnerNowackIteration::BrunnerNowackIteration(
