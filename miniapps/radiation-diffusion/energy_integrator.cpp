@@ -12,6 +12,8 @@
 #include "energy_integrator.hpp"
 #include "radiation_diffusion.hpp"
 
+#include "general/forall.hpp"
+
 namespace mfem
 {
 
@@ -36,26 +38,27 @@ void LinearizedMaterialEnergyOperator::SetLinearizationState(
 {
    using namespace MMS;
 
+   const int ne = H.fes.GetMesh()->GetNE();
    const int nq_per_el = H.qs.GetElementIntRule(0).Size();
    const double dt = H.dt;
 
    H.qinterp.Values(x, x_q);
 
-   Vector qf_vals;
-   for (int e = 0; e < H.fes.GetMesh()->GetNE(); ++e)
+   const double *d_detJ = H.geom->detJ.Read();
+   const double *d_e = H.e_q.Read();
+   const double *d_k = x_q.Read();
+   double *d_qf = qf.Write();
+
+   MFEM_FORALL(ii, ne*nq_per_el,
    {
-      const IntegrationRule &ir = H.qs.GetElementIntRule(e);
-      qf.GetElementValues(e, qf_vals);
-      for (int i = 0; i < ir.Size(); ++i)
-      {
-         const double det_J = H.geom->detJ[i + e*nq_per_el];
-         const double e_val = H.e_q[i + e*nq_per_el]/det_J;
-         const double k_val = x_q[i + e*nq_per_el]/det_J;
-         const double e_np1 = e_val + dt*k_val;
-         const double ans = 4*a*c*eta*sigma*dt*pow(Cv, -4)*pow(e_np1, 3);
-         qf_vals[i] = ans;
-      }
-   }
+      const double det_J = d_detJ[ii];
+      const double e_val = d_e[ii]/det_J;
+      const double k_val = d_k[ii]/det_J;
+      const double e_np1 = e_val + dt*k_val;
+      const double ans = 4*a*c*eta*sigma*dt*pow(Cv, -4)*pow(e_np1, 3);
+      d_qf[ii] = ans;
+   });
+
 
    mass_integrator.AssemblePA(H.fes);
 }
@@ -94,26 +97,26 @@ void MaterialEnergyOperator::Mult(const Vector &x, Vector &y) const
 {
    using namespace MMS;
 
+   const int ne = fes.GetMesh()->GetNE();
    const int nq_per_el = qs.GetElementIntRule(0).Size();
 
    qinterp.Values(x, x_q);
 
-   Vector qf_vals;
-   for (int e = 0; e < fes.GetMesh()->GetNE(); ++e)
+   const double *d_detJ = geom->detJ.Read();
+   const double *d_e = e_q.Read();
+   const double *d_k = x_q.Read();
+   double *d_qf = qf.Write();
+
+   MFEM_FORALL(ii, ne*nq_per_el,
    {
-      const IntegrationRule &ir = qs.GetElementIntRule(e);
-      qf.GetElementValues(e, qf_vals);
-      for (int i = 0; i < ir.Size(); ++i)
-      {
-         const double det_J = geom->detJ[i + e*nq_per_el];
-         const double e_val = e_q[i + e*nq_per_el]/det_J;
-         const double k_val = x_q[i + e*nq_per_el]/det_J;
-         const double e_np1 = e_val + dt*k_val;
-         const double T = e_np1/Cv;
-         const double ans = a*c*eta*sigma*pow(T, 4);
-         qf_vals[i] = ans;
-      }
-   }
+      const double det_J = d_detJ[ii];
+      const double e_val = d_e[ii]/det_J;
+      const double k_val = d_k[ii]/det_J;
+      const double e_np1 = e_val + dt*k_val;
+      const double T = e_np1/Cv;
+      const double ans = a*c*eta*sigma*pow(T, 4);
+      d_qf[ii] = ans;
+   });
 
    y = 0.0;
    lf_integrator.AssembleDevice(fes, markers, y);
