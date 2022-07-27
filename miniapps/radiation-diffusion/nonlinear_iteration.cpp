@@ -192,6 +192,7 @@ BrunnerNowackIteration::BrunnerNowackIteration(
    J_eE_solver.SetPrintLevel(IterativeSolver::PrintLevel().None());
    J_eE_solver.SetPreconditioner(J_eE_preconditioner);
 
+   eE_solver.iterative_mode = false;
    eE_solver.SetMaxIter(20);
    eE_solver.SetRelTol(1e-8);
    eE_solver.SetAbsTol(1e-8);

@@ -62,6 +62,7 @@ void LinearizedMaterialEnergyOperator::SetLinearizationState(
 
 void LinearizedMaterialEnergyOperator::AssembleDiagonal(Vector &diag) const
 {
+   diag = 0.0;
    mass_integrator.AssembleDiagonalPA(diag);
 }
 
