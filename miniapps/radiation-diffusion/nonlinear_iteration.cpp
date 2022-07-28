@@ -13,6 +13,7 @@
 #include "radiation_diffusion.hpp"
 
 #include "general/forall.hpp"
+#include "general/nvtx.hpp"
 
 namespace mfem
 {
@@ -214,6 +215,8 @@ BrunnerNowackIteration::BrunnerNowackIteration(
 
 void BrunnerNowackIteration::ApplyFullOperator(const Vector &x, Vector &y) const
 {
+   MFEM_NVTX;
+
    using namespace MMS;
 
    const double dt = rad_diff.dt;
@@ -263,6 +266,8 @@ void BrunnerNowackIteration::ApplyFullOperator(const Vector &x, Vector &y) const
 
 void BrunnerNowackIteration::Mult(const Vector &b, Vector &x) const
 {
+   NVTX("Brunner-Nowack Iteration");
+
    const int maxit = 100;
    const double tol = 1e-6;
 

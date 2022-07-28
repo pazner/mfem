@@ -13,6 +13,8 @@
 #include "linear_solver.hpp"
 #include "discrete_divergence.hpp"
 
+#include "general/nvtx.hpp"
+
 namespace mfem
 {
 
@@ -129,6 +131,8 @@ void RadiationDiffusionLinearSolver::Setup(const double dt)
 
 void RadiationDiffusionLinearSolver::Mult(const Vector &b, Vector &x) const
 {
+   NVTX("H(div) solver");
+
    b_prime.SetSize(b.Size());
    x_prime.SetSize(x.Size());
 

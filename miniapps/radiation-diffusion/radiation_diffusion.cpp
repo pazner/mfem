@@ -12,6 +12,8 @@
 #include "radiation_diffusion.hpp"
 #include "energy_integrator.hpp"
 
+#include "general/nvtx.hpp"
+
 namespace mfem
 {
 
@@ -77,6 +79,8 @@ RadiationDiffusionOperator::RadiationDiffusionOperator(ParMesh &mesh_,
 void RadiationDiffusionOperator::ImplicitSolve(
    const double dt_, const Vector &x, Vector &k)
 {
+   MFEM_NVTX;
+
    using namespace MMS;
 
    // Solve the system k = f(x + dt*k)
@@ -121,6 +125,8 @@ void RadiationDiffusionOperator::ImplicitSolve(
 
 void RadiationDiffusionOperator::SetTime(const double t_)
 {
+   MFEM_NVTX;
+
    t = t_;
 
    // Set the time for the time-dependent coefficients
@@ -133,14 +139,23 @@ void RadiationDiffusionOperator::SetTime(const double t_)
    b_n.SetSize(fes_rt.GetTrueVSize());
 
    // Reassemble the source terms
-   Q_e_form.Assemble();
-   Q_e_form.ParallelAssemble(Q_e);
+   {
+      NVTX("Q_e");
+      Q_e_form.Assemble();
+      Q_e_form.ParallelAssemble(Q_e);
+   }
 
-   S_E_form.Assemble();
-   S_E_form.ParallelAssemble(S_E);
+   {
+      NVTX("S_E");
+      S_E_form.Assemble();
+      S_E_form.ParallelAssemble(S_E);
+   }
 
-   b_n_form.Assemble();
-   b_n_form.ParallelAssemble(b_n);
+   {
+      NVTX("b_n");
+      b_n_form.Assemble();
+      b_n_form.ParallelAssemble(b_n);
+   }
 }
 
 void RadiationDiffusionOperator::ComputeFlux(Vector &x) const
