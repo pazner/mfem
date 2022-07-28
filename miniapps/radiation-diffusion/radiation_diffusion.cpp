@@ -30,9 +30,8 @@ RadiationDiffusionOperator::RadiationDiffusionOperator(ParMesh &mesh_,
      L_form(&fes_l2),
      R_form(&fes_rt),
      D_form(&fes_rt, &fes_l2),
-     Q_e_coeff(MMS::MaterialEnergySource),
-     S_E_coeff(MMS::RadiationEnergySource),
-     E_bdr_coeff(MMS::ExactRadiationEnergy),
+     coeffs(mesh, order),
+     E_bdr_coeff(MMS::ExactRadiationEnergyFunction),
      Q_e_form(&fes_l2),
      S_E_form(&fes_l2),
      b_n_form(&fes_rt),
@@ -66,8 +65,14 @@ RadiationDiffusionOperator::RadiationDiffusionOperator(ParMesh &mesh_,
 
    Dt.Reset(new TransposeOperator(*D));
 
-   Q_e_form.AddDomainIntegrator(new DomainLFIntegrator(Q_e_coeff));
-   S_E_form.AddDomainIntegrator(new DomainLFIntegrator(S_E_coeff));
+   const IntegrationRule &ir = coeffs.GetIntRule();
+
+   Q_e_form.AddDomainIntegrator(new DomainLFIntegrator(coeffs.Q_e));
+   (*Q_e_form.GetDLFI())[0]->SetIntRule(&ir);
+
+   S_E_form.AddDomainIntegrator(new DomainLFIntegrator(coeffs.S_E));
+   (*S_E_form.GetDLFI())[0]->SetIntRule(&ir);
+
    b_n_form.AddBoundaryIntegrator(new VectorFEBoundaryFluxLFIntegrator(
                                      E_bdr_coeff));
 
@@ -129,9 +134,9 @@ void RadiationDiffusionOperator::SetTime(const double t_)
 
    t = t_;
 
+   coeffs.SetTime(t);
+
    // Set the time for the time-dependent coefficients
-   Q_e_coeff.SetTime(t);
-   S_E_coeff.SetTime(t);
    E_bdr_coeff.SetTime(t);
 
    Q_e.SetSize(fes_l2.GetTrueVSize());

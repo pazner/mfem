@@ -15,6 +15,8 @@
 #include "mfem.hpp"
 #include "radiation_diffusion.hpp"
 #include "nonlinear_iteration.hpp"
+#include "mms.hpp"
+
 #include <memory>
 
 namespace mfem
@@ -48,8 +50,8 @@ private:
    ParBilinearForm R_form; ///< RT mass matrix.
    ParMixedBilinearForm D_form; ///< RT -> L2 divergence.
 
-   FunctionCoefficient Q_e_coeff; ///< Material energy source coefficient.
-   FunctionCoefficient S_E_coeff; ///< Radiation energy source coefficient.
+   MMS::Coefficients coeffs; ///< Coefficients associated with problem.
+
    FunctionCoefficient E_bdr_coeff; ///< Radiation energy boundary condition.
 
    ParLinearForm Q_e_form; ///< Material energy source term.

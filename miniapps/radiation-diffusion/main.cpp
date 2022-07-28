@@ -79,8 +79,8 @@ int main(int argc, char *argv[])
    ParGridFunction E_gf(&fes_l2);
    ParGridFunction F_gf(&fes_rt);
 
-   FunctionCoefficient e_exact_coeff(MMS::ExactMaterialEnergy);
-   FunctionCoefficient E_exact_coeff(MMS::ExactRadiationEnergy);
+   FunctionCoefficient e_exact_coeff(MMS::ExactMaterialEnergyFunction);
+   FunctionCoefficient E_exact_coeff(MMS::ExactRadiationEnergyFunction);
 
    // Use the initial condition for the material and radiation energy
    e_gf.ProjectCoefficient(e_exact_coeff);

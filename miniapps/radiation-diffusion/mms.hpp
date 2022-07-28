@@ -9,10 +9,12 @@
 // terms of the BSD-3 license. We welcome feedback and contributions, see file
 // CONTRIBUTING.md for details.
 
-#ifndef RAD_DIFF_COEFFICIENTS_HPP
-#define RAD_DIFF_COEFFICIENTS_HPP
+#ifndef RAD_DIFF_MMS_HPP
+#define RAD_DIFF_MMS_HPP
 
 #include "mfem.hpp"
+
+#include "general/forall.hpp"
 
 namespace mfem
 {
@@ -38,10 +40,132 @@ static constexpr double omega = 2.13503497e+1;
 
 static constexpr double eta = 1;
 
-double ExactMaterialEnergy(const Vector &xvec, double t);
-double ExactRadiationEnergy(const Vector &xvec, double t);
-double MaterialEnergySource(const Vector &xvec, double t);
-double RadiationEnergySource(const Vector &xvec, double t);
+MFEM_HOST_DEVICE inline
+double rad(int dim, const double *x)
+{
+   if (dim == 1) { return x[0]; }
+   else if (dim == 2) { return sqrt(x[0]*x[0] + x[1]*x[1]); }
+   else if (dim == 3) { return sqrt(x[0]*x[0] + x[1]*x[1] + x[2]*x[2]); }
+   else { return 0.0; }
+}
+
+MFEM_HOST_DEVICE inline
+double ExactMaterialEnergy(int dim, const double *xvec, double t)
+{
+   const double r = rad(dim, xvec);
+   return Cv * T0 * (1 - 0.5 * exp(-tau * t) * cos(omega * r));
+}
+
+MFEM_HOST_DEVICE inline
+double ExactRadiationEnergy(int dim, const double *xvec, double t)
+{
+   const double r = rad(dim, xvec);
+   const double exponent = exp(-tau * t);
+   const double Trad     = T0 * (1 + 0.5 * exponent);
+   return a * pow(Trad, 4) * (1 + 0.5 * exponent * cos(omega * r));
+}
+
+MFEM_HOST_DEVICE inline
+double MaterialEnergySource(int dim, const double *xvec, double t)
+{
+   const double exponent = exp(-tau * t);
+   const double cosine   = cos(omega * rad(dim, xvec));
+   const double Tmat     = T0 * (1 - 0.5 * exponent * cosine);
+   const double Trad     = T0 * (1 + 0.5 * exponent);
+   const double E        = a * pow(Trad, 4) * (1 + 0.5 * exponent * cosine);
+   return rho * Cv * 0.5 * T0 * tau * exponent * cosine
+          +
+          c * sigma * (a * pow(Tmat, 4) - E);
+}
+
+MFEM_HOST_DEVICE inline
+double RadiationEnergySource(int dim, const double *xvec, double t)
+{
+   const double r = rad(dim, xvec);
+   const double exponent = exp(-tau * t);
+   const double cosine   = cos(omega * r);
+   const double Tmat     = T0 * (1 - 0.5 * exponent * cosine);
+   const double Trad     = T0 * (1 + 0.5 * exponent);
+   const double E        = a * pow(Trad, 4) * (1 + 0.5 * exponent * cosine);
+   return -0.5 * tau * exponent * a * pow(Trad, 3) *
+          (4 * T0 + (Trad + 2 * T0 * exponent) * cosine)
+          + c * exponent * a * pow(Trad, 4) / (6 * sigma) *
+          (omega*omega * cosine + omega * sin(omega * r) / r)
+          - c * sigma * (a * pow(Tmat, 4) - E);
+}
+
+using FunctionType = double(*)(int dim, const double *x, double t);
+
+template <FunctionType F>
+double CoefficientFunction(const Vector &xvec, double t)
+{
+   return F(xvec.Size(), xvec.GetData(), t);
+}
+
+static constexpr auto ExactMaterialEnergyFunction =
+   CoefficientFunction<ExactMaterialEnergy>;
+static constexpr auto ExactRadiationEnergyFunction =
+   CoefficientFunction<ExactRadiationEnergy>;
+static constexpr auto MaterialEnergySourceFunction =
+   CoefficientFunction<MaterialEnergySource>;
+static constexpr auto RadiationEnergySourceFunction =
+   CoefficientFunction<RadiationEnergySource>;
+
+class Coefficients
+{
+private:
+   QuadratureSpace qs;
+   const IntegrationRule &ir;
+   QuadratureFunction Q_e_qf;
+   QuadratureFunction S_E_qf;
+   const GeometricFactors *geom;
+public:
+   QuadratureFunctionCoefficient Q_e;
+   QuadratureFunctionCoefficient S_E;
+
+   Coefficients(Mesh &mesh, int order)
+      : qs(&mesh, 2*(order-1)),
+        ir(qs.GetElementIntRule(0)),
+        Q_e_qf(&qs),
+        S_E_qf(&qs),
+        Q_e(Q_e_qf),
+        S_E(Q_e_qf)
+   {
+      geom = mesh.GetGeometricFactors(ir, GeometricFactors::COORDINATES);
+   }
+   template <FunctionType F>
+   void SetTime(QuadratureFunctionCoefficient &coeff, double t)
+   {
+      coeff.SetTime(t);
+      QuadratureFunction &qf =
+         const_cast<QuadratureFunction&>(coeff.GetQuadFunction());
+      const Mesh &mesh = *qs.GetMesh();
+      const int dim = mesh.Dimension();
+      const int nq = ir.Size();
+      const int n = qf.Size();
+      const double T = t;
+      const double *x = geom->X.Read();
+      double *q = qf.Write();
+
+      MFEM_FORALL(ii, n,
+      {
+         const int i = ii / nq;
+         const int j = ii % nq;
+         double xvec[3];
+         for (int d = 0; d < dim; ++d)
+         {
+            xvec[d] = x[j + d*nq + i*dim*nq];
+         }
+         q[i] = F(dim, xvec, T);
+      });
+   }
+   void SetTime(double t)
+   {
+      SetTime<MaterialEnergySource>(Q_e, t);
+      SetTime<RadiationEnergySource>(S_E, t);
+   }
+   const IntegrationRule &GetIntRule() { return ir; }
+};
 
 } // namespace MMS
 
