@@ -591,8 +591,8 @@ SDIRK23Solver::SDIRK23Solver(int gamma_opt)
 void SDIRK23Solver::Init(TimeDependentOperator &f_)
 {
    ODESolver::Init(f_);
-   k.SetSize(f->Width(), mem_type);
-   y.SetSize(f->Width(), mem_type);
+   k.SetSize(f->Width(), mem_type); k.UseDevice(true);
+   y.SetSize(f->Width(), mem_type); y.UseDevice(true);
 }
 
 void SDIRK23Solver::Step(Vector &x, double &t, double &dt)
@@ -618,9 +618,9 @@ void SDIRK23Solver::Step(Vector &x, double &t, double &dt)
 void SDIRK34Solver::Init(TimeDependentOperator &f_)
 {
    ODESolver::Init(f_);
-   k.SetSize(f->Width(), mem_type);
-   y.SetSize(f->Width(), mem_type);
-   z.SetSize(f->Width(), mem_type);
+   k.SetSize(f->Width(), mem_type); k.UseDevice(true);
+   y.SetSize(f->Width(), mem_type); y.UseDevice(true);
+   z.SetSize(f->Width(), mem_type); z.UseDevice(true);
 }
 
 void SDIRK34Solver::Step(Vector &x, double &t, double &dt)
@@ -655,8 +655,8 @@ void SDIRK34Solver::Step(Vector &x, double &t, double &dt)
 void SDIRK33Solver::Init(TimeDependentOperator &f_)
 {
    ODESolver::Init(f_);
-   k.SetSize(f->Width(), mem_type);
-   y.SetSize(f->Width(), mem_type);
+   k.SetSize(f->Width(), mem_type); k.UseDevice(true);
+   y.SetSize(f->Width(), mem_type); y.UseDevice(true);
 }
 
 void SDIRK33Solver::Step(Vector &x, double &t, double &dt)
