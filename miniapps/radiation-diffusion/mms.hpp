@@ -13,7 +13,6 @@
 #define RAD_DIFF_MMS_HPP
 
 #include "mfem.hpp"
-
 #include "general/forall.hpp"
 
 namespace mfem
@@ -39,6 +38,9 @@ static constexpr double tau   = 2.27761040e+9;
 static constexpr double omega = 2.13503497e+1;
 
 static constexpr double eta = 1;
+
+// We define the coefficients of the problem as HOST_DEVICE functions, so that
+// they can be evaluated both on CPU and GPU
 
 MFEM_HOST_DEVICE inline
 double rad(int dim, const double *x)
@@ -96,21 +98,22 @@ double RadiationEnergySource(int dim, const double *xvec, double t)
 
 using FunctionType = double(*)(int dim, const double *x, double t);
 
+// Wrap the HOST_DEVICE functions in a form that can be used by
+// FunctionCoefficient.
 template <FunctionType F>
 double CoefficientFunction(const Vector &xvec, double t)
 {
    return F(xvec.Size(), xvec.GetData(), t);
 }
-
 static constexpr auto ExactMaterialEnergyFunction =
    CoefficientFunction<ExactMaterialEnergy>;
 static constexpr auto ExactRadiationEnergyFunction =
    CoefficientFunction<ExactRadiationEnergy>;
-static constexpr auto MaterialEnergySourceFunction =
-   CoefficientFunction<MaterialEnergySource>;
-static constexpr auto RadiationEnergySourceFunction =
-   CoefficientFunction<RadiationEnergySource>;
 
+// This class contains the coefficients needed for the time evolution of the
+// problem. The coefficients are of type QuadratureFunctionCoefficient, and the
+// coefficient functions are evaluated at the quadrature functions in a kernel
+// that can run in parallel on device.
 class Coefficients
 {
 private:
