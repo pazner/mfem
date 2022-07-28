@@ -2083,8 +2083,8 @@ public:
     supplied QuadratureFunction. */
 class QuadratureFunctionCoefficient : public Coefficient
 {
-private:
-   const QuadratureFunction &QuadF;
+protected:
+   QuadratureFunction &QuadF;
 
 public:
    /// Constructor with a quadrature function as input
