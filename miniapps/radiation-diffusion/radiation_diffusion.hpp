@@ -100,6 +100,8 @@ public:
    MPI_Comm GetComm() const { return fes_l2.GetComm(); }
    /// Compute the radiation flux, given material and radiation energy
    void ComputeFlux(Vector &x) const;
+   /// Return the device memory class, do work on GPU if possible.
+   MemoryClass GetMemoryClass() const override { return Device::GetMemoryClass(); }
 };
 
 } // namespace mfem
