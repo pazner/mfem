@@ -144,8 +144,6 @@ bool LinearForm::SupportsDevice()
 
 void LinearForm::Assemble(bool use_device)
 {
-   NVTX("LinearForm::Assemble");
-
    Array<int> vdofs;
    ElementTransformation *eltrans;
    DofTransformation *doftrans;
