@@ -12,6 +12,9 @@
 #include "linearform.hpp"
 #include "../general/forall.hpp"
 
+#define MFEM_NVTX_COLOR LightSkyBlue
+#include "../general/nvtx.hpp"
+
 namespace mfem
 {
 
@@ -19,6 +22,8 @@ LinearFormExtension::LinearFormExtension(LinearForm *lf): lf(lf) { Update(); }
 
 void LinearFormExtension::Assemble()
 {
+   NVTX("LinearFormExtension::Assemble");
+
    const FiniteElementSpace &fes = *lf->FESpace();
    MFEM_VERIFY(lf->SupportsDevice(), "Not supported.");
    MFEM_VERIFY(lf->Size() == fes.GetVSize(), "LinearForm size does not "

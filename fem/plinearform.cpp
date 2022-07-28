@@ -11,6 +11,9 @@
 
 #include "../config/config.hpp"
 
+#define MFEM_NVTX_COLOR LightSkyBlue
+#include "../general/nvtx.hpp"
+
 #ifdef MFEM_USE_MPI
 
 #include "fem.hpp"
@@ -45,6 +48,7 @@ void ParLinearForm::MakeRef(ParFiniteElementSpace *pf, Vector &v, int v_offset)
 
 void ParLinearForm::Assemble(bool use_device)
 {
+   NVTX("ParLinearForm::Assemble");
    bool all_supports_device = use_device;
 
    if (use_device)

@@ -13,6 +13,9 @@
 
 #include "fem.hpp"
 
+#define MFEM_NVTX_COLOR LightSkyBlue
+#include "../general/nvtx.hpp"
+
 namespace mfem
 {
 
@@ -141,6 +144,8 @@ bool LinearForm::SupportsDevice()
 
 void LinearForm::Assemble(bool use_device)
 {
+   NVTX("LinearForm::Assemble");
+
    Array<int> vdofs;
    ElementTransformation *eltrans;
    DofTransformation *doftrans;

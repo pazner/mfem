@@ -1817,6 +1817,8 @@ void NewtonSolver::SetOperator(const Operator &op)
 
 void NewtonSolver::Mult(const Vector &b, Vector &x) const
 {
+   NVTX("Newton solver");
+
    MFEM_ASSERT(oper != NULL, "the Operator is not set (use SetOperator).");
    MFEM_ASSERT(prec != NULL, "the Solver is not set (use SetSolver).");
 

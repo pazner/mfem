@@ -13,6 +13,9 @@
 #include "../fem/kernels.hpp"
 #include "../general/forall.hpp"
 
+#define MFEM_NVTX_COLOR Coral
+#include "../general/nvtx.hpp"
+
 namespace mfem
 {
 
@@ -268,6 +271,8 @@ void DomainLFIntegrator::AssembleDevice(const FiniteElementSpace &fes,
                                         const Array<int> &markers,
                                         Vector &b)
 {
+   NVTX("DomainLFIntegrator::AssembleDevice");
+
    const FiniteElement &fe = *fes.GetFE(0);
    const int qorder = oa * fe.GetOrder() + ob;
    const Geometry::Type gtype = fe.GetGeomType();
@@ -313,6 +318,7 @@ void VectorDomainLFIntegrator::AssembleDevice(const FiniteElementSpace &fes,
                                               const Array<int> &markers,
                                               Vector &b)
 {
+   NVTX("VectorDomainLFIntegrator::AssembleDevice");
    const int vdim = fes.GetVDim();
    const FiniteElement &fe = *fes.GetFE(0);
    const int qorder = 2 * fe.GetOrder();
