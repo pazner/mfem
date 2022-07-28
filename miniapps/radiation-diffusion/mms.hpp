@@ -129,18 +129,17 @@ public:
         Q_e_qf(&qs),
         S_E_qf(&qs),
         Q_e(Q_e_qf),
-        S_E(Q_e_qf)
+        S_E(S_E_qf)
    {
       geom = mesh.GetGeometricFactors(ir, GeometricFactors::COORDINATES);
+      SetTime(0.0);
    }
    template <FunctionType F>
    void SetTime(QuadratureFunctionCoefficient &coeff, double t)
    {
       coeff.SetTime(t);
-      QuadratureFunction &qf =
-         const_cast<QuadratureFunction&>(coeff.GetQuadFunction());
-      const Mesh &mesh = *qs.GetMesh();
-      const int dim = mesh.Dimension();
+      auto &qf = const_cast<QuadratureFunction&>(coeff.GetQuadFunction());
+      const int dim = qs.GetMesh()->Dimension();
       const int nq = ir.Size();
       const int n = qf.Size();
       const double T = t;
@@ -156,7 +155,7 @@ public:
          {
             xvec[d] = x[j + d*nq + i*dim*nq];
          }
-         q[i] = F(dim, xvec, T);
+         q[ii] = F(dim, xvec, T);
       });
    }
    void SetTime(double t)
