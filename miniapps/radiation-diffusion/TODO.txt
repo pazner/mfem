@@ -21,6 +21,7 @@ Radiation-Diffusion Miniapp To-Do List
    - [ ] Allow saddle-point solver to accept two coefficients as input
    - [ ] Allow saddle-point solver to accept DenseTensor as input
       - In this case, the coefficient comes from a QuadratureFunctionCoefficient
+   - [ ] Variable coefficient formulation for saddle-point system
 
 --------------------------------------------------------------------------------
 
@@ -30,4 +31,6 @@ Overall to-dos:
 
 Future work:
 
+- [ ] QuadratureFunctionCoefficient for the face integrator
+- [ ] Partial assembly for VectorFEBoundaryFluxLFIntegrator
 - [ ] Nonlinear solver element-by-element
