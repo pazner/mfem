@@ -25,7 +25,9 @@ LinearizedMaterialEnergyOperator::LinearizedMaterialEnergyOperator(
      coeff(qf),
      mass_integrator(coeff),
      x_q(H.qs.GetSize())
-{ }
+{
+   mass_integrator.SetIntegrationRule(H.qs.GetElementIntRule(0));
+}
 
 void LinearizedMaterialEnergyOperator::Mult(const Vector &x, Vector &y) const
 {
@@ -72,7 +74,7 @@ void LinearizedMaterialEnergyOperator::AssembleDiagonal(Vector &diag) const
 MaterialEnergyOperator::MaterialEnergyOperator(FiniteElementSpace &fes_)
    : Operator(fes_.GetTrueVSize()),
      fes(fes_),
-     qs(fes.GetMesh(), 2*fes.GetMaxElementOrder()),
+     qs(fes.GetMesh(), 2*fes.GetMaxElementOrder() + fes.GetElementTransformation(0)->OrderW()),
      qinterp(fes, qs),
      qf(&qs),
      coeff(qf),
@@ -85,6 +87,7 @@ MaterialEnergyOperator::MaterialEnergyOperator(FiniteElementSpace &fes_)
      markers(fes.GetMesh()->GetNE()),
      dt(0.0)
 {
+   lf_integrator.SetIntRule(&qs.GetElementIntRule(0));
    markers = 1;
 }
 
