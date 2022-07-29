@@ -39,6 +39,7 @@ RadiationDiffusionLinearSolver::RadiationDiffusionLinearSolver(
      fes_l2(&mesh, &fec_l2),
      fec_rt(order - 1, mesh.Dimension(), b1, b2),
      fes_rt(&mesh, &fec_rt),
+     change_basis_l2(fes_l2_),
      basis_l2(&fes_l2, &fes_l2_),
      basis_rt(&fes_rt, &fes_rt_),
      mass_rt(&fes_rt),
@@ -71,6 +72,20 @@ RadiationDiffusionLinearSolver::RadiationDiffusionLinearSolver(
 
    B_l2.reset(basis_l2.ParallelAssemble());
    B_rt.reset(basis_rt.ParallelAssemble());
+
+   Vector tmp1(fes_l2_.GetTrueVSize());
+   Vector tmp2(fes_l2_.GetTrueVSize());
+   Vector tmp3(fes_l2_.GetTrueVSize());
+
+   tmp1.Randomize(1);
+
+   B_l2->Mult(tmp1, tmp2);
+   change_basis_l2.Mult(tmp1, tmp3);
+
+   tmp3 -= tmp2;
+
+   std::cout << "\n" << tmp3.Norml2() << '\n';
+   std::exit(0);
 
    S_inv.SetPrintLevel(0);
 }

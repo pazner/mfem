@@ -14,6 +14,7 @@
 
 #include "mfem.hpp"
 #include "mms.hpp"
+#include "change_basis.hpp"
 #include <memory>
 
 namespace mfem
@@ -38,6 +39,7 @@ private:
    ParFiniteElementSpace fes_rt;
 
    // Change of basis operators
+   ChangeOfBasis_L2 change_basis_l2;
    ParDiscreteLinearOperator basis_l2, basis_rt;
    std::unique_ptr<HypreParMatrix> B_l2, B_rt;
 

@@ -23,9 +23,9 @@ MFEM_LIB_FILE = mfem_is_not_built
 
 RAD_DIFF_HEADERS = radiation_diffusion.hpp linear_solver.hpp mms.hpp \
 						 nonlinear_iteration.hpp energy_integrator.hpp \
-						 discrete_divergence.hpp
+						 discrete_divergence.hpp change_basis.hpp
 RAD_DIFF_SRC = main.cpp radiation_diffusion.cpp linear_solver.cpp \
-					nonlinear_iteration.cpp energy_integrator.cpp
+					nonlinear_iteration.cpp energy_integrator.cpp change_basis.cpp
 RAD_DIFF_OBJ = $(RAD_DIFF_SRC:.cpp=.o)
 
 MINIAPPS = radiation_diffusion
