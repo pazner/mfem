@@ -22,12 +22,29 @@ namespace mfem
 class ChangeOfBasis_L2 : public Operator
 {
 private:
-   const int ne;
+   const int ne; ///< Number of elements in the mesh.
    mutable DofToQuad dof2quad; ///< 1D basis transformation.
-   Array<double> B_1d;
-   Array<double> Bt_1d;
+   Array<double> B_1d; ///< 1D basis transformation matrix.
+   Array<double> Bt_1d; ///< 1D basis transformation matrix traspose.
 public:
    ChangeOfBasis_L2(FiniteElementSpace &fes1, FiniteElementSpace &fes2);
+   void Mult(const Vector &x, Vector &y) const override;
+   void MultTranspose(const Vector &x, Vector &y) const override;
+};
+
+/// @brief Change of basis operator from given RT space to IntegratedGLL basis.
+class ChangeOfBasis_RT : public Operator
+{
+private:
+   const int ne;
+   mutable DofToQuad dof2quad_closed; ///< 1D closed basis transformation.
+   Array<double> Bc_1d; ///< 1D closed basis transformation matrix.
+   Array<double> Bct_1d; ///< 1D closed basis transformation matrix transpose.
+   mutable DofToQuad dof2quad_open; ///< 1D open basis transformation.
+   Array<double> Bo_1d; ///< 1D open basis transformation matrix.
+   Array<double> Bot_1d; ///< 1D open basis transformation matrix transpose.
+public:
+   ChangeOfBasis_RT(FiniteElementSpace &fes1, FiniteElementSpace &fes2);
    void Mult(const Vector &x, Vector &y) const override;
    void MultTranspose(const Vector &x, Vector &y) const override;
 };
