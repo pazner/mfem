@@ -1111,6 +1111,7 @@ void PAHdivMassApply(const int dim,
          case 0x33: return SmemPAHdivMassApply2D<3,3>(NE,Bo,Bc,Bot,Bct,op,x,y);
          case 0x44: return SmemPAHdivMassApply2D<4,4>(NE,Bo,Bc,Bot,Bct,op,x,y);
          case 0x55: return SmemPAHdivMassApply2D<5,5>(NE,Bo,Bc,Bot,Bct,op,x,y);
+         case 0x66: return SmemPAHdivMassApply2D<6,6>(NE,Bo,Bc,Bot,Bct,op,x,y);
          default:
             printf("fallback dim = %d, id = %0x\n", dim, id);
             return PAHdivMassApply2D(D1D,Q1D,NE,Bo,Bc,Bot,Bct,op,x,y);
