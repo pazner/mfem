@@ -22,19 +22,14 @@ namespace mfem
 class ChangeOfBasis_L2 : public Operator
 {
 private:
-   FiniteElementSpace &fes1; ///< Domain space.
-   Array<double> B1d;
-
+   const int ne;
+   mutable DofToQuad dof2quad; ///< 1D basis transformation.
+   Array<double> B_1d;
+   Array<double> Bt_1d;
 public:
-   ChangeOfBasis_L2(FiniteElementSpace &fes1_);
+   ChangeOfBasis_L2(FiniteElementSpace &fes1, FiniteElementSpace &fes2);
    void Mult(const Vector &x, Vector &y) const override;
    void MultTranspose(const Vector &x, Vector &y) const override;
-
-   // should be private, these are public because of nvcc limitation
-   void Mult2D(const Vector &x, Vector &y) const;
-   void Mult3D(const Vector &x, Vector &y) const;
-   void MultTranspose2D(const Vector &x, Vector &y) const;
-   void MultTranspose3D(const Vector &x, Vector &y) const;
 };
 
 } // namespace mfem

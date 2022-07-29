@@ -39,9 +39,9 @@ private:
    ParFiniteElementSpace fes_rt;
 
    // Change of basis operators
-   ChangeOfBasis_L2 change_basis_l2;
-   ParDiscreteLinearOperator basis_l2, basis_rt;
-   std::unique_ptr<HypreParMatrix> B_l2, B_rt;
+   ChangeOfBasis_L2 basis_l2;
+   ParDiscreteLinearOperator basis_rt;
+   std::unique_ptr<Operator> B_rt;
 
    ParBilinearForm mass_rt;
 
@@ -49,6 +49,7 @@ private:
    OperatorHandle R;
    std::unique_ptr<HypreParMatrix> D, Dt;
    std::unique_ptr<Operator> L_inv;
+   Vector L_diag;
 
    // Components needed for the preconditioner
    OperatorJacobiSmoother R_inv;
@@ -60,7 +61,7 @@ private:
    std::unique_ptr<BlockOperator> A_block;
    std::unique_ptr<BlockDiagonalPreconditioner> D_prec;
 
-   ConstantCoefficient L_coeff, R_coeff;
+   ConstantCoefficient R_coeff;
 
    double dt_prev;
 
