@@ -19,6 +19,7 @@
 
 #include <string>
 #include <cassert>
+#include <cstring>
 
 #include "globals.hpp"
 #include "backends.hpp"
