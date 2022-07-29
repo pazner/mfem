@@ -6,13 +6,12 @@ Radiation-Diffusion Miniapp To-Do List
    - [x] 3D support
 
 - Performance
-   - [ ] Partial assembly
+   - [ ] Partial assembly and device support
       - [x] Mixed diverence integrator
       - [ ] Change of basis
-      - [ ] Nonlinear solver on device
-         - [ ] Evaluation of coefficients/Q-functions on device
-         - [ ] Block Jacobi preconditioner on device
-   - [ ] Device support
+      - [x] Nonlinear solver on device
+         - [x] Evaluation of coefficients/Q-functions on device
+         - [x] Block Jacobi preconditioner on device
    - [x] Parallelization
 
 - Code Quality
@@ -22,6 +21,8 @@ Radiation-Diffusion Miniapp To-Do List
    - [ ] Allow saddle-point solver to accept two coefficients as input
    - [ ] Allow saddle-point solver to accept DenseTensor as input
       - In this case, the coefficient comes from a QuadratureFunctionCoefficient
+
+--------------------------------------------------------------------------------
 
 Overall to-dos:
 
