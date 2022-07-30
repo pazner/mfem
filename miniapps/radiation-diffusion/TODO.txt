@@ -6,7 +6,7 @@ Radiation-Diffusion Miniapp To-Do List
    - [x] 3D support
 
 - Performance
-   - [ ] Partial assembly and device support
+   - [x] Partial assembly and device support
       - [x] Mixed diverence integrator
       - [ ] Change of basis
       - [x] Nonlinear solver on device
@@ -17,11 +17,12 @@ Radiation-Diffusion Miniapp To-Do List
 - Code Quality
    - [x] Better organization (friend classes, nonlinear integrator, etc.)
 
-- Interface
-   - [ ] Allow saddle-point solver to accept two coefficients as input
-   - [ ] Allow saddle-point solver to accept DenseTensor as input
-      - In this case, the coefficient comes from a QuadratureFunctionCoefficient
-   - [ ] Variable coefficient formulation for saddle-point system
+--------------------------------------------------------------------------------
+
+PR split:
+- [ ] Minor adjustments PR
+- [ ] DG mass inverse PR
+- [ ] Radiation-diffusion miniapp PR
 
 --------------------------------------------------------------------------------
 
@@ -34,3 +35,9 @@ Future work:
 - [ ] QuadratureFunctionCoefficient for the face integrator
 - [ ] Partial assembly for VectorFEBoundaryFluxLFIntegrator
 - [ ] Nonlinear solver element-by-element
+
+- Interface
+   - [ ] Allow saddle-point solver to accept two coefficients as input
+   - [ ] Allow saddle-point solver to accept DenseTensor as input
+      - In this case, the coefficient comes from a QuadratureFunctionCoefficient
+   - [ ] Variable coefficient formulation for saddle-point system
