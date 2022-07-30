@@ -71,10 +71,15 @@ void LinearizedMaterialEnergyOperator::AssembleDiagonal(Vector &diag) const
    mass_integrator.AssembleDiagonalPA(diag);
 }
 
+int GetQuadratureOrder(FiniteElementSpace &fes)
+{
+   return 2*fes.GetMaxElementOrder() + fes.GetElementTransformation(0)->OrderW();
+}
+
 MaterialEnergyOperator::MaterialEnergyOperator(FiniteElementSpace &fes_)
    : Operator(fes_.GetTrueVSize()),
      fes(fes_),
-     qs(fes.GetMesh(), 2*fes.GetMaxElementOrder() + fes.GetElementTransformation(0)->OrderW()),
+     qs(fes.GetMesh(), GetQuadratureOrder(fes)),
      qinterp(fes, qs),
      qf(&qs),
      coeff(qf),
