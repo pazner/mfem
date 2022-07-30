@@ -36,6 +36,7 @@ public:
 class ChangeOfBasis_RT : public Operator
 {
 private:
+   FiniteElementSpace &fes;
    const int dim;
    const int ne;
    const int p;
@@ -44,6 +45,8 @@ private:
    Array<double> Bct_1d; ///< 1D closed basis transformation matrix transpose.
    Array<double> Bo_1d; ///< 1D open basis transformation matrix.
    Array<double> Bot_1d; ///< 1D open basis transformation matrix transpose.
+
+   mutable Vector x_l, y_l; ///< L-vector layout
    mutable Vector x_e, y_e; ///< E-vector layout
 
    void Mult(const Vector &x, Vector &y, bool transpose) const;

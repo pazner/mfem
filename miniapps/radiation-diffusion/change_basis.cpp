@@ -55,6 +55,7 @@ void ChangeOfBasis_L2::MultTranspose(const Vector &x, Vector &y) const
 ChangeOfBasis_RT::ChangeOfBasis_RT(FiniteElementSpace &fes1,
                                    FiniteElementSpace &fes2)
    : Operator(fes1.GetTrueVSize()),
+     fes(fes1),
      dim(fes1.GetMesh()->Dimension()),
      ne(fes1.GetNE()),
      p(fes1.GetMaxElementOrder())
@@ -234,15 +235,34 @@ void ChangeOfBasis_RT::MultRT_3D(const Vector &x, Vector &y, bool transp) const
 
 void ChangeOfBasis_RT::Mult(const Vector &x, Vector &y, bool transpose) const
 {
+   const Operator *P = fes.GetProlongationMatrix();
+
+   if (P)
+   {
+      x_l.SetSize(fes.GetVSize());
+      y_l.SetSize(fes.GetVSize());
+      P->Mult(x, x_l);
+   }
+   else
+   {
+      x_l.MakeRef(const_cast<Vector&>(x), 0);
+      y_l.MakeRef(y, 0);
+   }
+
+
    x_e.SetSize(elem_restr->Height());
    y_e.SetSize(elem_restr->Height());
 
-   elem_restr->Mult(x, x_e);
+   elem_restr->Mult(x_l, x_e);
 
    if (dim == 2) { MultRT_2D(x_e, y_e, transpose); }
    else { MultRT_3D(x_e, y_e, transpose); }
 
-   elem_restr->MultLeftInverse(y_e, y);
+   elem_restr->MultLeftInverse(y_e, y_l);
+
+   const Operator *R = fes.GetRestrictionOperator();
+   if (R) { R->Mult(y_l, y); }
+   else { MFEM_VERIFY(P == NULL, "Invalid state."); }
 }
 
 void ChangeOfBasis_RT::Mult(const Vector &x, Vector &y) const
