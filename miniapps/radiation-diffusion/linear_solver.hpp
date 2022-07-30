@@ -40,8 +40,7 @@ private:
 
    // Change of basis operators
    ChangeOfBasis_L2 basis_l2;
-   ParDiscreteLinearOperator basis_rt;
-   std::unique_ptr<Operator> B_rt;
+   ChangeOfBasis_RT basis_rt;
 
    ParBilinearForm mass_rt;
 

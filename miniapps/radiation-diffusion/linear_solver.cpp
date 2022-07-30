@@ -40,7 +40,7 @@ RadiationDiffusionLinearSolver::RadiationDiffusionLinearSolver(
      fec_rt(order - 1, mesh.Dimension(), b1, b2),
      fes_rt(&mesh, &fec_rt),
      basis_l2(fes_l2_, fes_l2),
-     basis_rt(&fes_rt, &fes_rt_),
+     basis_rt(fes_rt_, fes_rt),
      mass_rt(&fes_rt),
      dt_prev(0.0)
 {
@@ -60,11 +60,6 @@ RadiationDiffusionLinearSolver::RadiationDiffusionLinearSolver(
    minres.SetMaxIter(500);
    minres.SetPrintLevel(IterativeSolver::PrintLevel().None());
 
-   basis_rt.AddDomainInterpolator(new IdentityInterpolator);
-   basis_rt.Assemble();
-   basis_rt.Finalize();
-   B_rt.reset(basis_rt.ParallelAssemble());
-
    L_inv.reset(new DGMassInverse(fes_l2));
 
    L_diag.SetSize(fes_l2.GetTrueVSize());
@@ -73,23 +68,6 @@ RadiationDiffusionLinearSolver::RadiationDiffusionLinearSolver(
    mass_l2.SetAssemblyLevel(AssemblyLevel::PARTIAL);
    mass_l2.Assemble();
    mass_l2.AssembleDiagonal(L_diag);
-
-   // ParGridFunction tmp1(&fes_l2_);
-   // ParGridFunction tmp2(&fes_l2);
-   // ParGridFunction tmp3(&fes_l2);
-
-   // tmp1.Randomize(1);
-
-   // GridFunctionCoefficient coeff(&tmp1);
-   // tmp2.ProjectCoefficient(coeff);
-
-   // // B_l2->Mult(tmp1, tmp2);
-   // change_basis_l2.Mult(tmp1, tmp3);
-
-   // tmp3 -= tmp2;
-
-   // std::cout << "\n" << tmp3.Norml2() << '\n';
-   // std::exit(0);
 
    S_inv.SetPrintLevel(0);
 }
@@ -155,7 +133,7 @@ void RadiationDiffusionLinearSolver::Mult(const Vector &b, Vector &x) const
    basis_l2.MultTranspose(bE, z);
 
    L_inv->Mult(z, bE_prime);
-   B_rt->MultTranspose(bF, bF_prime);
+   basis_rt.MultTranspose(bF, bF_prime);
 
    // Update the monolithic transformed RHS
    bE_prime.SyncAliasMemory(b_prime);
@@ -174,7 +152,7 @@ void RadiationDiffusionLinearSolver::Mult(const Vector &b, Vector &x) const
    L_inv ->Mult(xE_prime, z);
 
    basis_l2.Mult(z, xE);
-   B_rt->Mult(xF_prime, xF);
+   basis_rt.Mult(xF_prime, xF);
 
    // Update the monolithic solution vector
    xE.SyncAliasMemory(x);

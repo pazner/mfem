@@ -11,6 +11,8 @@
 
 #include "change_basis.hpp"
 #include "fem/qinterp/dispatch.hpp"
+#include "general/forall.hpp"
+#include "linalg/dtensor.hpp"
 
 #include "general/nvtx.hpp"
 
@@ -53,28 +55,31 @@ void ChangeOfBasis_L2::MultTranspose(const Vector &x, Vector &y) const
 ChangeOfBasis_RT::ChangeOfBasis_RT(FiniteElementSpace &fes1,
                                    FiniteElementSpace &fes2)
    : Operator(fes1.GetTrueVSize()),
-     ne(fes1.GetNE())
+     dim(fes1.GetMesh()->Dimension()),
+     ne(fes1.GetNE()),
+     p(fes1.GetMaxElementOrder())
 {
+   auto op = fes1.GetElementRestriction(ElementDofOrdering::LEXICOGRAPHIC);
+   elem_restr = dynamic_cast<const ElementRestriction*>(op);
+   MFEM_VERIFY(elem_restr != NULL, "Missing element restriciton.");
+
    const FiniteElementCollection *fec = fes1.FEColl();
    const auto *rt_fec = dynamic_cast<const RT_FECollection*>(fec);
-   MFEM_VERIFY(rt_fec != NULL, "Must be RC finite element collection.");
+   MFEM_VERIFY(rt_fec != NULL, "Must be RT finite element collection.");
 
    const int cb_type = rt_fec->GetClosedBasisType();
    const int ob_type = rt_fec->GetOpenBasisType();
 
-   const int p = fes1.GetMaxElementOrder();
    const int pp1 = p + 1;
 
    const double *cpts1 = poly1d.GetPoints(p, cb_type);
    const double *opts1 = poly1d.GetPoints(p - 1, ob_type);
 
    const auto &cb2 = poly1d.GetBasis(p, BasisType::GaussLobatto);
-   const auto &ob2 = poly1d.GetBasis(p - 1, BasisType::IntegratedGLL);
+   auto &ob2 = poly1d.GetBasis(p - 1, BasisType::IntegratedGLL);
+   ob2.ScaleIntegrated(false);
 
    Vector b;
-
-   // CofB maps from interp-histop to nodal
-   // ith nodal point
 
    // Evaluate cb2 at cb1
    Bc_1d.SetSize(pp1*pp1);
@@ -105,14 +110,151 @@ ChangeOfBasis_RT::ChangeOfBasis_RT(FiniteElementSpace &fes1,
    }
 }
 
+void ChangeOfBasis_RT::MultRT_2D(const Vector &x, Vector &y, bool transp) const
+{
+   const int DIM = dim;
+   const int NE = ne;
+   const int D1D = p + 1;
+   const int ND = (p+1)*p;
+   const double *BC = transp ? Bct_1d.Read() : Bc_1d.Read();
+   const double *BO = transp ? Bot_1d.Read() : Bo_1d.Read();
+   const auto X = Reshape(x.Read(), DIM*ND, ne);
+   auto Y = Reshape(y.Write(), DIM*ND, ne);
+
+   MFEM_FORALL(e, NE,
+   {
+      for (int c = 0; c < DIM; ++c)
+      {
+         const int nx = (c == 0) ? D1D : D1D-1;
+         const int ny = (c == 1) ? D1D : D1D-1;
+         const double *Bx = (c == 0) ? BC : BO;
+         const double *By = (c == 1) ? BC : BO;
+
+         for (int i = 0; i < ND; ++i)
+         {
+            Y(i + c*ND, e) = 0.0;
+         }
+         for (int iy = 0; iy < ny; ++ iy)
+         {
+            double xx[MAX_D1D];
+            for (int ix = 0; ix < nx; ++ix) { xx[ix] = 0.0; }
+            for (int jx = 0; jx < nx; ++jx)
+            {
+               const double val = X(jx + iy*nx + c*nx*ny, e);
+               for (int ix = 0; ix < nx; ++ix)
+               {
+                  xx[ix] += val*Bx[ix + jx*nx];
+               }
+            }
+            for (int jy = 0; jy < ny; ++jy)
+            {
+               const double b = By[jy + iy*ny];
+               for (int ix = 0; ix < nx; ++ix)
+               {
+                  Y(ix + jy*nx + c*nx*ny, e) += xx[ix]*b;
+               }
+            }
+         }
+      }
+   });
+}
+
+void ChangeOfBasis_RT::MultRT_3D(const Vector &x, Vector &y, bool transp) const
+{
+   const int DIM = dim;
+   const int NE = ne;
+   const int D1D = p + 1;
+   const int ND = (p+1)*p*p;
+   const double *BC = transp ? Bct_1d.Read() : Bc_1d.Read();
+   const double *BO = transp ? Bot_1d.Read() : Bo_1d.Read();
+   const auto X = Reshape(x.Read(), DIM*ND, ne);
+   auto Y = Reshape(y.Write(), DIM*ND, ne);
+
+   MFEM_FORALL(e, NE,
+   {
+      for (int c = 0; c < DIM; ++c)
+      {
+         const int nx = (c == 0) ? D1D : D1D-1;
+         const int ny = (c == 1) ? D1D : D1D-1;
+         const int nz = (c == 2) ? D1D : D1D-1;
+         const double *Bx = (c == 0) ? BC : BO;
+         const double *By = (c == 1) ? BC : BO;
+         const double *Bz = (c == 2) ? BC : BO;
+
+         for (int i = 0; i < ND; ++i)
+         {
+            Y(i + c*ND, e) = 0.0;
+         }
+         for (int iz = 0; iz < nz; ++ iz)
+         {
+            double xy[MAX_D1D][MAX_D1D];
+            for (int iy = 0; iy < ny; ++iy)
+            {
+               for (int ix = 0; ix < nx; ++ix)
+               {
+                  xy[iy][ix] = 0.0;
+               }
+            }
+            for (int iy = 0; iy < ny; ++iy)
+            {
+               double xx[MAX_D1D];
+               for (int ix = 0; ix < nx; ++ix) { xx[ix] = 0.0; }
+               for (int ix = 0; ix < nx; ++ix)
+               {
+                  const double val = X(ix + iy*nx + iz*nx*ny + c*ND, e);
+                  for (int jx = 0; jx < nx; ++jx)
+                  {
+                     xx[jx] += val*Bx[jx + ix*nx];
+                  }
+               }
+               for (int jy = 0; jy < ny; ++jy)
+               {
+                  const double b = By[jy + iy*ny];
+                  for (int jx = 0; jx < nx; ++jx)
+                  {
+                     xy[jy][jx] += xx[jx] * b;
+                  }
+               }
+            }
+            for (int jz = 0; jz < nz; ++jz)
+            {
+               const double b = Bz[jz + iz*nz];
+               for (int jy = 0; jy < ny; ++jy)
+               {
+                  for (int jx = 0; jx < nx; ++jx)
+                  {
+                     Y(jx + jy*nx + jz*nx*ny + c*ND, e) += xy[jy][jx] * b;
+                  }
+               }
+            }
+         }
+      }
+   });
+}
+
+void ChangeOfBasis_RT::Mult(const Vector &x, Vector &y, bool transpose) const
+{
+   x_e.SetSize(elem_restr->Height());
+   y_e.SetSize(elem_restr->Height());
+
+   elem_restr->Mult(x, x_e);
+
+   if (dim == 2) { MultRT_2D(x_e, y_e, transpose); }
+   else { MultRT_3D(x_e, y_e, transpose); }
+
+   elem_restr->MultLeftInverse(y_e, y);
+}
+
 void ChangeOfBasis_RT::Mult(const Vector &x, Vector &y) const
 {
    NVTX("RT change basis");
+   Mult(x, y, false);
 }
 
 void ChangeOfBasis_RT::MultTranspose(const Vector &x, Vector &y) const
 {
    NVTX("RT change basis transpose");
+   Mult(x, y, true);
 }
 
 } // namespace mfem

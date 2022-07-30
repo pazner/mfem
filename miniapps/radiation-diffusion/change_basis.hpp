@@ -36,17 +36,25 @@ public:
 class ChangeOfBasis_RT : public Operator
 {
 private:
+   const int dim;
    const int ne;
-   mutable DofToQuad dof2quad_closed; ///< 1D closed basis transformation.
+   const int p;
+   const ElementRestriction *elem_restr; ///< Element restriction operator.
    Array<double> Bc_1d; ///< 1D closed basis transformation matrix.
    Array<double> Bct_1d; ///< 1D closed basis transformation matrix transpose.
-   mutable DofToQuad dof2quad_open; ///< 1D open basis transformation.
    Array<double> Bo_1d; ///< 1D open basis transformation matrix.
    Array<double> Bot_1d; ///< 1D open basis transformation matrix transpose.
+   mutable Vector x_e, y_e; ///< E-vector layout
+
+   void Mult(const Vector &x, Vector &y, bool transpose) const;
 public:
    ChangeOfBasis_RT(FiniteElementSpace &fes1, FiniteElementSpace &fes2);
    void Mult(const Vector &x, Vector &y) const override;
    void MultTranspose(const Vector &x, Vector &y) const override;
+   // The following should be considered private, public because of compiler
+   // limitations
+   void MultRT_2D(const Vector &x, Vector &y, bool transpose) const;
+   void MultRT_3D(const Vector &x, Vector &y, bool transpose) const;
 };
 
 } // namespace mfem
