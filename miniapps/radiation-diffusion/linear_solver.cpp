@@ -59,6 +59,7 @@ RadiationDiffusionLinearSolver::RadiationDiffusionLinearSolver(
    minres.SetRelTol(1e-12);
    minres.SetMaxIter(500);
    minres.SetPrintLevel(IterativeSolver::PrintLevel().None());
+   minres.iterative_mode = false;
 
    L_inv.reset(new DGMassInverse(fes_l2));
 
@@ -112,7 +113,6 @@ void RadiationDiffusionLinearSolver::Setup(const double dt)
 
    minres.SetPreconditioner(*D_prec);
    minres.SetOperator(*A_block);
-   minres.iterative_mode = false;
 }
 
 void RadiationDiffusionLinearSolver::Mult(const Vector &b, Vector &x) const
