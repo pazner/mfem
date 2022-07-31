@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 
-solver_types="Full_CG Local_CG_Lobatto Local_CG_Legendre Direct Direct_cuSolver Direct_cuBLAS"
-op_type="Setup Solve Setup_and_Solve"
+# solver_types="Full_CG Local_CG_Lobatto Local_CG_Legendre Direct Direct_cuSolver Direct_cuBLAS"
+solver_types="Direct Direct_cuSolver Direct_cuBLAS"
+# op_type="Setup Solve Setup_and_Solve"
+op_type="Setup"
 
 for stype in $solver_types
 do
@@ -17,8 +19,10 @@ do
       cat << EOF > ${tex_name}
 \def\RUNTITLE{${title_name}}
 \def\DATA{${csv_name}}
+\newcommand{\PLOTSTYLE}{ymax=500}
 \input{template.tex}
 EOF
+# \newcommand{\PLOTSTYLE}{ymax=3500}
 
       latexmk -pdflatex="pdflatex -halt-on-error" -synctex=1 -outdir=build ${tex_name}
       cp build/${bench_name,,}.pdf ./
