@@ -261,6 +261,9 @@ miniapps/performance/refined.mesh
 miniapps/performance/mesh.*
 miniapps/performance/sol.*
 
+miniapps/radiation-diffusion/ParaView
+miniapps/radiation-diffusion/radiation_diffusion
+
 miniapps/shifted/distance
 miniapps/shifted/ParaViewDistance
 miniapps/shifted/ParaViewLSF
