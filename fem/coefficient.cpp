@@ -1711,7 +1711,7 @@ void CoefficientVector::MakeRef(const QuadratureFunction &qf_)
    MFEM_CONTRACT_VAR(qs2); // qs2 used only for asserts
    MFEM_VERIFY(qs2 != NULL, "Invalid QuadratureSpace.")
    MFEM_VERIFY(qs2->GetMesh() == qs.GetMesh(), "Meshes differ.");
-   MFEM_VERIFY(qs2->GetOrder() == qs.GetOrder(), "Orders differ.");
+   MFEM_VERIFY(qs2->GetSize() == qs.GetSize(), "Sizes differ.");
    Vector::MakeRef(const_cast<QuadratureFunction&>(qf_), 0, qf_.Size());
 }
 
