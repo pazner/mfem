@@ -665,10 +665,11 @@ void GetFaceDofs(const int dim, const int face_id,
    }
 }
 
-H1FaceRestriction::H1FaceRestriction(const FiniteElementSpace &fes,
-                                     const ElementDofOrdering e_ordering,
-                                     const FaceType type,
-                                     bool build)
+H1_ND_RT_FaceRestriction::H1_ND_RT_FaceRestriction(
+   const FiniteElementSpace &fes,
+   const ElementDofOrdering e_ordering,
+   const FaceType type,
+   bool build)
    : fes(fes),
      nf(fes.GetNFbyType(type)),
      vdim(fes.GetVDim()),
@@ -694,13 +695,14 @@ H1FaceRestriction::H1FaceRestriction(const FiniteElementSpace &fes,
    ComputeGatherIndices(e_ordering,type);
 }
 
-H1FaceRestriction::H1FaceRestriction(const FiniteElementSpace &fes,
-                                     const ElementDofOrdering e_ordering,
-                                     const FaceType type)
-   : H1FaceRestriction(fes, e_ordering, type, true)
+H1_ND_RT_FaceRestriction::H1_ND_RT_FaceRestriction(
+   const FiniteElementSpace &fes,
+   const ElementDofOrdering e_ordering,
+   const FaceType type)
+   : H1_ND_RT_FaceRestriction(fes, e_ordering, type, true)
 { }
 
-void H1FaceRestriction::Mult(const Vector& x, Vector& y) const
+void H1_ND_RT_FaceRestriction::Mult(const Vector& x, Vector& y) const
 {
    if (nf==0) { return; }
    // Assumes all elements have the same number of dofs
@@ -722,8 +724,8 @@ void H1FaceRestriction::Mult(const Vector& x, Vector& y) const
    });
 }
 
-void H1FaceRestriction::AddMultTranspose(const Vector& x, Vector& y,
-                                         const double a) const
+void H1_ND_RT_FaceRestriction::AddMultTranspose(
+   const Vector& x, Vector& y, const double a) const
 {
    MFEM_VERIFY(a == 1.0, "General coefficient case is not yet supported!");
    if (nf==0) { return; }
@@ -752,7 +754,7 @@ void H1FaceRestriction::AddMultTranspose(const Vector& x, Vector& y,
    });
 }
 
-void H1FaceRestriction::CheckFESpace(const ElementDofOrdering e_ordering)
+void H1_ND_RT_FaceRestriction::CheckFESpace(const ElementDofOrdering e_ordering)
 {
 #ifdef MFEM_USE_MPI
 
@@ -774,7 +776,7 @@ void H1FaceRestriction::CheckFESpace(const ElementDofOrdering e_ordering)
                (tfe->GetBasisType()==BasisType::GaussLobatto ||
                 tfe->GetBasisType()==BasisType::Positive),
                "Only Gauss-Lobatto and Bernstein basis are supported in "
-               "H1FaceRestriction.");
+               "H1_ND_RT_FaceRestriction.");
 
    // Assuming all finite elements are using Gauss-Lobatto.
    const bool dof_reorder = (e_ordering == ElementDofOrdering::LEXICOGRAPHIC);
@@ -797,7 +799,7 @@ void H1FaceRestriction::CheckFESpace(const ElementDofOrdering e_ordering)
 #endif
 }
 
-void H1FaceRestriction::ComputeScatterIndicesAndOffsets(
+void H1_ND_RT_FaceRestriction::ComputeScatterIndicesAndOffsets(
    const ElementDofOrdering ordering,
    const FaceType type)
 {
@@ -835,7 +837,7 @@ void H1FaceRestriction::ComputeScatterIndicesAndOffsets(
    }
 }
 
-void H1FaceRestriction::ComputeGatherIndices(
+void H1_ND_RT_FaceRestriction::ComputeGatherIndices(
    const ElementDofOrdering ordering,
    const FaceType type)
 {
@@ -868,7 +870,7 @@ void H1FaceRestriction::ComputeGatherIndices(
    gather_offsets[0] = 0;
 }
 
-void H1FaceRestriction::SetFaceDofsScatterIndices(
+void H1_ND_RT_FaceRestriction::SetFaceDofsScatterIndices(
    const Mesh::FaceInformation &face,
    const int face_index,
    const ElementDofOrdering ordering)
@@ -903,7 +905,7 @@ void H1FaceRestriction::SetFaceDofsScatterIndices(
    }
 }
 
-void H1FaceRestriction::SetFaceDofsGatherIndices(
+void H1_ND_RT_FaceRestriction::SetFaceDofsGatherIndices(
    const Mesh::FaceInformation &face,
    const int face_index,
    const ElementDofOrdering ordering)
