@@ -13,7 +13,6 @@
 #define LINEAR_SOLVER_HPP
 
 #include "mfem.hpp"
-#include "mms.hpp"
 #include "change_basis.hpp"
 #include <memory>
 
@@ -22,7 +21,7 @@ namespace mfem
 
 /// @brief Solve the saddle-point system using MINRES with block diagonal
 /// preconditioning.
-class RadiationDiffusionLinearSolver : public Solver
+class HdivSaddlePointLinearSolver : public Solver
 {
 private:
    MINRESSolver minres;
@@ -44,13 +43,13 @@ private:
    ChangeOfBasis_L2 basis_l2;
    ChangeOfBasis_RT basis_rt;
 
-   ParBilinearForm mass_rt;
+   ParBilinearForm mass_l2, mass_rt;
 
    // Components needed for the block operator
    OperatorHandle R;
    std::unique_ptr<HypreParMatrix> D, Dt;
-   std::unique_ptr<Operator> L_inv;
-   Vector L_diag;
+   std::unique_ptr<DGMassInverse> L_inv;
+   Vector L_diag, R_diag;
 
    // Components needed for the preconditioner
    OperatorJacobiSmoother R_inv;
@@ -62,17 +61,23 @@ private:
    std::unique_ptr<BlockOperator> A_block;
    std::unique_ptr<BlockDiagonalPreconditioner> D_prec;
 
-   ConstantCoefficient R_coeff;
+   Coefficient &L_coeff, &R_coeff;
 
-   double dt_prev;
+   QuadratureSpace qs;
+   QuadratureFunction qf;
+   QuadratureFunctionCoefficient L_inv_coeff;
 
    mutable Vector b_prime, x_prime, z;
 public:
-   RadiationDiffusionLinearSolver(ParMesh &mesh,
-                                  ParFiniteElementSpace &fes_rt_,
-                                  ParFiniteElementSpace &fes_l2_);
-   /// Build the linear operator and solver. Must be called when dt changes.
-   void Setup(const double dt);
+   HdivSaddlePointLinearSolver(ParMesh &mesh_,
+                               ParFiniteElementSpace &fes_rt_,
+                               ParFiniteElementSpace &fes_l2_,
+                               Coefficient &L_coeff_,
+                               Coefficient &R_coeff_);
+
+   /// @brief Build the linear operator and solver. Must be called when the
+   /// coefficients change.
+   void Setup();
    /// Solve the linear system for material and radiation energy.
    void Mult(const Vector &b, Vector &x) const override;
    /// No-op.

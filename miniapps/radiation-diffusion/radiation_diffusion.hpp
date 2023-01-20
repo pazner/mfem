@@ -72,14 +72,14 @@ private:
    /// Brunner-Nowack nonlinear (outer) iterative solver.
    std::unique_ptr<BrunnerNowackIteration> nonlinear_solver;
 
-   Array<int> offsets;
+   Array<int> offsets; ///< Offsets for the block vector [e, E, F].
 
    double dt; ///< Time step.
 
    mutable Vector b; ///< Right-hand side for nonlinear solve.
    mutable Vector z; ///< Used as a temporary vector for computations.
 
-   Array<int> empty;
+   Array<int> empty; ///< Needed for some operations with no essential DOFs.
 
 public:
    /// Construct the radiation-diffusion operator given @a mesh and @a order.

@@ -9,7 +9,7 @@
 // terms of the BSD-3 license. We welcome feedback and contributions, see file
 // CONTRIBUTING.md for details.
 
-#include "radiation_diffusion.hpp"
+// #include "radiation_diffusion.hpp"
 #include "hdiv_linear_solver.hpp"
 #include "discrete_divergence.hpp"
 
@@ -29,8 +29,16 @@ HypreParMatrix *DiagonalInverse(
    return new HypreParMatrix(D); // make a deep copy
 }
 
-RadiationDiffusionLinearSolver::RadiationDiffusionLinearSolver(
-   ParMesh &mesh, ParFiniteElementSpace &fes_rt_, ParFiniteElementSpace &fes_l2_)
+const IntegrationRule &GetMassIntRule(FiniteElementSpace &fes_l2)
+{
+   Mesh *mesh = fes_l2.GetMesh();
+   const FiniteElement *fe = fes_l2.GetFE(0);
+   return MassIntegrator::GetRule(*fe, *fe, *mesh->GetElementTransformation(0));
+}
+
+HdivSaddlePointLinearSolver::HdivSaddlePointLinearSolver(
+   ParMesh &mesh, ParFiniteElementSpace &fes_rt_, ParFiniteElementSpace &fes_l2_,
+   Coefficient &L_coeff_, Coefficient &R_coeff_)
    : minres(mesh.GetComm()),
      order(fes_rt_.GetMaxElementOrder()),
      fec_l2(order - 1, mesh.Dimension(), b2, mt),
@@ -39,9 +47,17 @@ RadiationDiffusionLinearSolver::RadiationDiffusionLinearSolver(
      fes_rt(&mesh, &fec_rt),
      basis_l2(fes_l2_, fes_l2),
      basis_rt(fes_rt_, fes_rt),
+     mass_l2(&fes_l2),
      mass_rt(&fes_rt),
-     dt_prev(0.0)
+     L_coeff(L_coeff_),
+     R_coeff(R_coeff_),
+     qs(mesh, GetMassIntRule(fes_l2)),
+     qf(qs),
+     L_inv_coeff(qf)
 {
+   mass_l2.AddDomainIntegrator(new MassIntegrator(L_inv_coeff));
+   mass_l2.SetAssemblyLevel(AssemblyLevel::PARTIAL);
+
    mass_rt.AddDomainIntegrator(new VectorFEMassIntegrator(&R_coeff));
    mass_rt.SetAssemblyLevel(AssemblyLevel::PARTIAL);
 
@@ -59,39 +75,41 @@ RadiationDiffusionLinearSolver::RadiationDiffusionLinearSolver(
    minres.SetPrintLevel(IterativeSolver::PrintLevel().None());
    minres.iterative_mode = false;
 
-   L_inv.reset(new DGMassInverse(fes_l2));
-
+   R_diag.SetSize(fes_rt.GetTrueVSize());
    L_diag.SetSize(fes_l2.GetTrueVSize());
-   ParBilinearForm mass_l2(&fes_l2);
-   mass_l2.AddDomainIntegrator(new MassIntegrator);
-   mass_l2.SetAssemblyLevel(AssemblyLevel::PARTIAL);
-   mass_l2.Assemble();
-   mass_l2.AssembleDiagonal(L_diag);
 
    S_inv.SetPrintLevel(0);
 }
 
-void RadiationDiffusionLinearSolver::Setup(const double dt)
+void HdivSaddlePointLinearSolver::Setup()
 {
-   using namespace MMS;
+   // Compute L_inv_coeff, which is the reciprocal of L_inv.
+   // The data is stored in the QuadratureFunction qf.
+   L_coeff.Project(qf);
+   {
+      double *qf_d = qf.ReadWrite();
+      MFEM_FORALL(i, qf.Size(), {
+         qf_d[i] = 1.0/qf_d[i];
+      });
+   }
 
-   if (dt == dt_prev) { return; }
-   dt_prev = dt;
+   // Form the DG mass inverse with the new coefficient
+   L_inv.reset(new DGMassInverse(fes_l2, L_inv_coeff));
 
-   const double L_coeff = 1.0 + c*dt*sigma;
-   R_coeff.constant = 3.0*sigma/c/dt; // <-- NOTE: sign difference here
+   // Reassemble the L2 mass diagonal with the new coefficient
+   mass_l2.Assemble();
+   mass_l2.AssembleDiagonal(L_diag);
 
    // Reassmble the RT mass operator with the new coefficient
+   mass_rt.Update();
    mass_rt.Assemble();
    mass_rt.FormSystemMatrix(ess_dofs, R);
 
    // Form the updated approximate Schur complement
-   Vector R_diag(fes_rt.GetTrueVSize());
    mass_rt.AssembleDiagonal(R_diag);
    std::unique_ptr<HypreParMatrix> R_diag_inv(DiagonalInverse(R_diag, fes_rt));
    std::unique_ptr<HypreParMatrix> D_Minv_Dt(RAP(R_diag_inv.get(), Dt.get()));
    std::unique_ptr<HypreParMatrix> L_diag_inv(DiagonalInverse(L_diag, fes_l2));
-   (*L_diag_inv) *= L_coeff;
    S.reset(ParAdd(D_Minv_Dt.get(), L_diag_inv.get()));
 
    // Reassemble the preconditioners
@@ -100,7 +118,7 @@ void RadiationDiffusionLinearSolver::Setup(const double dt)
 
    // Set up the block operators
    A_block.reset(new BlockOperator(offsets));
-   A_block->SetBlock(0, 0, L_inv.get(), L_coeff);
+   A_block->SetBlock(0, 0, L_inv.get());
    A_block->SetBlock(0, 1, D.get());
    A_block->SetBlock(1, 0, Dt.get());
    A_block->SetBlock(1, 1, R.Ptr(), -1.0);
@@ -113,7 +131,7 @@ void RadiationDiffusionLinearSolver::Setup(const double dt)
    minres.SetOperator(*A_block);
 }
 
-void RadiationDiffusionLinearSolver::Mult(const Vector &b, Vector &x) const
+void HdivSaddlePointLinearSolver::Mult(const Vector &b, Vector &x) const
 {
    b_prime.SetSize(b.Size());
    x_prime.SetSize(x.Size());
@@ -155,6 +173,6 @@ void RadiationDiffusionLinearSolver::Mult(const Vector &b, Vector &x) const
    xF.SyncAliasMemory(x);
 }
 
-void RadiationDiffusionLinearSolver::SetOperator(const Operator &op) { }
+void HdivSaddlePointLinearSolver::SetOperator(const Operator &op) { }
 
 } // namespace mfem

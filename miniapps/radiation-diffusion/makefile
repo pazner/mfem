@@ -21,11 +21,15 @@ CONFIG_MK = $(MFEM_BUILD_DIR)/config/config.mk
 MFEM_LIB_FILE = mfem_is_not_built
 -include $(CONFIG_MK)
 
-RAD_DIFF_HEADERS = radiation_diffusion.hpp hdiv_linear_solver.hpp mms.hpp \
-						 nonlinear_iteration.hpp energy_integrator.hpp \
-						 discrete_divergence.hpp change_basis.hpp
-RAD_DIFF_SRC = main.cpp radiation_diffusion.cpp hdiv_linear_solver.cpp \
-					nonlinear_iteration.cpp energy_integrator.cpp change_basis.cpp
+RAD_DIFF_HEADERS = radiation_diffusion.hpp mms.hpp nonlinear_iteration.hpp \
+						 energy_integrator.hpp \
+						 ../hdiv-linear-solver/change_basis.hpp \
+						 ../hdiv-linear-solver/discrete_divergence.hpp \
+						 ../hdiv-linear-solver/hdiv_linear_solver.hpp
+RAD_DIFF_SRC = main.cpp radiation_diffusion.cpp nonlinear_iteration.cpp \
+			      energy_integrator.cpp \
+					../hdiv-linear-solver/change_basis.cpp \
+					../hdiv-linear-solver/hdiv_linear_solver.cpp
 RAD_DIFF_OBJ = $(RAD_DIFF_SRC:.cpp=.o)
 
 MINIAPPS = radiation_diffusion

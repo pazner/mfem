@@ -13,7 +13,7 @@
 #define NONLINEAR_ITERATION_HPP
 
 #include "mfem.hpp"
-#include "hdiv_linear_solver.hpp"
+#include "../hdiv-linear-solver/hdiv_linear_solver.hpp"
 #include "energy_integrator.hpp"
 
 namespace mfem
@@ -69,6 +69,20 @@ public:
    void SetOperator(const Operator &op);
 };
 
+class RadiationDiffusionLinearSolver : public Solver
+{
+private:
+   ConstantCoefficient L_coeff, R_coeff;
+   HdivSaddlePointLinearSolver solver;
+   double dt_prev;
+public:
+   RadiationDiffusionLinearSolver(RadiationDiffusionOperator &rad_diff_);
+   void SetOperator(const Operator &op) { }
+   void Mult(const Vector &x, Vector &y) const { solver.Mult(x, y); }
+   void Setup(double dt);
+   int GetNumIterations() const { return solver.GetNumIterations(); }
+};
+
 class BrunnerNowackIteration : public IterativeSolver
 {
 private:
@@ -79,6 +93,7 @@ private:
    GMRESSolver J_eE_solver;
    EnergyBlockJacobi J_eE_preconditioner;
    NewtonSolver eE_solver;
+   ConstantCoefficient L_coeff, R_coeff;
    RadiationDiffusionLinearSolver EF_solver;
 
    void ApplyFullOperator(const Vector &x, Vector &y) const;
@@ -87,11 +102,7 @@ public:
    BrunnerNowackIteration(RadiationDiffusionOperator &rad_diff_);
    void Mult(const Vector &b, Vector &x) const override;
    void SetOperator(const Operator &op) override;
-   void Setup(const double dt)
-   {
-      N_eE.Setup(dt);
-      EF_solver.Setup(dt);
-   }
+   void Setup(const double dt);
 };
 
 } // namespace mfem

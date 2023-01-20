@@ -181,6 +181,30 @@ void EnergyBlockJacobi::SetOperator(const Operator &op)
    });
 }
 
+RadiationDiffusionLinearSolver::RadiationDiffusionLinearSolver(
+   RadiationDiffusionOperator &rad_diff)
+   : solver(rad_diff.GetMesh(),
+            rad_diff.GetRTSpace(),
+            rad_diff.GetL2Space(),
+            L_coeff,
+            R_coeff),
+     dt_prev(0.0)
+{ }
+
+void RadiationDiffusionLinearSolver::Setup(double dt)
+{
+   using namespace MMS;
+   // On the first call, dt_prev == 0.0, so the setup always runs the first time.
+   if (dt != dt_prev)
+   {
+      // Set up/assemble the linear solver if the time step changes.
+      L_coeff.constant = 1.0 + c*dt*sigma;
+      R_coeff.constant = 3.0*sigma/c/dt;
+      dt_prev = dt;
+      solver.Setup();
+   }
+}
+
 BrunnerNowackIteration::BrunnerNowackIteration(
    RadiationDiffusionOperator &rad_diff_)
    : IterativeSolver(rad_diff_.GetComm()),
@@ -188,7 +212,7 @@ BrunnerNowackIteration::BrunnerNowackIteration(
      N_eE(rad_diff),
      J_eE_solver(rad_diff.GetComm()),
      eE_solver(rad_diff.GetComm()),
-     EF_solver(rad_diff.GetMesh(), rad_diff.GetRTSpace(), rad_diff.GetL2Space())
+     EF_solver(rad_diff)
 {
    height = width = rad_diff.Height();
 
@@ -359,6 +383,12 @@ void BrunnerNowackIteration::Mult(const Vector &b, Vector &x) const
    if (print) { std::cout << std::endl; }
 
    sync_x();
+}
+
+void BrunnerNowackIteration::Setup(double dt)
+{
+   N_eE.Setup(dt);
+   EF_solver.Setup(dt);
 }
 
 void BrunnerNowackIteration::SetOperator(const Operator &op) { }
