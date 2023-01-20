@@ -22,6 +22,18 @@ ChangeOfBasis_L2::ChangeOfBasis_L2(FiniteElementSpace &fes1,
    : Operator(fes1.GetTrueVSize()),
      ne(fes1.GetNE())
 {
+   auto *fec1 = dynamic_cast<const L2_FECollection*>(fes1.FEColl());
+   auto *fec2 = dynamic_cast<const L2_FECollection*>(fes2.FEColl());
+   MFEM_VERIFY(fec1 && fec2, "Must be L2 finite element space");
+   int btype1 = fec1->GetBasisType();
+   int btype2 = fec2->GetBasisType();
+
+   // If the basis types are the same, don't need to perform change of basis.
+   no_op = (btype1 == btype2);
+   if (no_op) { return; }
+
+   BasisType::CheckNodal(btype1);
+
    const IntegrationRule &ir = fes1.GetFE(0)->GetNodes();
    const auto mode = DofToQuad::TENSOR;
 
@@ -36,6 +48,7 @@ ChangeOfBasis_L2::ChangeOfBasis_L2(FiniteElementSpace &fes1,
 
 void ChangeOfBasis_L2::Mult(const Vector &x, Vector &y) const
 {
+   if (no_op) { y = x; return; }
    using namespace internal::quadrature_interpolator;
    dof2quad.B.MakeRef(B_1d);
    TensorValues<QVectorLayout::byVDIM>(ne, 1, dof2quad, x, y);
@@ -43,6 +56,7 @@ void ChangeOfBasis_L2::Mult(const Vector &x, Vector &y) const
 
 void ChangeOfBasis_L2::MultTranspose(const Vector &x, Vector &y) const
 {
+   if (no_op) { y = x; return; }
    using namespace internal::quadrature_interpolator;
    dof2quad.B.MakeRef(Bt_1d);
    TensorValues<QVectorLayout::byVDIM>(ne, 1, dof2quad, x, y);
@@ -60,17 +74,23 @@ ChangeOfBasis_RT::ChangeOfBasis_RT(FiniteElementSpace &fes1,
    elem_restr = dynamic_cast<const ElementRestriction*>(op);
    MFEM_VERIFY(elem_restr != NULL, "Missing element restriciton.");
 
-   const FiniteElementCollection *fec = fes1.FEColl();
-   const auto *rt_fec = dynamic_cast<const RT_FECollection*>(fec);
-   MFEM_VERIFY(rt_fec != NULL, "Must be RT finite element collection.");
+   const auto *rt_fec1 = dynamic_cast<const RT_FECollection*>(fes1.FEColl());
+   const auto *rt_fec2 = dynamic_cast<const RT_FECollection*>(fes2.FEColl());
+   MFEM_VERIFY(rt_fec1 && rt_fec2, "Must be RT finite element space.");
 
-   const int cb_type = rt_fec->GetClosedBasisType();
-   const int ob_type = rt_fec->GetOpenBasisType();
+   const int cb_type1 = rt_fec1->GetClosedBasisType();
+   const int ob_type1 = rt_fec1->GetOpenBasisType();
+
+   const int cb_type2 = rt_fec2->GetClosedBasisType();
+   const int ob_type2 = rt_fec2->GetOpenBasisType();
+
+   no_op = (cb_type1 == cb_type2 && ob_type1 == ob_type2);
+   if (no_op) { return; }
 
    const int pp1 = p + 1;
 
-   const double *cpts1 = poly1d.GetPoints(p, cb_type);
-   const double *opts1 = poly1d.GetPoints(p - 1, ob_type);
+   const double *cpts1 = poly1d.GetPoints(p, cb_type1);
+   const double *opts1 = poly1d.GetPoints(p - 1, ob_type1);
 
    const auto &cb2 = poly1d.GetBasis(p, BasisType::GaussLobatto);
    auto &ob2 = poly1d.GetBasis(p - 1, BasisType::IntegratedGLL);
@@ -231,6 +251,8 @@ void ChangeOfBasis_RT::MultRT_3D(const Vector &x, Vector &y, bool transp) const
 
 void ChangeOfBasis_RT::Mult(const Vector &x, Vector &y, bool transpose) const
 {
+   if (no_op) { y = x; return; }
+
    const Operator *P = fes.GetProlongationMatrix();
 
    if (P)

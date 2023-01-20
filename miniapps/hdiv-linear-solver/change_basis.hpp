@@ -25,6 +25,7 @@ private:
    mutable DofToQuad dof2quad; ///< 1D basis transformation.
    Array<double> B_1d; ///< 1D basis transformation matrix.
    Array<double> Bt_1d; ///< 1D basis transformation matrix traspose.
+   bool no_op; ///< If the basis types are the same, the operation is a no-op.
 public:
    ChangeOfBasis_L2(FiniteElementSpace &fes1, FiniteElementSpace &fes2);
    void Mult(const Vector &x, Vector &y) const override;
@@ -47,6 +48,8 @@ private:
 
    mutable Vector x_l, y_l; ///< L-vector layout
    mutable Vector x_e, y_e; ///< E-vector layout
+
+   bool no_op; ///< If the spaces are the same, the operation is a no-op.
 
    void Mult(const Vector &x, Vector &y, bool transpose) const;
 public:
