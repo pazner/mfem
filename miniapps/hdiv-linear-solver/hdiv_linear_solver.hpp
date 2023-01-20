@@ -19,6 +19,12 @@
 namespace mfem
 {
 
+enum class L2CoefficientMode
+{
+   IDENTITY,
+   RECIPROCAL
+};
+
 /// @brief Solve the saddle-point system using MINRES with block diagonal
 /// preconditioning.
 class HdivSaddlePointLinearSolver : public Solver
@@ -45,6 +51,8 @@ private:
 
    ParBilinearForm mass_l2, mass_rt;
 
+   const Array<int> &ess_rt_dofs;
+
    // Components needed for the block operator
    OperatorHandle R;
    std::unique_ptr<HypreParMatrix> D, Dt;
@@ -57,12 +65,13 @@ private:
 
    std::unique_ptr<HypreParMatrix> S;
 
-   Array<int> offsets, ess_dofs;
+   Array<int> offsets;
    std::unique_ptr<BlockOperator> A_block;
    std::unique_ptr<BlockDiagonalPreconditioner> D_prec;
 
    Coefficient &L_coeff, &R_coeff;
 
+   L2CoefficientMode coeff_mode;
    QuadratureSpace qs;
    QuadratureFunction qf;
    QuadratureFunctionCoefficient L_inv_coeff;
@@ -73,7 +82,9 @@ public:
                                ParFiniteElementSpace &fes_rt_,
                                ParFiniteElementSpace &fes_l2_,
                                Coefficient &L_coeff_,
-                               Coefficient &R_coeff_);
+                               Coefficient &R_coeff_,
+                               const Array<int> &ess_rt_dofs_,
+                               L2CoefficientMode coeff_mode_ = L2CoefficientMode::IDENTITY);
 
    /// @brief Build the linear operator and solver. Must be called when the
    /// coefficients change.

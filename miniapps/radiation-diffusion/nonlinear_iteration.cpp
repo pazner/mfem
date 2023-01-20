@@ -187,7 +187,9 @@ RadiationDiffusionLinearSolver::RadiationDiffusionLinearSolver(
             rad_diff.GetRTSpace(),
             rad_diff.GetL2Space(),
             L_coeff,
-            R_coeff),
+            R_coeff,
+            rad_diff.empty,
+            L2CoefficientMode::RECIPROCAL),
      dt_prev(0.0)
 { }
 

@@ -38,7 +38,8 @@ const IntegrationRule &GetMassIntRule(FiniteElementSpace &fes_l2)
 
 HdivSaddlePointLinearSolver::HdivSaddlePointLinearSolver(
    ParMesh &mesh, ParFiniteElementSpace &fes_rt_, ParFiniteElementSpace &fes_l2_,
-   Coefficient &L_coeff_, Coefficient &R_coeff_)
+   Coefficient &L_coeff_, Coefficient &R_coeff_, const Array<int> &ess_rt_dofs_,
+   L2CoefficientMode coeff_mode_)
    : minres(mesh.GetComm()),
      order(fes_rt_.GetMaxElementOrder()),
      fec_l2(order - 1, mesh.Dimension(), b2, mt),
@@ -49,8 +50,10 @@ HdivSaddlePointLinearSolver::HdivSaddlePointLinearSolver(
      basis_rt(fes_rt_, fes_rt),
      mass_l2(&fes_l2),
      mass_rt(&fes_rt),
+     ess_rt_dofs(ess_rt_dofs_),
      L_coeff(L_coeff_),
      R_coeff(R_coeff_),
+     coeff_mode(coeff_mode_),
      qs(mesh, GetMassIntRule(fes_l2)),
      qf(qs),
      L_inv_coeff(qf)
@@ -61,7 +64,7 @@ HdivSaddlePointLinearSolver::HdivSaddlePointLinearSolver(
    mass_rt.AddDomainIntegrator(new VectorFEMassIntegrator(&R_coeff));
    mass_rt.SetAssemblyLevel(AssemblyLevel::PARTIAL);
 
-   D.reset(FormDiscreteDivergenceMatrix(fes_rt, fes_l2, ess_dofs));
+   D.reset(FormDiscreteDivergenceMatrix(fes_rt, fes_l2, ess_rt_dofs));
    Dt.reset(D->Transpose());
 
    offsets.SetSize(3);
@@ -79,14 +82,17 @@ HdivSaddlePointLinearSolver::HdivSaddlePointLinearSolver(
    L_diag.SetSize(fes_l2.GetTrueVSize());
 
    S_inv.SetPrintLevel(0);
+
+   Setup();
 }
 
 void HdivSaddlePointLinearSolver::Setup()
 {
-   // Compute L_inv_coeff, which is the reciprocal of L_inv.
-   // The data is stored in the QuadratureFunction qf.
    L_coeff.Project(qf);
+   if (coeff_mode == L2CoefficientMode::RECIPROCAL)
    {
+      // Compute L_inv_coeff, which is the reciprocal of L_inv.
+      // The data is stored in the QuadratureFunction qf.
       double *qf_d = qf.ReadWrite();
       MFEM_FORALL(i, qf.Size(), {
          qf_d[i] = 1.0/qf_d[i];
@@ -103,7 +109,7 @@ void HdivSaddlePointLinearSolver::Setup()
    // Reassmble the RT mass operator with the new coefficient
    mass_rt.Update();
    mass_rt.Assemble();
-   mass_rt.FormSystemMatrix(ess_dofs, R);
+   mass_rt.FormSystemMatrix(ess_rt_dofs, R);
 
    // Form the updated approximate Schur complement
    mass_rt.AssembleDiagonal(R_diag);
