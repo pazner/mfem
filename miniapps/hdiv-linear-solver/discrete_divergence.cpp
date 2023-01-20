@@ -50,7 +50,7 @@ void EliminateColumns(HypreParMatrix &D, const Array<int> &ess_dofs)
          comm_pkg = hypre_ParCSRMatrixCommPkg(A_hypre);
       }
 
-      // Which of the local rows are to be eliminated?
+      // Which of the local columns are to be eliminated?
       for (int i = 0; i < diag_ncols; i++)
       {
          eliminate_col_diag[i] = 0;
@@ -62,8 +62,8 @@ void EliminateColumns(HypreParMatrix &D, const Array<int> &ess_dofs)
          eliminate_col_diag[ess_dofs[i]] = 1;
       }
 
-      // Use a matvec communication pattern to find (in eliminate_col_offd) which of
-      // the local offd columns are to be eliminated
+      // Use a matvec communication pattern to find (in eliminate_col_offd)
+      // which of the local offd columns are to be eliminated
       HYPRE_Int num_sends = hypre_ParCSRCommPkgNumSends(comm_pkg);
       HYPRE_Int int_buf_sz = hypre_ParCSRCommPkgSendMapStart(comm_pkg, num_sends);
       int_buf_data = mfem_hypre_CTAlloc_host(HYPRE_Int, int_buf_sz);
