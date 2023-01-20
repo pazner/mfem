@@ -28,6 +28,7 @@ RAD_DIFF_HEADERS = radiation_diffusion.hpp mms.hpp nonlinear_iteration.hpp \
 						 ../hdiv-linear-solver/hdiv_linear_solver.hpp
 RAD_DIFF_SRC = main.cpp radiation_diffusion.cpp nonlinear_iteration.cpp \
 			      energy_integrator.cpp \
+				   ../hdiv-linear-solver/discrete_divergence.cpp \
 					../hdiv-linear-solver/change_basis.cpp \
 					../hdiv-linear-solver/hdiv_linear_solver.cpp
 RAD_DIFF_OBJ = $(RAD_DIFF_SRC:.cpp=.o)
