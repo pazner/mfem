@@ -86,6 +86,10 @@ public:
    int GetNumIterations() const { return minres.GetNumIterations(); }
 };
 
+// TEMPORARY: REMOVE ME
+HypreParMatrix *DiagonalInverse(
+   Vector &diag_vec, const ParFiniteElementSpace &fes);
+
 } // namespace mfem
 
 #endif

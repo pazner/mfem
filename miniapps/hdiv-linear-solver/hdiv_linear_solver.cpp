@@ -9,7 +9,7 @@
 // terms of the BSD-3 license. We welcome feedback and contributions, see file
 // CONTRIBUTING.md for details.
 
-// #include "radiation_diffusion.hpp"
+#include "general/forall.hpp"
 #include "hdiv_linear_solver.hpp"
 #include "discrete_divergence.hpp"
 
