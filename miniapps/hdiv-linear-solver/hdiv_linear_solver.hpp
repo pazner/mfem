@@ -45,17 +45,18 @@ private:
    RT_FECollection fec_rt;
    ParFiniteElementSpace fes_rt;
 
+   // Essential BCs (in the RT space only)
+   const Array<int> &ess_rt_dofs;
+
    // Change of basis operators
    ChangeOfBasis_L2 basis_l2;
    ChangeOfBasis_RT basis_rt;
 
    ParBilinearForm mass_l2, mass_rt;
 
-   const Array<int> &ess_rt_dofs;
-
    // Components needed for the block operator
-   OperatorHandle R;
-   std::unique_ptr<HypreParMatrix> D, Dt;
+   OperatorHandle L, R, R_e;
+   std::unique_ptr<HypreParMatrix> D, Dt, D_e;
    std::unique_ptr<DGMassInverse> L_inv;
    Vector L_diag, R_diag;
 
@@ -65,7 +66,7 @@ private:
 
    std::unique_ptr<HypreParMatrix> S;
 
-   Array<int> offsets;
+   Array<int> offsets, empty;
    std::unique_ptr<BlockOperator> A_block;
    std::unique_ptr<BlockDiagonalPreconditioner> D_prec;
 
@@ -76,7 +77,7 @@ private:
    QuadratureFunction qf;
    QuadratureFunctionCoefficient L_inv_coeff;
 
-   mutable Vector b_prime, x_prime, z;
+   mutable Vector b_prime, x_prime, x_bc, w, z;
 public:
    HdivSaddlePointLinearSolver(ParMesh &mesh_,
                                ParFiniteElementSpace &fes_rt_,
@@ -89,12 +90,18 @@ public:
    /// @brief Build the linear operator and solver. Must be called when the
    /// coefficients change.
    void Setup();
-   /// Solve the linear system for material and radiation energy.
+   /// Sets the Dirichlet boundary conditions at the RT essential DOFs.
+   void SetBC(const Vector &x_rt) { x_bc = x_rt; }
+   /// Solve the linear system for L2 (scalar) and RT (flux) unknowns.
    void Mult(const Vector &b, Vector &x) const override;
    /// No-op.
    void SetOperator(const Operator &op) override;
    /// Get the number of MINRES iterations.
    int GetNumIterations() const { return minres.GetNumIterations(); }
+   /// Eliminates the BCs (called internally, not public interface).
+   void EliminateBC(Vector &) const;
+   /// Returns the internal MINRES solver.
+   MINRESSolver &GetMINRES() { return minres; }
 };
 
 // TEMPORARY: REMOVE ME

@@ -46,11 +46,11 @@ HdivSaddlePointLinearSolver::HdivSaddlePointLinearSolver(
      fes_l2(&mesh, &fec_l2),
      fec_rt(order - 1, mesh.Dimension(), b1, b2),
      fes_rt(&mesh, &fec_rt),
+     ess_rt_dofs(ess_rt_dofs_),
      basis_l2(fes_l2_, fes_l2),
      basis_rt(fes_rt_, fes_rt),
      mass_l2(&fes_l2),
      mass_rt(&fes_rt),
-     ess_rt_dofs(ess_rt_dofs_),
      L_coeff(L_coeff_),
      R_coeff(R_coeff_),
      coeff_mode(coeff_mode_),
@@ -66,6 +66,10 @@ HdivSaddlePointLinearSolver::HdivSaddlePointLinearSolver(
 
    D.reset(FormDiscreteDivergenceMatrix(fes_rt, fes_l2, ess_rt_dofs));
    Dt.reset(D->Transpose());
+
+   // Versions without BCs needed for elimination
+   D_e.reset(FormDiscreteDivergenceMatrix(fes_rt, fes_l2, empty));
+   mass_rt.FormSystemMatrix(empty, R_e);
 
    offsets.SetSize(3);
    offsets[0] = 0;
@@ -105,6 +109,7 @@ void HdivSaddlePointLinearSolver::Setup()
    // Reassemble the L2 mass diagonal with the new coefficient
    mass_l2.Assemble();
    mass_l2.AssembleDiagonal(L_diag);
+   mass_l2.FormSystemMatrix(empty, L);
 
    // Reassmble the RT mass operator with the new coefficient
    mass_rt.Update();
@@ -137,6 +142,55 @@ void HdivSaddlePointLinearSolver::Setup()
    minres.SetOperator(*A_block);
 }
 
+void HdivSaddlePointLinearSolver::EliminateBC(Vector &b) const
+{
+   const int n_ess_dofs = ess_rt_dofs.Size();
+   if (n_ess_dofs == 0) { return; }
+
+   const int n_l2 = offsets[1];
+   const int n_rt = offsets[2]-offsets[1];
+   Vector bE(b, 0, n_l2);
+   Vector bF(b, n_l2, n_rt);
+
+   MFEM_VERIFY(x_bc.Size() == n_rt, "BCs not set");
+
+   z.SetSize(n_rt);
+   z.UseDevice(true);
+   z = 0.0;
+   const int *d_I = ess_rt_dofs.Read();
+   const double *d_x_bc = x_bc.Read();
+   double *d_z = z.ReadWrite();
+   MFEM_FORALL(i, n_ess_dofs,
+   {
+      const int j = d_I[i];
+      d_z[j] = d_x_bc[j];
+   });
+
+   w.SetSize(n_rt);
+   basis_rt.MultInverse(z, w);
+
+   // Eliminate the BCs in the L2 RHS
+   D_e->Mult(-1.0, w, 1.0, bE);
+
+   // Eliminate the BCs in the RT RHS
+   // Flip the sign because the R block appears with multiplier -1
+   z.SetSize(n_rt);
+   R_e->Mult(w, z);
+   bF += z;
+
+   const double *d_w = w.Read();
+   double *d_bF = bF.ReadWrite(); // Need read-write access to set subvector
+   MFEM_FORALL(i, n_ess_dofs,
+   {
+      const int j = d_I[i];
+      // d_bF[j] = -d_x_bc[j];
+      d_bF[j] = -d_w[j];
+   });
+
+   bE.SyncAliasMemory(b);
+   bF.SyncAliasMemory(b);
+}
+
 void HdivSaddlePointLinearSolver::Mult(const Vector &b, Vector &x) const
 {
    b_prime.SetSize(b.Size());
@@ -159,6 +213,8 @@ void HdivSaddlePointLinearSolver::Mult(const Vector &b, Vector &x) const
    bE_prime.SyncAliasMemory(b_prime);
    bF_prime.SyncAliasMemory(b_prime);
 
+   EliminateBC(b_prime);
+
    // Solve the transformed system
    minres.Mult(b_prime, x_prime);
 
@@ -169,7 +225,7 @@ void HdivSaddlePointLinearSolver::Mult(const Vector &b, Vector &x) const
    Vector xE(x, offsets[0], offsets[1]-offsets[0]);
    Vector xF(x, offsets[1], offsets[2]-offsets[1]);
 
-   L_inv ->Mult(xE_prime, z);
+   L_inv->Mult(xE_prime, z);
 
    basis_l2.Mult(z, xE);
    basis_rt.Mult(xF_prime, xF);
