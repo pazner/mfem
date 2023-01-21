@@ -17,7 +17,7 @@
 namespace mfem
 {
 
-/// @brief Change of basis operator from given L2 space to IntegratedGLL basis.
+/// Change of basis operator between L2 spaces
 class ChangeOfBasis_L2 : public Operator
 {
 private:
@@ -32,7 +32,7 @@ public:
    void MultTranspose(const Vector &x, Vector &y) const override;
 };
 
-/// @brief Change of basis operator from given RT space to IntegratedGLL basis.
+/// Change of basis operator between RT spaces
 class ChangeOfBasis_RT : public Operator
 {
 private:
@@ -42,8 +42,10 @@ private:
    const int p; ///< Polynomial degree.
    const ElementRestriction *elem_restr; ///< Element restriction operator.
    Array<double> Bc_1d; ///< 1D closed basis transformation matrix.
+   Array<double> Bci_1d; ///< 1D closed basis transformation matrix inverse.
    Array<double> Bct_1d; ///< 1D closed basis transformation matrix transpose.
    Array<double> Bo_1d; ///< 1D open basis transformation matrix.
+   Array<double> Boi_1d; ///< 1D open basis transformation matrix inverse.
    Array<double> Bot_1d; ///< 1D open basis transformation matrix transpose.
 
    mutable Vector x_l, y_l; ///< L-vector layout
@@ -51,15 +53,25 @@ private:
 
    bool no_op; ///< If the spaces are the same, the operation is a no-op.
 
-   void Mult(const Vector &x, Vector &y, bool transpose) const;
+   enum Mode
+   {
+      NORMAL,
+      TRANSPOSE,
+      INVERSE
+   };
+
+   void Mult(const Vector &x, Vector &y, Mode mode) const;
+   const double *GetOpenMap(Mode mode) const;
+   const double *GetClosedMap(Mode mode) const;
 public:
    ChangeOfBasis_RT(FiniteElementSpace &fes1, FiniteElementSpace &fes2);
    void Mult(const Vector &x, Vector &y) const override;
    void MultTranspose(const Vector &x, Vector &y) const override;
+   void MultInverse(const Vector &x, Vector &y) const;
    // The following should be considered private, public because of compiler
    // limitations
-   void MultRT_2D(const Vector &x, Vector &y, bool transpose) const;
-   void MultRT_3D(const Vector &x, Vector &y, bool transpose) const;
+   void MultRT_2D(const Vector &x, Vector &y, Mode mode) const;
+   void MultRT_3D(const Vector &x, Vector &y, Mode mode) const;
 };
 
 } // namespace mfem

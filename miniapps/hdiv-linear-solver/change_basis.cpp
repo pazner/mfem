@@ -125,16 +125,51 @@ ChangeOfBasis_RT::ChangeOfBasis_RT(FiniteElementSpace &fes1,
          Bot_1d[j + i*p] = b[j];
       }
    }
+
+   auto compute_inverse = [](const Array<double> &A, Array<double> &Ainv)
+   {
+      Array<double> A2 = A;
+      const int n2 = A.Size();
+      const int n = sqrt(n2);
+      Array<int> ipiv(n);
+      LUFactors lu(A2.GetData(), ipiv.GetData());
+      lu.Factor(n);
+      Ainv.SetSize(n2);
+      lu.GetInverseMatrix(n, Ainv.GetData());
+   };
+
+   compute_inverse(Bo_1d, Boi_1d);
+   compute_inverse(Bc_1d, Bci_1d);
 }
 
-void ChangeOfBasis_RT::MultRT_2D(const Vector &x, Vector &y, bool transp) const
+const double *ChangeOfBasis_RT::GetOpenMap(Mode mode) const
+{
+   switch (mode)
+   {
+      case NORMAL: return Bo_1d.Read();
+      case TRANSPOSE: return Bot_1d.Read();
+      case INVERSE: return Boi_1d.Read();
+   }
+}
+
+const double *ChangeOfBasis_RT::GetClosedMap(Mode mode) const
+{
+   switch (mode)
+   {
+      case NORMAL: return Bc_1d.Read();
+      case TRANSPOSE: return Bct_1d.Read();
+      case INVERSE: return Bci_1d.Read();
+   }
+}
+
+void ChangeOfBasis_RT::MultRT_2D(const Vector &x, Vector &y, Mode mode) const
 {
    const int DIM = dim;
    const int NE = ne;
    const int D1D = p + 1;
    const int ND = (p+1)*p;
-   const double *BC = transp ? Bct_1d.Read() : Bc_1d.Read();
-   const double *BO = transp ? Bot_1d.Read() : Bo_1d.Read();
+   const double *BC = GetClosedMap(mode);
+   const double *BO = GetOpenMap(mode);
    const auto X = Reshape(x.Read(), DIM*ND, ne);
    auto Y = Reshape(y.Write(), DIM*ND, ne);
 
@@ -176,14 +211,14 @@ void ChangeOfBasis_RT::MultRT_2D(const Vector &x, Vector &y, bool transp) const
    });
 }
 
-void ChangeOfBasis_RT::MultRT_3D(const Vector &x, Vector &y, bool transp) const
+void ChangeOfBasis_RT::MultRT_3D(const Vector &x, Vector &y, Mode mode) const
 {
    const int DIM = dim;
    const int NE = ne;
    const int D1D = p + 1;
    const int ND = (p+1)*p*p;
-   const double *BC = transp ? Bct_1d.Read() : Bc_1d.Read();
-   const double *BO = transp ? Bot_1d.Read() : Bo_1d.Read();
+   const double *BC = GetClosedMap(mode);
+   const double *BO = GetOpenMap(mode);
    const auto X = Reshape(x.Read(), DIM*ND, ne);
    auto Y = Reshape(y.Write(), DIM*ND, ne);
 
@@ -249,7 +284,7 @@ void ChangeOfBasis_RT::MultRT_3D(const Vector &x, Vector &y, bool transp) const
    });
 }
 
-void ChangeOfBasis_RT::Mult(const Vector &x, Vector &y, bool transpose) const
+void ChangeOfBasis_RT::Mult(const Vector &x, Vector &y, Mode mode) const
 {
    if (no_op) { y = x; return; }
 
@@ -267,14 +302,13 @@ void ChangeOfBasis_RT::Mult(const Vector &x, Vector &y, bool transpose) const
       y_l.MakeRef(y, 0);
    }
 
-
    x_e.SetSize(elem_restr->Height());
    y_e.SetSize(elem_restr->Height());
 
    elem_restr->Mult(x_l, x_e);
 
-   if (dim == 2) { MultRT_2D(x_e, y_e, transpose); }
-   else { MultRT_3D(x_e, y_e, transpose); }
+   if (dim == 2) { MultRT_2D(x_e, y_e, mode); }
+   else { MultRT_3D(x_e, y_e, mode); }
 
    elem_restr->MultLeftInverse(y_e, y_l);
 
@@ -285,12 +319,17 @@ void ChangeOfBasis_RT::Mult(const Vector &x, Vector &y, bool transpose) const
 
 void ChangeOfBasis_RT::Mult(const Vector &x, Vector &y) const
 {
-   Mult(x, y, false);
+   Mult(x, y, NORMAL);
 }
 
 void ChangeOfBasis_RT::MultTranspose(const Vector &x, Vector &y) const
 {
-   Mult(x, y, true);
+   Mult(x, y, TRANSPOSE);
+}
+
+void ChangeOfBasis_RT::MultInverse(const Vector &x, Vector &y) const
+{
+   Mult(x, y, INVERSE);
 }
 
 } // namespace mfem
