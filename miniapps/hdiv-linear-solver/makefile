@@ -21,7 +21,8 @@ CONFIG_MK = $(MFEM_BUILD_DIR)/config/config.mk
 MFEM_LIB_FILE = mfem_is_not_built
 -include $(CONFIG_MK)
 
-HDIV_HEADERS = hdiv_linear_solver.hpp discrete_divergence.hpp change_basis.hpp
+HDIV_HEADERS = hdiv_linear_solver.hpp discrete_divergence.hpp change_basis.hpp \
+					../solvers/lor_mms.hpp
 HDIV_SRC = main.cpp hdiv_linear_solver.cpp change_basis.cpp discrete_divergence.cpp
 HDIV_OBJ = $(HDIV_SRC:.cpp=.o)
 

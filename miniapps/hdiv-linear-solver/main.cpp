@@ -15,40 +15,36 @@
 //
 
 #include "mfem.hpp"
-#include "linalg/dtensor.hpp"
-#include <fstream>
 #include <iostream>
 #include <memory>
 
 #include "discrete_divergence.hpp"
 #include "hdiv_linear_solver.hpp"
 
+#include "../solvers/lor_mms.hpp"
+
 using namespace std;
 using namespace mfem;
 
-ParMesh LoadParMesh(const char *mesh_file, int ser_ref = 0, int par_ref = 0)
-{
-   Mesh serial_mesh = Mesh::LoadFromFile(mesh_file);
-   for (int i = 0; i < ser_ref; ++i) { serial_mesh.UniformRefinement(); }
-   ParMesh mesh(MPI_COMM_WORLD, serial_mesh);
-   serial_mesh.Clear();
-   for (int i = 0; i < par_ref; ++i) { mesh.UniformRefinement(); }
-   return mesh;
-}
+ParMesh LoadParMesh(const char *mesh_file, int ser_ref = 0, int par_ref = 0);
+void SolveCG(Operator &A, Solver &P, const Vector &B, Vector &X);
+
+bool grad_div_problem = true; // used to set coefficients in MMS
 
 int main(int argc, char *argv[])
 {
-   tic_toc.Start();
-
    Mpi::Init(argc, argv);
    Hypre::Init();
 
-   const char *mesh_file = "../../data/star.mesh";
+   const char *mesh_file = "../../data/beam-quad.mesh";
    const char *device_config = "cpu";
    int ser_ref = 1;
    int par_ref = 1;
    int order = 3;
-   bool sanity_check = false;
+   bool use_saddle_point = false;
+   bool use_ams = false;
+   bool use_lor_ams = false;
+   bool use_hybridization = false;
 
    OptionsParser args(argc, argv);
    args.AddOption(&device_config, "-d", "--device",
@@ -59,248 +55,208 @@ int main(int argc, char *argv[])
    args.AddOption(&par_ref, "-rp", "--parallel-refine",
                   "Number of times to refine the mesh in parallel.");
    args.AddOption(&order, "-o", "--order", "Polynomial degree.");
-   args.AddOption(&sanity_check, "-s", "--sanity-check", "-no-s",
-                  "--no-sanity-check", "Enable or disable sanity check.");
+   args.AddOption(&use_saddle_point,
+                  "-sp", "--saddle-point", "-no-sp", "--no-saddle-point",
+                  "Enable or disable saddle-point solver.");
+   args.AddOption(&use_ams, "-ams", "--ams", "-no-ams", "--no-ams",
+                  "Enable or disable AMS solver.");
+   args.AddOption(&use_lor_ams, "-lor", "--lor-ams", "-no-lor", "--no-lor-ams",
+                  "Enable or disable LOR-AMS solver.");
+   args.AddOption(&use_hybridization,
+                  "-hb", "--hybridization", "-no-hb", "--no-hybridization",
+                  "Enable or disable hybridization solver.");
    args.ParseCheck();
-
-   Device device(device_config);
-   if (Mpi::Root()) { device.Print(); }
 
    ParMesh mesh = LoadParMesh(mesh_file, ser_ref, par_ref);
    const int dim = mesh.Dimension();
    MFEM_VERIFY(dim == 2 || dim == 3, "Spatial dimension must be 2 or 3.");
 
-   int b1 = BasisType::GaussLobatto, b2 = BasisType::IntegratedGLL;
-   int mt = FiniteElement::INTEGRAL;
-
+   const int b1 = BasisType::GaussLobatto, b2 = BasisType::GaussLegendre;
    RT_FECollection fec_rt(order-1, dim, b1, b2);
    ParFiniteElementSpace fes_rt(&mesh, &fec_rt);
 
-   L2_FECollection fec_l2(order-1, dim, b2, mt);
-   ParFiniteElementSpace fes_l2(&mesh, &fec_l2);
+   Array<int> ess_rt_dofs;
+   fes_rt.GetBoundaryTrueDofs(ess_rt_dofs);
 
-   const IntegrationRule &ir = IntRules.Get(mesh.GetElementGeometry(0),2*order);
+   VectorFunctionCoefficient f_vec_coeff(dim, f_vec), u_vec_coeff(dim, u_vec);
 
-   tic_toc.Stop();
-   if (Mpi::Root()) { cout << "Preamble: " << tic_toc.RealTime() << endl; }
+   ParLinearForm b(&fes_rt);
+   b.AddDomainIntegrator(new VectorFEDomainLFIntegrator(f_vec_coeff));
+   b.UseFastAssembly(true);
+   b.Assemble();
 
-   tic_toc.Clear();
-   tic_toc.Start();
+   ConstantCoefficient alpha_coeff(1.0);
+   ConstantCoefficient beta_coeff(1.0);
+
+   ParGridFunction x(&fes_rt);
+   x.ProjectCoefficient(u_vec_coeff);
+
+   cout.precision(4);
+   cout << scientific;
+
+   auto report_error = [&](const Vector &X)
    {
-      HYPRE_BigInt ndofs_rt = fes_rt.GlobalTrueVSize();
-      HYPRE_BigInt ndofs_l2 = fes_l2.GlobalTrueVSize();
+      ParGridFunction x2(&fes_rt);
+      x2.SetFromTrueDofs(X);
+      const double error = x2.ComputeL2Error(u_vec_coeff);
+      if (Mpi::Root()) { cout << "L2 error: " << error << endl; }
+   };
+
+   if (use_saddle_point)
+   {
+      if (Mpi::Root()) { cout << "\nSaddle point solver... " << flush; }
+      tic_toc.Clear(); tic_toc.Start();
+
+      int mt = FiniteElement::INTEGRAL;
+      L2_FECollection fec_l2(order-1, dim, b2, mt);
+      ParFiniteElementSpace fes_l2(&mesh, &fec_l2);
+
+      Array<int> offsets({0, fes_l2.GetTrueVSize(), fes_rt.GetTrueVSize()});
+      offsets.PartialSum();
+      BlockVector X_block(offsets), B_block(offsets);
+
+      B_block.GetBlock(0) = 0.0;
+      b.ParallelAssemble(B_block.GetBlock(1));
+      B_block.GetBlock(1) *= -1.0;
+
+      HdivSaddlePointLinearSolver saddle_point_solver(
+         mesh, fes_rt, fes_l2, alpha_coeff, beta_coeff, ess_rt_dofs,
+         L2CoefficientMode::IDENTITY);
+
+      x.ParallelProject(X_block.GetBlock(1));
+      saddle_point_solver.SetBC(X_block.GetBlock(1));
+
+      X_block = 0.0;
+      saddle_point_solver.Mult(B_block, X_block);
+
       if (Mpi::Root())
       {
-         cout << "Number of RT DOFs: " << ndofs_rt << endl;
-         cout << "Number of L2 DOFs: " << ndofs_l2 << endl;
-         cout << "Assembling... " << flush;
+         cout << "Done.\nIterations: "
+              << saddle_point_solver.GetNumIterations()
+              << "\nElapsed: " << tic_toc.RealTime() << endl;
       }
+
+      report_error(X_block.GetBlock(1));
    }
 
-   Array<int> ess_dofs, empty;
-   fes_rt.GetBoundaryTrueDofs(ess_dofs);
-
-   // Crooked pipe coefficients
-   Vector alpha_vec(mesh.attributes.Max());
-   alpha_vec = 1.64098370E+00;
-   alpha_vec(0) = 1.88046595E-03;
-   PWConstCoefficient alpha_coeff(alpha_vec);
-
-   Vector beta_vec(mesh.attributes.Max());
-   beta_vec = 0.2;
-   beta_vec(0) = 2000;
-   PWConstCoefficient beta_coeff(beta_vec);
-
-   // Form the 2x2 block system
-   //
-   //     [ M    D^t   ]
-   //     [ D  -W^{-1} ]
-   //
-   // where M is the RT mass matrix, D is the discrete divergence operator,
-   // and W is the L2 mass matrix.
-
-   // Form M
-   ParBilinearForm mass_rt(&fes_rt);
-   mass_rt.AddDomainIntegrator(new VectorFEMassIntegrator(&beta_coeff));
-   mass_rt.SetAssemblyLevel(AssemblyLevel::PARTIAL);
-   mass_rt.Assemble();
-   OperatorHandle M;
-   mass_rt.FormSystemMatrix(ess_dofs, M);
-
-   // Form D
-   unique_ptr<HypreParMatrix> D(
-      FormDiscreteDivergenceMatrix(fes_rt, fes_l2, ess_dofs));
-   unique_ptr<HypreParMatrix> Dt(D->Transpose());
-
-   // Form W^{-1}
-   unique_ptr<Operator> W_inv;
-   W_inv.reset(new DGMassInverse(fes_l2, alpha_coeff, ir));
-
-   tic_toc.Stop();
-   if (Mpi::Root()) { cout << "Done. Elapsed: " << tic_toc.RealTime() << endl; }
-   tic_toc.Clear();
-   tic_toc.Start();
-   if (Mpi::Root()) { cout << "Preconditioner setup... " << flush; }
-
-   Array<int> offsets(3);
-   offsets[0] = 0;
-   offsets[1] = fes_rt.GetTrueVSize();
-   offsets[2] = offsets[1] + fes_l2.GetTrueVSize();
-
-   BlockOperator A_block(offsets);
-   A_block.SetBlock(0, 0, M.Ptr());
-   A_block.SetBlock(0, 1, Dt.get());
-   A_block.SetBlock(1, 0, D.get());
-   A_block.SetBlock(1, 1, W_inv.get(), -1.0);
-
-   // We precondition the 2x2 block system defined above with the block-diagonal
-   // preconditioner
-   //
-   //     [ M^{-1}     0   ]
-   //     [   0     S^{-1} ]
-   //
-   // where M^{-1} is approximated by the reciprocal of the diagonal of M,
-   // and S^{-1} is approximate by one AMG V-cycle applied to the approximate
-   // Schur complement S, given by
-   //
-   //     S = W^{-1} + D M^{-1} D^t
-   //
-   // where W^{-1} is the recriprocal of the diagonal of W, and M^{-1} is the
-   // reciprocal of the diagonal of M.
-
-   // Form the diagonal of M
-   Vector M_diag(fes_rt.GetTrueVSize());
-   mass_rt.AssembleDiagonal(M_diag);
-   OperatorJacobiSmoother M_jacobi(M_diag, ess_dofs);
-
-   // Form the diagonal of W
-   Vector W_diag(fes_l2.GetTrueVSize());
+   if (use_ams)
    {
-      ParBilinearForm mass_l2(&fes_l2);
-      mass_l2.AddDomainIntegrator(new MassIntegrator(alpha_coeff));
-      mass_l2.SetAssemblyLevel(AssemblyLevel::PARTIAL);
-      mass_l2.Assemble();
-      mass_l2.AssembleDiagonal(W_diag);
-   }
-   unique_ptr<HypreParMatrix> W_diag_inv(DiagonalInverse(W_diag, fes_l2));
-
-   // Form the approximate Schur complement
-   unique_ptr<HypreParMatrix> S;
-   {
-      unique_ptr<HypreParMatrix> M_diag_inv(DiagonalInverse(M_diag, fes_rt));
-      unique_ptr<HypreParMatrix> D_Minv_Dt(RAP(M_diag_inv.get(), Dt.get()));
-      S.reset(ParAdd(D_Minv_Dt.get(), W_diag_inv.get()));
-   }
-
-   // Create the block-diagonal preconditioner
-   HypreBoomerAMG S_inv(*S);
-   // S_inv.SetPrintLevel(0);
-   S_inv.SetPrintLevel(1);
-
-   BlockDiagonalPreconditioner D_prec(offsets);
-   D_prec.SetDiagonalBlock(0, &M_jacobi);
-   D_prec.SetDiagonalBlock(1, &S_inv);
-
-   BlockVector X_block(offsets), B_block(offsets);
-   X_block = 0.0;
-
-   B_block.GetBlock(0).Randomize(1);
-   B_block.GetBlock(1) = 0.0;
-
-   S_inv.Setup(B_block.GetBlock(1), X_block.GetBlock(1)); // AMG setup
-
-   tic_toc.Stop();
-   if (Mpi::Root())
-   {
-      cout << "Done. Elapsed: " << tic_toc.RealTime() << endl;
-   }
-
-   MINRESSolver minres(MPI_COMM_WORLD);
-   minres.SetAbsTol(0.0);
-   minres.SetRelTol(1e-12);
-   minres.SetMaxIter(500);
-   minres.SetPrintLevel(IterativeSolver::PrintLevel().Summary().FirstAndLast());
-   minres.SetOperator(A_block);
-   minres.SetPreconditioner(D_prec);
-
-   tic_toc.Clear();
-   tic_toc.Start();
-   minres.Mult(B_block, X_block);
-   tic_toc.Stop();
-   if (Mpi::Root()) { cout << "MINRES Elapsed: " << tic_toc.RealTime() << '\n'; }
-
-   // If the sanity check is enabled, compare the solution of block 2x2 system
-   // to that of the RT div-div system
-   if (sanity_check)
-   {
-      if (Mpi::Root()) { cout << "\nPerforming sanity check...\n" << endl; }
+      if (Mpi::Root()) { cout << "\nAMS solver... " << flush; }
+      tic_toc.Clear(); tic_toc.Start();
 
       ParBilinearForm a(&fes_rt);
-      auto *divdiv = new DivDivIntegrator(alpha_coeff);
-      divdiv->SetIntegrationRule(ir);
-      a.AddDomainIntegrator(divdiv);
-      a.AddDomainIntegrator(new VectorFEMassIntegrator(&beta_coeff));
+      a.AddDomainIntegrator(new DivDivIntegrator(alpha_coeff));
+      a.AddDomainIntegrator(new VectorFEMassIntegrator(beta_coeff));
       a.Assemble();
-      a.Finalize();
 
-      ParGridFunction x(&fes_rt);
-      ParLinearForm b(&fes_rt);
-      b = 0.0;
-      x = 0.0;
       OperatorHandle A;
+      Vector B, X;
+      b.Assemble();
+      x.ProjectCoefficient(u_vec_coeff);
+      a.FormLinearSystem(ess_rt_dofs, x, b, A, X, B);
+      HypreParMatrix &Ah = *A.As<HypreParMatrix>();
 
-      a.FormSystemMatrix(ess_dofs, A);
+      std::unique_ptr<Solver> prec;
+      if (dim == 2) { prec.reset(new HypreAMS(Ah, &fes_rt)); }
+      else  { prec.reset(new HypreADS(Ah, &fes_rt)); }
 
-      Vector X(offsets[1]), B(offsets[1]);
-      X = 0.0;
-      {
-         Vector &B0 = B_block.GetBlock(0);
-         B0.HostRead();
-         B.HostWrite();
-         for (int i = 0; i < B0.Size(); ++i)
-         {
-            B[i] = B0[i];
-         }
-      }
+      SolveCG(Ah, *prec, B, X);
+      report_error(X);
+   }
 
-      unique_ptr<Solver> amg;
-      if (dim == 3)
-      {
-         amg.reset(new HypreADS(*A.As<HypreParMatrix>(), &fes_rt));
-      }
-      else
-      {
-         amg.reset(new HypreAMS(*A.As<HypreParMatrix>(), &fes_rt));
-      }
+   if (use_lor_ams)
+   {
+      const int b2_lor = BasisType::IntegratedGLL;
+      RT_FECollection fec_rt_lor(order-1, dim, b1, b2_lor);
+      ParFiniteElementSpace fes_rt_lor(&mesh, &fec_rt_lor);
 
-      CGSolver cg(MPI_COMM_WORLD);
-      cg.SetAbsTol(0.0);
-      cg.SetRelTol(1e-12);
-      cg.SetMaxIter(500);
-      cg.SetPrintLevel(1);
-      cg.SetPrintLevel(IterativeSolver::PrintLevel().Summary().FirstAndLast());
-      cg.SetOperator(*A);
-      cg.SetPreconditioner(*amg);
+      ParLinearForm b_lor(&fes_rt_lor);
+      b_lor.AddDomainIntegrator(new VectorFEDomainLFIntegrator(f_vec_coeff));
+      b_lor.UseFastAssembly(true);
+      b_lor.Assemble();
 
-      tic_toc.Clear();
-      tic_toc.Start();
-      cg.Mult(B, X);
-      tic_toc.Stop();
-      if (Mpi::Root()) { cout << "CG Elapsed:     " << tic_toc.RealTime() << '\n'; }
+      if (Mpi::Root()) { cout << "\nLOR-AMS solver... " << flush; }
+      tic_toc.Clear(); tic_toc.Start();
 
-      {
-         Vector &X0 = X_block;
-         X.HostReadWrite();
-         X0.HostRead();
-         for (int i = 0; i < X.Size(); ++i)
-         {
-            X[i] -= X0[i];
-         }
-      }
+      ParBilinearForm a(&fes_rt_lor);
+      a.SetAssemblyLevel(AssemblyLevel::PARTIAL);
+      a.AddDomainIntegrator(new DivDivIntegrator(alpha_coeff));
+      a.AddDomainIntegrator(new VectorFEMassIntegrator(beta_coeff));
+      a.Assemble();
 
-      double error = X.Normlinf();
-      if (Mpi::Root()) { cout << "Error: " << error << '\n'; }
+      ParGridFunction x_lor(&fes_rt_lor);
+      x_lor.ProjectCoefficient(u_vec_coeff);
+
+      OperatorHandle A;
+      Vector B, X;
+      a.FormLinearSystem(ess_rt_dofs, x_lor, b_lor, A, X, B);
+
+      std::unique_ptr<Solver> prec;
+      if (dim == 2) { prec.reset(new LORSolver<HypreAMS>(a, ess_rt_dofs)); }
+      else { prec.reset(new LORSolver<HypreADS>(a, ess_rt_dofs)); }
+
+      SolveCG(*A, *prec, B, X);
+      a.RecoverFEMSolution(X, b_lor, x_lor);
+      const double error = x_lor.ComputeL2Error(u_vec_coeff);
+      if (Mpi::Root()) { cout << "L2 error: " << error << endl; }
+   }
+
+   if (use_hybridization)
+   {
+      if (Mpi::Root()) { cout << "\nHybridization solver... " << flush; }
+      tic_toc.Clear(); tic_toc.Start();
+
+      DG_Interface_FECollection fec_hb(order-1, dim);
+      ParFiniteElementSpace fes_hb(&mesh, &fec_hb);
+
+      ParBilinearForm a(&fes_rt);
+      a.AddDomainIntegrator(new DivDivIntegrator(alpha_coeff));
+      a.AddDomainIntegrator(new VectorFEMassIntegrator(beta_coeff));
+      a.EnableHybridization(&fes_hb, new NormalTraceJumpIntegrator, ess_rt_dofs);
+      a.Assemble();
+
+      OperatorHandle A;
+      Vector B, X;
+      b.Assemble();
+      x.ProjectCoefficient(u_vec_coeff);
+      a.FormLinearSystem(ess_rt_dofs, x, b, A, X, B);
+
+      HypreBoomerAMG amg_hb(*A.As<HypreParMatrix>());
+      amg_hb.SetPrintLevel(0);
+
+      SolveCG(*A, amg_hb, B, X);
+      a.RecoverFEMSolution(X, b, x);
+      const double error = x.ComputeL2Error(u_vec_coeff);
+      if (Mpi::Root()) { cout << "L2 error: " << error << endl; }
    }
 
    return 0;
 }
+
+ParMesh LoadParMesh(const char *mesh_file, int ser_ref, int par_ref)
+{
+   Mesh serial_mesh = Mesh::LoadFromFile(mesh_file);
+   for (int i = 0; i < ser_ref; ++i) { serial_mesh.UniformRefinement(); }
+   ParMesh mesh(MPI_COMM_WORLD, serial_mesh);
+   serial_mesh.Clear();
+   for (int i = 0; i < par_ref; ++i) { mesh.UniformRefinement(); }
+   return mesh;
+}
+
+void SolveCG(Operator &A, Solver &P, const Vector &B, Vector &X)
+{
+   CGSolver cg(MPI_COMM_WORLD);
+   cg.SetAbsTol(0.0);
+   cg.SetRelTol(1e-12);
+   cg.SetMaxIter(500);
+   cg.SetPrintLevel(0);
+   cg.SetOperator(A);
+   cg.SetPreconditioner(P);
+   X = 0.0;
+   cg.Mult(B, X);
+   if (Mpi::Root())
+   {
+      cout << "Done.\nIterations: " << cg.GetNumIterations()
+            << "\nElapsed: " << tic_toc.RealTime() << endl;
+   }
+};
