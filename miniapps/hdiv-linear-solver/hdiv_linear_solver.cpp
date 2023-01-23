@@ -118,13 +118,20 @@ void HdivSaddlePointLinearSolver::Setup()
 
    // Form the updated approximate Schur complement
    mass_rt.AssembleDiagonal(R_diag);
+
+   {
+      const int *d_I = ess_rt_dofs.Read();
+      double *d_R_diag = R_diag.ReadWrite();
+      MFEM_FORALL(i, ess_rt_dofs.Size(), d_R_diag[d_I[i]] = 1.0;);
+   }
+
    std::unique_ptr<HypreParMatrix> R_diag_inv(DiagonalInverse(R_diag, fes_rt));
    std::unique_ptr<HypreParMatrix> D_Minv_Dt(RAP(R_diag_inv.get(), Dt.get()));
    std::unique_ptr<HypreParMatrix> L_diag_inv(DiagonalInverse(L_diag, fes_l2));
    S.reset(ParAdd(D_Minv_Dt.get(), L_diag_inv.get()));
 
    // Reassemble the preconditioners
-   R_inv.SetOperator(mass_rt);
+   R_inv.reset(new OperatorJacobiSmoother(mass_rt, ess_rt_dofs));
    S_inv.SetOperator(*S);
 
    // Set up the block operators
@@ -136,7 +143,7 @@ void HdivSaddlePointLinearSolver::Setup()
 
    D_prec.reset(new BlockDiagonalPreconditioner(offsets));
    D_prec->SetDiagonalBlock(0, &S_inv);
-   D_prec->SetDiagonalBlock(1, &R_inv);
+   D_prec->SetDiagonalBlock(1, R_inv.get());
 
    minres.SetPreconditioner(*D_prec);
    minres.SetOperator(*A_block);

@@ -61,7 +61,7 @@ private:
    Vector L_diag, R_diag;
 
    // Components needed for the preconditioner
-   OperatorJacobiSmoother R_inv;
+   std::unique_ptr<OperatorJacobiSmoother> R_inv;
    HypreBoomerAMG S_inv;
 
    std::unique_ptr<HypreParMatrix> S;
