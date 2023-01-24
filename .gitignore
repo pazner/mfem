@@ -261,7 +261,7 @@ miniapps/performance/refined.mesh
 miniapps/performance/mesh.*
 miniapps/performance/sol.*
 
-miniapps/hdiv-linear-solver/hdiv_saddle_point_solver
+miniapps/hdiv-linear-solver/grad_div_problem
 
 miniapps/radiation-diffusion/ParaView
 miniapps/radiation-diffusion/radiation_diffusion
