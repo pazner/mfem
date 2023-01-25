@@ -22,7 +22,8 @@ namespace mfem
 enum class L2CoefficientMode
 {
    IDENTITY,
-   RECIPROCAL
+   RECIPROCAL,
+   ZERO
 };
 
 /// @brief Solve the saddle-point system using MINRES with block diagonal
@@ -76,6 +77,7 @@ private:
    QuadratureSpace qs;
    QuadratureFunction qf;
    QuadratureFunctionCoefficient L_inv_coeff;
+   ConstantCoefficient zero = ConstantCoefficient(0.0);
 
    mutable Vector b_prime, x_prime, x_bc, w, z;
 public:
@@ -86,6 +88,13 @@ public:
                                Coefficient &R_coeff_,
                                const Array<int> &ess_rt_dofs_,
                                L2CoefficientMode coeff_mode_ = L2CoefficientMode::IDENTITY);
+
+   /// Creates a linear solver for the case when the L2 diagonal block is zero.
+   HdivSaddlePointLinearSolver(ParMesh &mesh_,
+                               ParFiniteElementSpace &fes_rt_,
+                               ParFiniteElementSpace &fes_l2_,
+                               Coefficient &R_coeff_,
+                               const Array<int> &ess_rt_dofs_);
 
    /// @brief Build the linear operator and solver. Must be called when the
    /// coefficients change.

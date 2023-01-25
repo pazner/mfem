@@ -58,6 +58,16 @@ HdivSaddlePointLinearSolver::HdivSaddlePointLinearSolver(
      qf(qs),
      L_inv_coeff(qf)
 {
+   // Verify that "zero" coefficient mode matches zero coefficient:
+   if (coeff_mode == L2CoefficientMode::ZERO)
+   {
+      auto *L_const_coeff = dynamic_cast<ConstantCoefficient*>(&L_coeff);
+      if (!L_const_coeff || L_const_coeff->constant != 0.0)
+      {
+         MFEM_ABORT("L2CoefficientMode::ZERO requires zero L coefficient.");
+      }
+   }
+
    mass_l2.AddDomainIntegrator(new MassIntegrator(L_inv_coeff));
    mass_l2.SetAssemblyLevel(AssemblyLevel::PARTIAL);
 
@@ -90,17 +100,32 @@ HdivSaddlePointLinearSolver::HdivSaddlePointLinearSolver(
    Setup();
 }
 
+HdivSaddlePointLinearSolver::HdivSaddlePointLinearSolver(
+   ParMesh &mesh, ParFiniteElementSpace &fes_rt_, ParFiniteElementSpace &fes_l2_,
+   Coefficient &R_coeff_, const Array<int> &ess_rt_dofs_)
+   : HdivSaddlePointLinearSolver(mesh, fes_rt_, fes_l2_, zero, R_coeff_, ess_rt_dofs_, L2CoefficientMode::ZERO)
+{ }
+
 void HdivSaddlePointLinearSolver::Setup()
 {
-   L_coeff.Project(qf);
-   if (coeff_mode == L2CoefficientMode::RECIPROCAL)
+   if (coeff_mode == L2CoefficientMode::IDENTITY)
    {
+      L_coeff.Project(qf);
+   }
+   else if (coeff_mode == L2CoefficientMode::RECIPROCAL)
+   {
+      L_coeff.Project(qf);
       // Compute L_inv_coeff, which is the reciprocal of L_inv.
       // The data is stored in the QuadratureFunction qf.
       double *qf_d = qf.ReadWrite();
       MFEM_FORALL(i, qf.Size(), {
          qf_d[i] = 1.0/qf_d[i];
       });
+   }
+   else if (coeff_mode == L2CoefficientMode::ZERO)
+   {
+      double *qf_d = qf.ReadWrite();
+      MFEM_FORALL(i, qf.Size(), qf_d[i] = 1.0;);
    }
 
    // Form the DG mass inverse with the new coefficient
@@ -136,7 +161,10 @@ void HdivSaddlePointLinearSolver::Setup()
 
    // Set up the block operators
    A_block.reset(new BlockOperator(offsets));
-   A_block->SetBlock(0, 0, L_inv.get());
+   if (coeff_mode != L2CoefficientMode::ZERO)
+   {
+      A_block->SetBlock(0, 0, L_inv.get());
+   }
    A_block->SetBlock(0, 1, D.get());
    A_block->SetBlock(1, 0, Dt.get());
    A_block->SetBlock(1, 1, R.Ptr(), -1.0);

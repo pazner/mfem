@@ -82,7 +82,7 @@ int main(int argc, char *argv[])
    Array<int> ess_rt_dofs; // empty
 
    // f is the RHS, u is the exact solution
-   FunctionCoefficient f_coeff(f(1.0)), u_coeff(u);
+   FunctionCoefficient f_coeff(f(0.0)), u_coeff(u);
 
    // Assemble the right-hand side for the scalar (L2) unknown.
    ParLinearForm b_l2(&fes_l2);
@@ -112,12 +112,9 @@ int main(int argc, char *argv[])
    // the Poisson problem, and g_D is the contribution to the right-hand side
    // from the Dirichlet boundary condition.
 
-   ConstantCoefficient alpha_coeff(1.0);
-   ConstantCoefficient beta_coeff(1.0);
-
+   ConstantCoefficient one(1.0);
    HdivSaddlePointLinearSolver saddle_point_solver(
-      mesh, fes_rt, fes_l2, alpha_coeff, beta_coeff, ess_rt_dofs,
-      L2CoefficientMode::IDENTITY);
+      mesh, fes_rt, fes_l2, one, ess_rt_dofs);
 
    const Array<int> &offsets = saddle_point_solver.GetOffsets();
    BlockVector X_block(offsets), B_block(offsets);
