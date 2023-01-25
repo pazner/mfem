@@ -29,8 +29,6 @@ using namespace mfem;
 ParMesh LoadParMesh(const char *mesh_file, int ser_ref = 0, int par_ref = 0);
 void SolveCG(Operator &A, Solver &P, const Vector &B, Vector &X);
 
-bool grad_div_problem = true; // used to set coefficients in MMS
-
 int main(int argc, char *argv[])
 {
    Mpi::Init(argc, argv);
@@ -81,7 +79,7 @@ int main(int argc, char *argv[])
    Array<int> ess_rt_dofs;
    fes_rt.GetBoundaryTrueDofs(ess_rt_dofs);
 
-   VectorFunctionCoefficient f_vec_coeff(dim, f_vec), u_vec_coeff(dim, u_vec);
+   VectorFunctionCoefficient f_vec_coeff(dim, f_vec(true)), u_vec_coeff(dim, u_vec);
 
    ParLinearForm b(&fes_rt);
    b.AddDomainIntegrator(new VectorFEDomainLFIntegrator(f_vec_coeff));

@@ -82,7 +82,7 @@ int main(int argc, char *argv[])
    Array<int> ess_rt_dofs; // empty
 
    // f is the RHS, u is the exact solution
-   FunctionCoefficient f_coeff(f), u_coeff(u);
+   FunctionCoefficient f_coeff(f(1.0)), u_coeff(u);
 
    // Assemble the right-hand side for the scalar (L2) unknown.
    ParLinearForm b_l2(&fes_l2);
@@ -154,5 +154,3 @@ ParMesh LoadParMesh(const char *mesh_file, int ser_ref, int par_ref)
    for (int i = 0; i < par_ref; ++i) { mesh.UniformRefinement(); }
    return mesh;
 }
-
-bool grad_div_problem = false; // needed for lor_mms.hpp

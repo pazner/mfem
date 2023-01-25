@@ -12,8 +12,6 @@
 #ifndef MFEM_LOR_MMS_HPP
 #define MFEM_LOR_MMS_HPP
 
-extern bool grad_div_problem;
-
 namespace mfem
 {
 
@@ -29,19 +27,22 @@ double u(const Vector &xvec)
    else { const double z = pi*xvec[2]; return sin(x)*sin(y)*sin(z); }
 }
 
-double f(const Vector &xvec)
+std::function<double(const Vector &)> f(double mass_coeff)
 {
-   const int dim = xvec.Size();
-   const double x = pi*xvec[0], y = pi*xvec[1];
-   if (dim == 2)
+   return [mass_coeff](const Vector &xvec)
    {
-      return sin(x)*sin(y) + 2*pi2*sin(x)*sin(y);
-   }
-   else // dim == 3
-   {
-      const double z = pi*xvec[2];
-      return sin(x)*sin(y)*sin(z) + 3*pi2*sin(x)*sin(y)*sin(z);
-   }
+      const int dim = xvec.Size();
+      const double x = pi*xvec[0], y = pi*xvec[1];
+      if (dim == 2)
+      {
+         return mass_coeff*sin(x)*sin(y) + 2*pi2*sin(x)*sin(y);
+      }
+      else // dim == 3
+      {
+         const double z = pi*xvec[2];
+         return mass_coeff*sin(x)*sin(y)*sin(z) + 3*pi2*sin(x)*sin(y)*sin(z);
+      }
+   };
 }
 
 // Exact solution for definite Maxwell and grad-div problems with RHS
@@ -64,40 +65,43 @@ void u_vec(const Vector &xvec, Vector &u)
    }
 }
 
-void f_vec(const Vector &xvec, Vector &f)
+std::function<void(const Vector &, Vector &)> f_vec(bool grad_div_problem)
 {
-   const int dim = xvec.Size();
-   const double x = pi*xvec[0], y = pi*xvec[1];
-   if (grad_div_problem)
+   return [grad_div_problem](const Vector &xvec, Vector &f)
    {
-      if (dim == 2)
+      const int dim = xvec.Size();
+      const double x = pi*xvec[0], y = pi*xvec[1];
+      if (grad_div_problem)
       {
-         f[0] = (1 + 2*pi2)*cos(x)*sin(y);
-         f[1] = (1 + 2*pi2)*cos(y)*sin(x);
+         if (dim == 2)
+         {
+            f[0] = (1 + 2*pi2)*cos(x)*sin(y);
+            f[1] = (1 + 2*pi2)*cos(y)*sin(x);
+         }
+         else // dim == 3
+         {
+            const double z = pi*xvec[2];
+            f[0] = (1 + 3*pi2)*cos(x)*sin(y)*sin(z);
+            f[1] = (1 + 3*pi2)*cos(y)*sin(x)*sin(z);
+            f[2] = (1 + 3*pi2)*cos(z)*sin(x)*sin(y);
+         }
       }
-      else // dim == 3
+      else
       {
-         const double z = pi*xvec[2];
-         f[0] = (1 + 3*pi2)*cos(x)*sin(y)*sin(z);
-         f[1] = (1 + 3*pi2)*cos(y)*sin(x)*sin(z);
-         f[2] = (1 + 3*pi2)*cos(z)*sin(x)*sin(y);
+         if (dim == 2)
+         {
+            f[0] = cos(x)*sin(y);
+            f[1] = sin(x)*cos(y);
+         }
+         else // dim == 3
+         {
+            const double z = pi*xvec[2];
+            f[0] = cos(x)*sin(y)*sin(z);
+            f[1] = sin(x)*cos(y)*sin(z);
+            f[2] = sin(x)*sin(y)*cos(z);
+         }
       }
-   }
-   else
-   {
-      if (dim == 2)
-      {
-         f[0] = cos(x)*sin(y);
-         f[1] = sin(x)*cos(y);
-      }
-      else // dim == 3
-      {
-         const double z = pi*xvec[2];
-         f[0] = cos(x)*sin(y)*sin(z);
-         f[1] = sin(x)*cos(y)*sin(z);
-         f[2] = sin(x)*sin(y)*cos(z);
-      }
-   }
+   };
 }
 
 } // namespace mfem
