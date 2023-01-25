@@ -262,6 +262,7 @@ miniapps/performance/mesh.*
 miniapps/performance/sol.*
 
 miniapps/hdiv-linear-solver/grad_div_problem
+miniapps/hdiv-linear-solver/mixed_poisson
 
 miniapps/radiation-diffusion/ParaView
 miniapps/radiation-diffusion/radiation_diffusion
