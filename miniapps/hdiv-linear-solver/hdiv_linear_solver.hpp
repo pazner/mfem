@@ -100,6 +100,8 @@ public:
    int GetNumIterations() const { return minres.GetNumIterations(); }
    /// Eliminates the BCs (called internally, not public interface).
    void EliminateBC(Vector &) const;
+   /// Return the offsets of the block system.
+   const Array<int> &GetOffsets() const { return offsets; }
    /// Returns the internal MINRES solver.
    MINRESSolver &GetMINRES() { return minres; }
 };
