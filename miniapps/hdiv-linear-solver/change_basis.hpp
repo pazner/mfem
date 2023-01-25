@@ -35,6 +35,14 @@ public:
 /// Change of basis operator between RT spaces
 class ChangeOfBasis_RT : public Operator
 {
+public:
+   // Should be private, nvcc limitation...
+   enum Mode
+   {
+      NORMAL,
+      TRANSPOSE,
+      INVERSE
+   };
 private:
    FiniteElementSpace &fes; ///< The finite element space.
    const int dim; ///< Dimension of the mesh.
@@ -52,13 +60,6 @@ private:
    mutable Vector x_e, y_e; ///< E-vector layout
 
    bool no_op; ///< If the spaces are the same, the operation is a no-op.
-
-   enum Mode
-   {
-      NORMAL,
-      TRANSPOSE,
-      INVERSE
-   };
 
    void Mult(const Vector &x, Vector &y, Mode mode) const;
    const double *GetOpenMap(Mode mode) const;

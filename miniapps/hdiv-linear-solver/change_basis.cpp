@@ -150,6 +150,7 @@ const double *ChangeOfBasis_RT::GetOpenMap(Mode mode) const
       case TRANSPOSE: return Bot_1d.Read();
       case INVERSE: return Boi_1d.Read();
    }
+   return nullptr;
 }
 
 const double *ChangeOfBasis_RT::GetClosedMap(Mode mode) const
@@ -160,6 +161,7 @@ const double *ChangeOfBasis_RT::GetClosedMap(Mode mode) const
       case TRANSPOSE: return Bct_1d.Read();
       case INVERSE: return Bci_1d.Read();
    }
+   return nullptr;
 }
 
 void ChangeOfBasis_RT::MultRT_2D(const Vector &x, Vector &y, Mode mode) const
