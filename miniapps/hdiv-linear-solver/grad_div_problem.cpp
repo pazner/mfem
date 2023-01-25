@@ -67,6 +67,9 @@ int main(int argc, char *argv[])
                   "Enable or disable hybridization solver.");
    args.ParseCheck();
 
+   Device device(device_config);
+   if (Mpi::Root()) { device.Print(); }
+
    ParMesh mesh = LoadParMesh(mesh_file, ser_ref, par_ref);
    const int dim = mesh.Dimension();
    MFEM_VERIFY(dim == 2 || dim == 3, "Spatial dimension must be 2 or 3.");
@@ -111,17 +114,17 @@ int main(int argc, char *argv[])
       L2_FECollection fec_l2(order-1, dim, b2, mt);
       ParFiniteElementSpace fes_l2(&mesh, &fec_l2);
 
-      Array<int> offsets({0, fes_l2.GetTrueVSize(), fes_rt.GetTrueVSize()});
-      offsets.PartialSum();
-      BlockVector X_block(offsets), B_block(offsets);
-
-      B_block.GetBlock(0) = 0.0;
-      b.ParallelAssemble(B_block.GetBlock(1));
-      B_block.GetBlock(1) *= -1.0;
-
       HdivSaddlePointLinearSolver saddle_point_solver(
          mesh, fes_rt, fes_l2, alpha_coeff, beta_coeff, ess_rt_dofs,
          L2CoefficientMode::IDENTITY);
+
+      const Array<int> &offsets = saddle_point_solver.GetOffsets();
+
+      BlockVector X_block(offsets), B_block(offsets);
+      B_block.GetBlock(0) = 0.0;
+      b.ParallelAssemble(B_block.GetBlock(1));
+      B_block.GetBlock(1) *= -1.0;
+      B_block.SyncFromBlocks();
 
       x.ParallelProject(X_block.GetBlock(1));
       saddle_point_solver.SetBC(X_block.GetBlock(1));
@@ -136,6 +139,7 @@ int main(int argc, char *argv[])
               << "\nElapsed: " << tic_toc.RealTime() << endl;
       }
 
+      X_block.SyncToBlocks();
       report_error(X_block.GetBlock(1));
    }
 

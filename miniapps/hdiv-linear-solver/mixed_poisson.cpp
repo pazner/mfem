@@ -57,6 +57,9 @@ int main(int argc, char *argv[])
    args.AddOption(&order, "-o", "--order", "Polynomial degree.");
    args.ParseCheck();
 
+   Device device(device_config);
+   if (Mpi::Root()) { device.Print(); }
+
    ParMesh mesh = LoadParMesh(mesh_file, ser_ref, par_ref);
    const int dim = mesh.Dimension();
    MFEM_VERIFY(dim == 2 || dim == 3, "Spatial dimension must be 2 or 3.");
@@ -121,9 +124,11 @@ int main(int argc, char *argv[])
 
    b_l2.ParallelAssemble(B_block.GetBlock(0));
    b_rt.ParallelAssemble(B_block.GetBlock(1));
+   B_block.SyncFromBlocks();
 
    X_block = 0.0;
    saddle_point_solver.Mult(B_block, X_block);
+   X_block.SyncToBlocks();
 
    if (Mpi::Root())
    {
