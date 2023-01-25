@@ -107,7 +107,7 @@ int main(int argc, char *argv[])
       if (Mpi::Root()) { cout << "\nSaddle point solver... " << flush; }
       tic_toc.Clear(); tic_toc.Start();
 
-      int mt = FiniteElement::INTEGRAL;
+      const int mt = FiniteElement::INTEGRAL;
       L2_FECollection fec_l2(order-1, dim, b2, mt);
       ParFiniteElementSpace fes_l2(&mesh, &fec_l2);
 
