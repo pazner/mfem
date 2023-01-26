@@ -150,10 +150,13 @@ void HdivSaddlePointLinearSolver::Setup()
       MFEM_FORALL(i, ess_rt_dofs.Size(), d_R_diag[d_I[i]] = 1.0;);
    }
 
-   std::unique_ptr<HypreParMatrix> R_diag_inv(DiagonalInverse(R_diag, fes_rt));
-   std::unique_ptr<HypreParMatrix> D_Minv_Dt(RAP(R_diag_inv.get(), Dt.get()));
-   std::unique_ptr<HypreParMatrix> L_diag_inv(DiagonalInverse(L_diag, fes_l2));
-   S.reset(ParAdd(D_Minv_Dt.get(), L_diag_inv.get()));
+   // Form the approximate Schur complement
+   {
+      std::unique_ptr<HypreParMatrix> R_diag_inv(DiagonalInverse(R_diag, fes_rt));
+      std::unique_ptr<HypreParMatrix> D_Minv_Dt(RAP(R_diag_inv.get(), Dt.get()));
+      std::unique_ptr<HypreParMatrix> L_diag_inv(DiagonalInverse(L_diag, fes_l2));
+      S.reset(ParAdd(D_Minv_Dt.get(), L_diag_inv.get()));
+   }
 
    // Reassemble the preconditioners
    R_inv.reset(new OperatorJacobiSmoother(mass_rt, ess_rt_dofs));
@@ -161,6 +164,7 @@ void HdivSaddlePointLinearSolver::Setup()
 
    // Set up the block operators
    A_block.reset(new BlockOperator(offsets));
+   // Skip L2 mass term if coefficient is zero
    if (coeff_mode != L2CoefficientMode::ZERO)
    {
       A_block->SetBlock(0, 0, L_inv.get());
@@ -218,7 +222,6 @@ void HdivSaddlePointLinearSolver::EliminateBC(Vector &b) const
    MFEM_FORALL(i, n_ess_dofs,
    {
       const int j = d_I[i];
-      // d_bF[j] = -d_x_bc[j];
       d_bF[j] = -d_w[j];
    });
 
@@ -269,7 +272,5 @@ void HdivSaddlePointLinearSolver::Mult(const Vector &b, Vector &x) const
    xE.SyncAliasMemory(x);
    xF.SyncAliasMemory(x);
 }
-
-void HdivSaddlePointLinearSolver::SetOperator(const Operator &op) { }
 
 } // namespace mfem

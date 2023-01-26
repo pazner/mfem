@@ -104,7 +104,7 @@ public:
    /// Solve the linear system for L2 (scalar) and RT (flux) unknowns.
    void Mult(const Vector &b, Vector &x) const override;
    /// No-op.
-   void SetOperator(const Operator &op) override;
+   void SetOperator(const Operator &op) override { }
    /// Get the number of MINRES iterations.
    int GetNumIterations() const { return minres.GetNumIterations(); }
    /// Eliminates the BCs (called internally, not public interface).
