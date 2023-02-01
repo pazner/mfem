@@ -22,6 +22,8 @@
 #include <cmath>
 #include <cstdlib>
 
+#include "../general/nvtx.hpp"
+
 using namespace std;
 
 namespace mfem
@@ -1732,6 +1734,10 @@ void HypreParMatrix::ResetTranspose() const
 HYPRE_Int HypreParMatrix::Mult(HypreParVector &x, HypreParVector &y,
                                double a, double b) const
 {
+#undef MFEM_NVTX_COLOR
+#define MFEM_NVTX_COLOR Crimson
+   NVTX("SpMV");
+
    x.HypreRead();
    (b == 0.0) ? y.HypreWrite() : y.HypreReadWrite();
    return hypre_ParCSRMatrixMatvec(a, A, x, b, y);
@@ -1739,6 +1745,10 @@ HYPRE_Int HypreParMatrix::Mult(HypreParVector &x, HypreParVector &y,
 
 void HypreParMatrix::Mult(double a, const Vector &x, double b, Vector &y) const
 {
+#undef MFEM_NVTX_COLOR
+#define MFEM_NVTX_COLOR Crimson
+   NVTX("SpMV");
+
    MFEM_ASSERT(x.Size() == Width(), "invalid x.Size() = " << x.Size()
                << ", expected size = " << Width());
    MFEM_ASSERT(y.Size() == Height(), "invalid y.Size() = " << y.Size()
@@ -1797,6 +1807,10 @@ void HypreParMatrix::Mult(double a, const Vector &x, double b, Vector &y) const
 void HypreParMatrix::MultTranspose(double a, const Vector &x,
                                    double b, Vector &y) const
 {
+#undef MFEM_NVTX_COLOR
+#define MFEM_NVTX_COLOR Crimson
+   NVTX("SpMV_T");
+
    MFEM_ASSERT(x.Size() == Height(), "invalid x.Size() = " << x.Size()
                << ", expected size = " << Height());
    MFEM_ASSERT(y.Size() == Width(), "invalid y.Size() = " << y.Size()
@@ -3880,6 +3894,10 @@ void HypreSolver::Setup(const HypreParVector &b, HypreParVector &x) const
 {
    if (setup_called) { return; }
 
+#undef MFEM_NVTX_COLOR
+#define MFEM_NVTX_COLOR Indigo
+   NVTX("AMG Setup");
+
    MFEM_VERIFY(A != NULL, "HypreParMatrix A is missing");
 
    HYPRE_Int err_flag = SetupFcn()(*this, *A, b, x);
@@ -3905,6 +3923,10 @@ void HypreSolver::Setup(const Vector &b, Vector &x) const
 
 void HypreSolver::Mult(const HypreParVector &b, HypreParVector &x) const
 {
+#undef MFEM_NVTX_COLOR
+#define MFEM_NVTX_COLOR MediumSpringGreen
+   NVTX("AMG V-cycle");
+
    HYPRE_Int err_flag;
    if (A == NULL)
    {

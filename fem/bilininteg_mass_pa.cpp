@@ -16,6 +16,9 @@
 #include "ceed/integrators/mass/mass.hpp"
 #include "bilininteg_mass_pa.hpp"
 
+#define MFEM_NVTX_COLOR Crimson
+#include "../general/nvtx.hpp"
+
 using namespace std;
 
 namespace mfem
@@ -612,6 +615,8 @@ static void PAMassApply3D(const int NE,
                           const int d1d = 0,
                           const int q1d = 0)
 {
+   MFEM_NVTX;
+
    MFEM_VERIFY(T_D1D ? T_D1D : d1d <= MAX_D1D, "");
    MFEM_VERIFY(T_Q1D ? T_Q1D : q1d <= MAX_Q1D, "");
 
@@ -637,6 +642,8 @@ static void SmemPAMassApply3D(const int NE,
                               const int d1d = 0,
                               const int q1d = 0)
 {
+   MFEM_NVTX;
+
    MFEM_CONTRACT_VAR(bt_);
    const int D1D = T_D1D ? T_D1D : d1d;
    const int Q1D = T_Q1D ? T_Q1D : q1d;

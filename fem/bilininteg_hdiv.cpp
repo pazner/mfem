@@ -14,6 +14,9 @@
 #include "gridfunc.hpp"
 #include "qspace.hpp"
 
+#define MFEM_NVTX_COLOR DarkGreen
+#include "../general/nvtx.hpp"
+
 using namespace std;
 
 
@@ -612,6 +615,8 @@ void PAHdivMassApply3D(const int D1D,
                        const Vector &x_,
                        Vector &y_)
 {
+   MFEM_NVTX;
+
    MFEM_VERIFY(D1D <= HDIV_MAX_D1D, "Error: D1D > HDIV_MAX_D1D");
    MFEM_VERIFY(Q1D <= HDIV_MAX_Q1D, "Error: Q1D > HDIV_MAX_Q1D");
    constexpr static int VDIM = 3;
@@ -808,6 +813,8 @@ void SmemPAHdivMassApply3D(const int NE,
                            const int d1d = 0,
                            const int q1d = 0)
 {
+   MFEM_NVTX;
+
    MFEM_CONTRACT_VAR(Bot_);
    MFEM_CONTRACT_VAR(Bct_);
 

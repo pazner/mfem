@@ -20,6 +20,8 @@
 #include <cmath>
 #include <set>
 
+#include "../general/nvtx.hpp"
+
 namespace mfem
 {
 
@@ -299,6 +301,10 @@ void OperatorJacobiSmoother::Setup(const Vector &diag)
 
 void OperatorJacobiSmoother::Mult(const Vector &x, Vector &y) const
 {
+#undef MFEM_NVTX_COLOR
+#define MFEM_NVTX_COLOR MediumSpringGreen
+   NVTX("Jacobi");
+
    // For empty MPI ranks, height may be 0:
    // MFEM_VERIFY(Height() > 0, "The diagonal hasn't been computed.");
    MFEM_ASSERT(x.Size() == Width(), "invalid input vector");
@@ -1608,6 +1614,10 @@ void MINRESSolver::SetOperator(const Operator &op)
 
 void MINRESSolver::Mult(const Vector &b, Vector &x) const
 {
+#undef MFEM_NVTX_COLOR
+#define MFEM_NVTX_COLOR DarkGreen
+   NVTX("MINRES");
+
    // Based on the MINRES algorithm on p. 86, Fig. 6.9 in
    // "Iterative Krylov Methods for Large Linear Systems",
    // by Henk A. van der Vorst, 2003.

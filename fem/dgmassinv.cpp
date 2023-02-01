@@ -14,6 +14,9 @@
 #include "dgmassinv_kernels.hpp"
 #include "../general/forall.hpp"
 
+#define MFEM_NVTX_COLOR Crimson
+#include "../general/nvtx.hpp"
+
 namespace mfem
 {
 
@@ -118,6 +121,8 @@ DGMassInverse::~DGMassInverse()
 template<int DIM, int D1D, int Q1D>
 void DGMassInverse::DGMassCGIteration(const Vector &b_, Vector &u_) const
 {
+   NVTX("DG Mass Inverse");
+
    using namespace internal; // host/device kernel functions
 
    const int NE = fes.GetNE();
