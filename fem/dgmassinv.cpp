@@ -14,6 +14,10 @@
 #include "dgmassinv_kernels.hpp"
 #include "../general/forall.hpp"
 
+#ifdef MFEM_USE_CUDA
+#include <cusolverDn.h>
+#endif
+
 #define MFEM_NVTX_COLOR Crimson
 #include "../general/nvtx.hpp"
 
@@ -122,6 +126,15 @@ template<int DIM, int D1D, int Q1D>
 void DGMassInverse::DGMassCGIteration(const Vector &b_, Vector &u_) const
 {
    NVTX("DG Mass Inverse");
+
+   if (D1D == 0 || Q1D == 0)
+   {
+      std::cout << "Fallback!\n"
+                << "d1d = " << m->dofs1D << '\n'
+                << "q1d = " << m->quad1D << '\n'
+                << "dim = " << DIM << '\n';
+      MFEM_ABORT("Hit fallback kernel.");
+   }
 
    using namespace internal; // host/device kernel functions
 
@@ -312,9 +325,293 @@ void DGMassInverse::Mult(const Vector &Mu, Vector &u) const
          case 0x58: return DGMassCGIteration<3,5,8>(Mu, u);
          case 0x66: return DGMassCGIteration<3,6,6>(Mu, u);
          case 0x67: return DGMassCGIteration<3,6,7>(Mu, u);
+         case 0x77: return DGMassCGIteration<3,7,7>(Mu, u);
+         case 0x78: return DGMassCGIteration<3,7,8>(Mu, u);
+         case 0x88: return DGMassCGIteration<3,8,8>(Mu, u);
+         case 0x89: return DGMassCGIteration<3,8,9>(Mu, u);
+         case 0x99: return DGMassCGIteration<3,9,9>(Mu, u);
+         case 0x9A: return DGMassCGIteration<3,9,10>(Mu, u);
          default: return DGMassCGIteration<3>(Mu, u); // Fallback
       }
    }
 }
+
+#ifdef MFEM_USE_CUDA
+class CuSolver
+{
+protected:
+   cusolverDnHandle_t handle = nullptr;
+   CuSolver()
+   {
+      cusolverStatus_t status = cusolverDnCreate(&handle);
+      MFEM_VERIFY(status == CUSOLVER_STATUS_SUCCESS,
+                  "Cannot initialize CuSolver.");
+   }
+   ~CuSolver()
+   {
+      cusolverDnDestroy(handle);
+   }
+   static CuSolver &Instance()
+   {
+      static CuSolver instance;
+      return instance;
+   }
+public:
+   static cusolverDnHandle_t Handle()
+   {
+      return Instance().handle;
+   }
+};
+
+class CuBLAS
+{
+protected:
+   cublasHandle_t handle = nullptr;
+   CuBLAS()
+   {
+      cublasStatus_t status = cublasCreate(&handle);
+      MFEM_VERIFY(status == CUBLAS_STATUS_SUCCESS, "Cannot initialize cuBLAS.");
+   }
+   ~CuBLAS()
+   {
+      cublasDestroy(handle);
+   }
+   static CuBLAS &Instance()
+   {
+      static CuBLAS instance;
+      return instance;
+   }
+public:
+   static cublasHandle_t Handle()
+   {
+      return Instance().handle;
+   }
+
+   static void EnableAtomics()
+   {
+      cublasStatus_t status = cublasSetAtomicsMode(Handle(), CUBLAS_ATOMICS_ALLOWED);
+      MFEM_VERIFY(status == CUBLAS_STATUS_SUCCESS, "cuBLAS error.");
+   }
+
+   static void DisableAtomics()
+   {
+      cublasStatus_t status = cublasSetAtomicsMode(Handle(), CUBLAS_ATOMICS_NOT_ALLOWED);
+      MFEM_VERIFY(status == CUBLAS_STATUS_SUCCESS, "cuBLAS error.");
+   }
+};
+#endif
+
+DGMassInverse_Direct::DGMassInverse_Direct(FiniteElementSpace &fes_,
+                                           BatchSolverMode mode_)
+   : DGMassInverse_Direct(fes_, nullptr, nullptr, mode_) { }
+
+DGMassInverse_Direct::DGMassInverse_Direct(FiniteElementSpace &fes_,
+                                           Coefficient &coeff,
+                                           const IntegrationRule &ir,
+                                           BatchSolverMode mode_)
+   : DGMassInverse_Direct(fes_, &coeff, &ir, mode_) { }
+
+DGMassInverse_Direct::DGMassInverse_Direct(FiniteElementSpace &fes_,
+                                           const IntegrationRule &ir,
+                                           BatchSolverMode mode_)
+   : DGMassInverse_Direct(fes_, nullptr, &ir, mode_) { }
+
+DGMassInverse_Direct::DGMassInverse_Direct(FiniteElementSpace &fes_,
+                                           Coefficient *coeff,
+                                           const IntegrationRule *ir,
+                                           BatchSolverMode mode_)
+   : Solver(fes_.GetTrueVSize()), fes(fes_), mode(mode_)
+{
+   const int ne = fes.GetNE();
+   const int elem_dofs = fes.GetFE(0)->GetDof();
+
+   blocks.SetSize(ne*elem_dofs*elem_dofs);
+
+   if (coeff) { m = new MassIntegrator(*coeff, ir); }
+   else { m = new MassIntegrator(ir); }
+
+   Setup();
+}
+
+void DGMassInverse_Direct::Setup()
+{
+   const int ne = fes.GetNE();
+   const int elem_dofs = fes.GetFE(0)->GetDof();
+   MFEM_CONTRACT_VAR(ne);
+   MFEM_CONTRACT_VAR(elem_dofs);
+
+   m->AssembleEA(fes, blocks, false);
+
+   tensor.UseExternalData(NULL, elem_dofs, elem_dofs, ne);
+   tensor.GetMemory().MakeAlias(blocks.GetMemory(), 0, blocks.Size());
+
+   if ((mode == BatchSolverMode::CUSOLVER || mode == BatchSolverMode::CUBLAS)
+       && !Device::Allows(Backend::CUDA))
+   {
+      MFEM_ABORT("Unsupported mode. Use BatchSolverMode::NATIVE.");
+   }
+
+   if (mode == BatchSolverMode::NATIVE || !Device::Allows(Backend::CUDA))
+   {
+      BatchLUFactor(tensor, ipiv);
+   }
+   else if (mode == BatchSolverMode::CUSOLVER)
+   {
+#ifdef MFEM_USE_CUDA
+      vector_array.SetSize(ne);
+      matrix_array.SetSize(ne);
+      double *ptr_base = blocks.ReadWrite();
+      for (int i = 0; i < ne; ++i)
+      {
+         matrix_array[i] = ptr_base + i*elem_dofs*elem_dofs;
+      }
+      info_array.SetSize(ne);
+
+      cusolverStatus_t status = cusolverDnDpotrfBatched(
+                                   CuSolver::Handle(),
+                                   CUBLAS_FILL_MODE_LOWER,
+                                   elem_dofs,
+                                   matrix_array.ReadWrite(),
+                                   elem_dofs,
+                                   info_array.Write(),
+                                   ne);
+      MFEM_VERIFY(status == CUSOLVER_STATUS_SUCCESS, "");
+#else
+      MFEM_ABORT("CUDA must be enabled.");
+#endif
+   }
+   else if (mode == BatchSolverMode::CUBLAS)
+   {
+#ifdef MFEM_USE_CUDA
+      ipiv.SetSize(ne*elem_dofs);
+      info_array.SetSize(ne);
+
+      Vector tmp(blocks);
+      Array<double*> tmp_array(ne);
+      double *ptr_base = tmp.ReadWrite();
+      for (int i = 0; i < ne; ++i)
+      {
+         tmp_array[i] = ptr_base + i*elem_dofs*elem_dofs;
+      }
+
+      matrix_array.SetSize(ne);
+      ptr_base = blocks.ReadWrite();
+      for (int i = 0; i < ne; ++i)
+      {
+         matrix_array[i] = ptr_base + i*elem_dofs*elem_dofs;
+      }
+
+      cublasStatus_t status = cublasDgetrfBatched(
+                                 CuBLAS::Handle(),
+                                 elem_dofs,
+                                 tmp_array.ReadWrite(),
+                                 elem_dofs,
+                                 ipiv.Write(),
+                                 info_array.Write(),
+                                 ne);
+      MFEM_VERIFY(status == CUBLAS_STATUS_SUCCESS, "");
+
+
+      status = cublasDgetriBatched(
+                  CuBLAS::Handle(),
+                  elem_dofs,
+                  tmp_array.ReadWrite(),
+                  elem_dofs,
+                  ipiv.ReadWrite(),
+                  matrix_array.ReadWrite(),
+                  elem_dofs,
+                  info_array.Write(),
+                  ne);
+      MFEM_VERIFY(status == CUBLAS_STATUS_SUCCESS, "");
+#else
+      MFEM_ABORT("CUDA must be enabled.");
+#endif
+   }
+}
+
+void DGMassInverse_Direct::Mult(const Vector &Mu, Vector &u) const
+{
+   if (mode == BatchSolverMode::CUBLAS)
+   {
+#ifdef MFEM_USE_CUDA
+      const int n = tensor.SizeI();
+      const int nblocks = tensor.SizeK();
+
+      const double alpha = 1.0, beta = 0.0;
+
+      cublasStatus_t status = cublasDgemvStridedBatched(
+         CuBLAS::Handle(),
+         CUBLAS_OP_N,
+         n, n,
+         &alpha,
+         blocks.Read(), n, n*n,
+         Mu.Read(), 1, n,
+         &beta,
+         u.Write(), 1, n,
+         nblocks);
+      // cublasStatus_t status = cublasDgemmStridedBatched(
+      //                            CuBLAS::Handle(),
+      //                            CUBLAS_OP_N, CUBLAS_OP_N,
+      //                            n, 1, n,
+      //                            &alpha,
+      //                            blocks.Read(), n, n*n,
+      //                            Mu.Read(), n, n,
+      //                            &beta,
+      //                            u.Write(), n, n,
+      //                            nblocks);
+#else
+      MFEM_ABORT("CUDA must be enabled.");
+#endif
+   }
+   else
+   {
+      u = Mu;
+      Solve(u);
+   }
+}
+
+void DGMassInverse_Direct::Solve(Vector &u) const
+{
+   if (mode == BatchSolverMode::NATIVE)
+   {
+      BatchLUSolve(tensor, ipiv, u);
+   }
+   else if (mode == BatchSolverMode::CUSOLVER)
+   {
+#ifdef MFEM_USE_CUDA
+      const int n = tensor.SizeI();
+      const int nblocks = tensor.SizeK();
+      double *ptr_base = u.ReadWrite();
+      auto u_ptr = Reshape(vector_array.Write(), nblocks);
+
+      MFEM_FORALL(i, nblocks, u_ptr[i] = ptr_base + i*n; );
+
+      cusolverStatus_t status = cusolverDnDpotrsBatched(
+                                   CuSolver::Handle(),
+                                   CUBLAS_FILL_MODE_LOWER,
+                                   n,
+                                   1,
+                                   matrix_array.ReadWrite(),
+                                   n,
+                                   u_ptr,
+                                   n,
+                                   info_array.Write(),
+                                   nblocks);
+#else
+      MFEM_ABORT("CUDA must be enabled.");
+#endif
+   }
+}
+
+void DGMassInverse_Direct::SetOperator(const Operator &op)
+{
+   MFEM_ABORT("Not supported.");
+}
+
+DGMassInverse_Direct::~DGMassInverse_Direct()
+{
+   delete m;
+}
+
 
 } // namespace mfem

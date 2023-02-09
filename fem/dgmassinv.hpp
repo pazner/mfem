@@ -109,6 +109,81 @@ public:
    void DGMassCGIteration(const Vector &b_, Vector &u_) const;
 };
 
+enum class BatchSolverMode
+{
+   NATIVE,
+   CUSOLVER,
+   CUBLAS
+};
+
+class DGMassInverse_Direct : public Solver
+{
+protected:
+   FiniteElementSpace &fes;
+   const BatchSolverMode mode;
+   Vector blocks;
+   DenseTensor tensor;
+   Array<int> ipiv;
+   class MassIntegrator *m;
+
+   mutable Array<double*> matrix_array;
+   mutable Array<double*> vector_array;
+   mutable Array<int> info_array;
+
+   /// @brief Protected constructor, used internally.
+   ///
+   /// Custom coefficient and integration rule are used in @a coeff and @a ir
+   /// are non-NULL.
+   DGMassInverse_Direct(FiniteElementSpace &fes_, Coefficient *coeff,
+                        const IntegrationRule *ir,
+                        BatchSolverMode mode_ = BatchSolverMode::NATIVE);
+public:
+   /// @brief Construct the DG inverse mass operator for @a fes_.
+   DGMassInverse_Direct(FiniteElementSpace &fes_,
+                        BatchSolverMode mode_ = BatchSolverMode::NATIVE);
+
+   DGMassInverse_Direct(FiniteElementSpace &fes_,
+                        Coefficient &coeff_,
+                        const IntegrationRule &ir_,
+                        BatchSolverMode mode_ = BatchSolverMode::NATIVE);
+
+   DGMassInverse_Direct(FiniteElementSpace &fes_,
+                        const IntegrationRule &ir_,
+                        BatchSolverMode mode_ = BatchSolverMode::NATIVE);
+   // /// @brief Construct the DG inverse mass operator for @a fes_ with
+   // /// Coefficient @a coeff.
+   // ///
+   // /// @sa DGMassInverse(FiniteElementSpace&, int) for information about @a
+   // /// btype.
+   // DGMassInverse(FiniteElementSpace &fes_, Coefficient &coeff);
+   // /// @brief Construct the DG inverse mass operator for @a fes_ with
+   // /// Coefficient @a coeff and IntegrationRule @a ir.
+   // ///
+   // /// @sa DGMassInverse(FiniteElementSpace&, int) for information about @a
+   // /// btype.
+   // DGMassInverse(FiniteElementSpace &fes_, Coefficient &coeff,
+   //               const IntegrationRule &ir);
+   // /// @brief Construct the DG inverse mass operator for @a fes_ with
+   // /// IntegrationRule @a ir.
+   // ///
+   // /// @sa DGMassInverse(FiniteElementSpace&, int) for information about @a
+   // /// btype.
+   // DGMassInverse(FiniteElementSpace &fes_, const IntegrationRule &ir,
+   //               int btype=BasisType::GaussLegendre);
+
+   void Setup();
+
+   /// Solve the system M b = u.
+   void Mult(const Vector &b, Vector &u) const;
+
+   void Solve(Vector &u) const;
+
+   /// Not implemented. Aborts.
+   void SetOperator(const Operator &op);
+
+   ~DGMassInverse_Direct();
+};
+
 } // namespace mfem
 
 #endif
