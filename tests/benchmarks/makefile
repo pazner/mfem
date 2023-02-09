@@ -19,8 +19,8 @@ MFEM_LIB_FILE = mfem_is_not_built
 -include $(CONFIG_MK)
 
 SEQ_TESTS = bench_assembly_levels bench_ceed bench_dg_amr bench_elasticity \
-            bench_tmop bench_vector bench_virtuals
-PAR_TESTS = 
+            bench_tmop bench_vector bench_virtuals bench_dgmassinv
+PAR_TESTS =
 ifeq ($(MFEM_USE_MPI),NO)
    TESTS = $(SEQ_TESTS)
 else
@@ -60,4 +60,3 @@ clean-build:
 
 clean-exec:
 	@rm -f refined.mesh sol.gf
-
