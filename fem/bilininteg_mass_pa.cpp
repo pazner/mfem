@@ -441,6 +441,15 @@ static void PAMassAssembleDiagonal(const int dim, const int D1D,
          case 0x67: return SmemPAMassAssembleDiagonal3D<6,7>(NE,B,D,Y);
          case 0x78: return SmemPAMassAssembleDiagonal3D<7,8>(NE,B,D,Y);
          case 0x89: return SmemPAMassAssembleDiagonal3D<8,9>(NE,B,D,Y);
+         // d = q
+         case 0x22: return SmemPAMassAssembleDiagonal3D<2,2>(NE,B,D,Y);
+         case 0x33: return SmemPAMassAssembleDiagonal3D<3,3>(NE,B,D,Y);
+         case 0x44: return SmemPAMassAssembleDiagonal3D<4,4>(NE,B,D,Y);
+         case 0x55: return SmemPAMassAssembleDiagonal3D<5,5>(NE,B,D,Y);
+         case 0x66: return SmemPAMassAssembleDiagonal3D<6,6>(NE,B,D,Y);
+         case 0x77: return SmemPAMassAssembleDiagonal3D<7,7>(NE,B,D,Y);
+         case 0x88: return SmemPAMassAssembleDiagonal3D<8,8>(NE,B,D,Y);
+         case 0x99: return SmemPAMassAssembleDiagonal3D<9,9>(NE,B,D,Y);
          default:   return PAMassAssembleDiagonal3D(NE,B,D,Y,D1D,Q1D);
       }
    }
