@@ -75,4 +75,33 @@ TEST_CASE("DG Mass Inverse", "[CUDA]")
       X2 -= X1;
       REQUIRE(X2.Normlinf() == MFEM_Approx(0.0, 1e2*tol, 1e2*tol));
    }
+
+   if (fes.GetFE(0)->GetDof() <= 64)
+   {
+      // Test direct solvers when the blocks are relatively small
+      SECTION("Direct")
+      {
+         DGMassInverse_Direct m_inv_direct(fes, BatchSolverMode::NATIVE);
+         m_inv_direct.Mult(B, X3);
+         X3 -= X1;
+         REQUIRE(X3.Normlinf() == MFEM_Approx(0.0, 1e2*tol, 1e2*tol));
+      }
+      if (Device::Allows(Backend::CUDA))
+      {
+         SECTION("Direct CuSolver")
+         {
+            DGMassInverse_Direct m_inv_direct(fes, BatchSolverMode::CUSOLVER);
+            m_inv_direct.Mult(B, X3);
+            X3 -= X1;
+            REQUIRE(X3.Normlinf() == MFEM_Approx(0.0, 1e2*tol, 1e2*tol));
+         }
+         SECTION("Direct CuBLAS")
+         {
+            DGMassInverse_Direct m_inv_direct(fes, BatchSolverMode::CUBLAS);
+            m_inv_direct.Mult(B, X3);
+            X3 -= X1;
+            REQUIRE(X3.Normlinf() == MFEM_Approx(0.0, 1e2*tol, 1e2*tol));
+         }
+      }
+   }
 }

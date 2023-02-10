@@ -130,6 +130,9 @@ protected:
    mutable Array<double*> vector_array;
    mutable Array<int> info_array;
 
+   Vector tmp;
+   mutable Array<double*> tmp_array;
+
    /// @brief Protected constructor, used internally.
    ///
    /// Custom coefficient and integration rule are used in @a coeff and @a ir

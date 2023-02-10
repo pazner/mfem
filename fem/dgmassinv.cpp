@@ -440,7 +440,15 @@ void DGMassInverse_Direct::Setup()
    MFEM_CONTRACT_VAR(ne);
    MFEM_CONTRACT_VAR(elem_dofs);
 
-   m->AssembleEA(fes, blocks, false);
+   if (mode == BatchSolverMode::CUBLAS)
+   {
+      tmp.SetSize(blocks.Size());
+      m->AssembleEA(fes, tmp, false);
+   }
+   else
+   {
+      m->AssembleEA(fes, blocks, false);
+   }
 
    tensor.UseExternalData(NULL, elem_dofs, elem_dofs, ne);
    tensor.GetMemory().MakeAlias(blocks.GetMemory(), 0, blocks.Size());
@@ -461,10 +469,8 @@ void DGMassInverse_Direct::Setup()
       vector_array.SetSize(ne);
       matrix_array.SetSize(ne);
       double *ptr_base = blocks.ReadWrite();
-      for (int i = 0; i < ne; ++i)
-      {
-         matrix_array[i] = ptr_base + i*elem_dofs*elem_dofs;
-      }
+      double **d_matrix_array = matrix_array.Write();
+      MFEM_FORALL(i, ne, d_matrix_array[i] = ptr_base + i*elem_dofs*elem_dofs;);
       info_array.SetSize(ne);
 
       cusolverStatus_t status = cusolverDnDpotrfBatched(
@@ -485,21 +491,15 @@ void DGMassInverse_Direct::Setup()
 #ifdef MFEM_USE_CUDA
       ipiv.SetSize(ne*elem_dofs);
       info_array.SetSize(ne);
-
-      Vector tmp(blocks);
-      Array<double*> tmp_array(ne);
+      tmp_array.SetSize(ne);
       double *ptr_base = tmp.ReadWrite();
-      for (int i = 0; i < ne; ++i)
-      {
-         tmp_array[i] = ptr_base + i*elem_dofs*elem_dofs;
-      }
+      double **d_tmp_array = tmp_array.Write();
+      MFEM_FORALL(i, ne, d_tmp_array[i] = ptr_base + i*elem_dofs*elem_dofs;);
 
       matrix_array.SetSize(ne);
       ptr_base = blocks.ReadWrite();
-      for (int i = 0; i < ne; ++i)
-      {
-         matrix_array[i] = ptr_base + i*elem_dofs*elem_dofs;
-      }
+      double **d_matrix_array = matrix_array.Write();
+      MFEM_FORALL(i, ne, d_matrix_array[i] = ptr_base + i*elem_dofs*elem_dofs;);
 
       cublasStatus_t status = cublasDgetrfBatched(
                                  CuBLAS::Handle(),
@@ -510,7 +510,6 @@ void DGMassInverse_Direct::Setup()
                                  info_array.Write(),
                                  ne);
       MFEM_VERIFY(status == CUBLAS_STATUS_SUCCESS, "");
-
 
       status = cublasDgetriBatched(
                   CuBLAS::Handle(),
