@@ -170,6 +170,9 @@ public:
    const Array<int> &GetOffsets() const { return offsets; }
    /// Returns the internal MINRES solver.
    MINRESSolver &GetMINRES() { return minres; }
+
+   HypreParMatrix &GetApproxSchurComplement() { return *S; }
+   HypreBoomerAMG &GetSchurComplementAMG() { return S_inv; }
 };
 
 } // namespace mfem
