@@ -538,6 +538,7 @@ void DGMassInverse_Direct::Mult(const Vector &Mu, Vector &u) const
 
       const double alpha = 1.0, beta = 0.0;
 
+#if CUBLAS_VERSION > 120000
       cublasStatus_t status = cublasDgemvStridedBatched(
          CuBLAS::Handle(),
          CUBLAS_OP_N,
@@ -548,16 +549,18 @@ void DGMassInverse_Direct::Mult(const Vector &Mu, Vector &u) const
          &beta,
          u.Write(), 1, n,
          nblocks);
-      // cublasStatus_t status = cublasDgemmStridedBatched(
-      //                            CuBLAS::Handle(),
-      //                            CUBLAS_OP_N, CUBLAS_OP_N,
-      //                            n, 1, n,
-      //                            &alpha,
-      //                            blocks.Read(), n, n*n,
-      //                            Mu.Read(), n, n,
-      //                            &beta,
-      //                            u.Write(), n, n,
-      //                            nblocks);
+#else
+      cublasStatus_t status = cublasDgemmStridedBatched(
+                                 CuBLAS::Handle(),
+                                 CUBLAS_OP_N, CUBLAS_OP_N,
+                                 n, 1, n,
+                                 &alpha,
+                                 blocks.Read(), n, n*n,
+                                 Mu.Read(), n, n,
+                                 &beta,
+                                 u.Write(), n, n,
+                                 nblocks);
+#endif
 #else
       MFEM_ABORT("CUDA must be enabled.");
 #endif
