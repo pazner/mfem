@@ -338,6 +338,7 @@ tests/benchmarks/bench_assembly_levels
 tests/benchmarks/bench_dg_amr
 tests/benchmarks/bench_dgmassinv
 tests/benchmarks/bench_elasticity
+tests/benchmarks/bench_saddle_point
 tests/benchmarks/mass_solver
 tests/benchmarks/*.csv
 tests/benchmarks/*.csv.bak
