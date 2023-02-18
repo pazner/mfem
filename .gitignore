@@ -53,6 +53,7 @@ examples/ex2[0-9]
 examples/ex2[0-9]p
 examples/ex3[0-9]
 examples/ex3[0-9]p
+examples/h1_vector_laplacian
 
 examples/refined.mesh
 examples/displaced.mesh
