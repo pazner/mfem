@@ -248,6 +248,7 @@ protected:
    IntegrationRule Nodes;
 #ifndef MFEM_THREAD_SAFE
    mutable DenseMatrix vshape; // Dof x VDim
+   mutable DenseTensor gradvshape_ref; // Dof x VDim x VDim
 #endif
    /// Container for all DofToQuad objects created by the FiniteElement.
    /** Multiple DofToQuad objects may be needed when different quadrature rules
@@ -413,6 +414,23 @@ public:
    /// Equivalent to the CalcVShape() method with the same arguments.
    void CalcPhysVShape(ElementTransformation &Trans, DenseMatrix &shape) const
    { CalcVShape(Trans, shape); }
+
+   /** @brief Evaluate the values of gradients all shape functions of a *vector*
+       finite element in reference space at the given point @a ip. */
+   /** Each matrix of the result DenseTensor @a gradvshape contains the components of
+       one vector shape function. The size (#dof x #dim x #dim) of @a gradvshape
+       must be set in advance. */
+   virtual void CalcGradVShape(const IntegrationPoint &ip,
+                               DenseTensor &gradvshape) const;
+
+   /** @brief Evaluate the values of gradients all shape functions of a *vector*
+       finite element in physical space at the point described by @a Trans. */
+   /** Each matrix of the result DenseTensor @a gradvshape contains the components of
+       one vector shape function. The size (SDim x SDim x #dof) of @a gradvshape must
+       be set in advance, where SDim >= #dim is the physical space dimension as
+       described by @a Trans. */
+   virtual void CalcGradVShape(ElementTransformation &Trans,
+                               DenseTensor &gradvshape) const;
 
    /** @brief Evaluate the divergence of all shape functions of a *vector*
        finite element in reference space at the given point @a ip. */
@@ -807,6 +825,9 @@ protected:
 
    void CalcVShape_RT(ElementTransformation &Trans,
                       DenseMatrix &shape) const;
+
+   void CalcGradVShape_RT(ElementTransformation &Trans,
+                          DenseTensor &gradvshape) const;
 
    void CalcVShape_ND(ElementTransformation &Trans,
                       DenseMatrix &shape) const;
