@@ -426,7 +426,7 @@ public:
    /** @brief Evaluate the values of gradients all shape functions of a *vector*
        finite element in physical space at the point described by @a Trans. */
    /** Each matrix of the result DenseTensor @a gradvshape contains the components of
-       one vector shape function. The size (SDim x SDim x #dof) of @a gradvshape must
+       one vector shape function. The size (#dof x SDim x SDim) of @a gradvshape must
        be set in advance, where SDim >= #dim is the physical space dimension as
        described by @a Trans. */
    virtual void CalcGradVShape(ElementTransformation &Trans,

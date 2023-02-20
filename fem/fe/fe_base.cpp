@@ -944,24 +944,34 @@ void VectorFiniteElement::CalcGradVShape_RT (
    gradvshape_ref.SetSize(dof, dim, dim);
    const DenseMatrix &J = Trans.Jacobian();
    const DenseMatrix &Jinv = Trans.InverseJacobian();
+   const double detJ = Trans.Weight();
    CalcGradVShape(Trans.GetIntPoint(), gradvshape_ref);
 
    // apply Piola transformation
    // gradvshape = (1/det(J)) * J * gradvshape_ref * invJ
    for (int j=0; j < dof; j++)
    {
-      DenseMatrix tempMat(dim, dim);
-      tempMat = 0.0;
-      for (int k=0; k<dim; k++) // tempMat = J * gradvshape_ref
+      DenseMatrix temp_mat(dim, dim);
+      temp_mat = 0.0;
+      for (int k=0; k<dim; k++) // temp_mat = J * gradvshape_ref
          for (int l=0; l<dim; l++)
             for (int s=0; s<dim; s++)
             {
-               tempMat(k,l) += J(k,s)*gradvshape_ref(j,s,l);
+               temp_mat(k,l) += J(k,s)*gradvshape_ref(j,s,l);
             }
 
-      gradvshape(j) = 0.0;
-      Mult(tempMat, Jinv, gradvshape(j));
-      gradvshape(j) *= (1.0 / Trans.Weight());
+      for (int k=0; k<dim; k++)
+         for (int l=0; l<dim; l++)
+         {
+            gradvshape(j,k,l) = 0.0;
+         }
+
+      for (int k=0; k<dim; k++) // gradvshape = temp_mat * J^{-1} / detJ
+         for (int l=0; l<dim; l++)
+            for (int s=0; s<dim; s++)
+            {
+               gradvshape(j,k,l) += temp_mat(k,s)*Jinv(s,l)/detJ;
+            }
    }
 }
 
