@@ -2963,6 +2963,39 @@ void VectorDiffusionIntegrator::AssembleElementVector(
 }
 
 
+void VectorFEDiffusionIntegrator::AssembleElementMatrix(
+   const FiniteElement &el,
+   ElementTransformation &Trans,
+   DenseMatrix &elmat)
+{
+   const int dof = el.GetDof();
+   const int dim = el.GetDim();
+
+   dshape.SetSize(dof, dim, dim);
+   DenseMatrix dshape_matrix(dshape.Data(), dof, dim*dim);
+   elmat.SetSize(dof, dof);
+
+   const IntegrationRule &ir = [&]()
+   {
+      if (IntRule) { return *IntRule; }
+      return DiffusionIntegrator::GetRule(el,el);
+   }();
+
+   elmat = 0.0;
+   for (int i = 0; i < ir.GetNPoints(); i++)
+   {
+      const IntegrationPoint &ip = ir.IntPoint(i);
+      Trans.SetIntPoint(&ip);
+      el.CalcGradVShape(Trans, dshape);
+
+      double w = ip.weight*Trans.Weight();
+      if (Q) { w *= Q->Eval(Trans, ip); }
+
+      AddMult_a_AAt(w, dshape_matrix, elmat);
+   }
+}
+
+
 void ElasticityIntegrator::AssembleElementMatrix(
    const FiniteElement &el, ElementTransformation &Trans, DenseMatrix &elmat)
 {

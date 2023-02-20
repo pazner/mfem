@@ -2888,6 +2888,21 @@ public:
    bool SupportsCeed() const { return DeviceCanUseCeed(); }
 };
 
+/// Integrator for (grad u, grad v) vector FE elements.
+/** The gradients are evaluated elementwise as in DG methods. */
+class VectorFEDiffusionIntegrator: public BilinearFormIntegrator
+{
+   DenseTensor dshape;
+protected:
+   Coefficient *Q = nullptr;
+public:
+   VectorFEDiffusionIntegrator() { }
+   VectorFEDiffusionIntegrator(Coefficient &Q_) : Q(&Q_) { }
+   virtual void AssembleElementMatrix(const FiniteElement &el,
+                                      ElementTransformation &Trans,
+                                      DenseMatrix &elmat);
+};
+
 /** Integrator for the linear elasticity form:
     a(u,v) = (lambda div(u), div(v)) + (2 mu e(u), e(v)),
     where e(v) = (1/2) (grad(v) + grad(v)^T).
