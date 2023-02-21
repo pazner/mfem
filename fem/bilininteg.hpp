@@ -2903,6 +2903,28 @@ public:
                                       DenseMatrix &elmat);
 };
 
+/// Integrator for DG diffusion face terms for vector FE elements.
+/** (See DGDiffusionIntegrator for the definition of the bilinear form.) */
+class VectorFE_DGDiffusionIntegrator: public BilinearFormIntegrator
+{
+   Vector normal, unit_normal;
+   DenseMatrix shape1, shape2;
+   DenseTensor dshape1, dshape2;
+   Array<int> vdofs1, vdofs2;
+protected:
+   const double kappa;
+   Coefficient *Q = nullptr;
+public:
+   VectorFE_DGDiffusionIntegrator(double kappa_)
+      : kappa(kappa_) { }
+   VectorFE_DGDiffusionIntegrator(double kappa_, Coefficient &Q_)
+      : kappa(kappa_), Q(&Q_) { }
+   virtual void AssembleFaceMatrix(const FiniteElement &el1,
+                                   const FiniteElement &el2,
+                                   FaceElementTransformations &Trans,
+                                   DenseMatrix &elmat);
+};
+
 /** Integrator for the linear elasticity form:
     a(u,v) = (lambda div(u), div(v)) + (2 mu e(u), e(v)),
     where e(v) = (1/2) (grad(v) + grad(v)^T).

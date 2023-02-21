@@ -2996,6 +2996,104 @@ void VectorFEDiffusionIntegrator::AssembleElementMatrix(
 }
 
 
+void VectorFE_DGDiffusionIntegrator::AssembleFaceMatrix(
+   const FiniteElement &el1, const FiniteElement &el2,
+   FaceElementTransformations &Trans, DenseMatrix &elmat)
+{
+   const int dim = el1.GetDim();
+   const int ndof1 = el1.GetDof();
+   const int ndof2 = (Trans.Elem2No >= 0) ? el2.GetDof() : 0;
+
+   const int ndofs = ndof1 + ndof2;
+   elmat.SetSize(ndofs, ndofs);
+   elmat = 0.0;
+
+   normal.SetSize(dim);
+   shape1.SetSize(ndof1, dim);
+   dshape1.SetSize(ndof1, dim, dim);
+   if (ndof2 > 0)
+   {
+      shape2.SetSize(ndof2, dim);
+      dshape2.SetSize(ndof1, dim, dim);
+   }
+
+   const IntegrationRule &ir = [&]()
+   {
+      if (IntRule) { return *IntRule; }
+      const int order = 2*el1.GetOrder();
+      return IntRules.Get(Trans.GetGeometryType(), order);
+   }();
+
+   MFEM_VERIFY(dim > 1, "1D not supported.");
+
+   for (int p = 0; p < ir.GetNPoints(); p++)
+   {
+      const IntegrationPoint &ip = ir.IntPoint(p);
+      // Set the integration point in the face and the neighboring elements
+      Trans.SetAllIntPoints(&ip);
+
+      CalcOrtho(Trans.Jacobian(), normal);
+      // nl2 = |normal| = measure(face) / measure(ref. face)
+      const double nl2 = normal.Norml2();
+
+      el1.CalcVShape(*Trans.Elem1, shape1);
+      el1.CalcGradVShape(*Trans.Elem1, dshape1);
+
+      const double factor = (ndof2 > 0) ? 0.5 : 1.0;
+      const double w = factor*ip.weight;
+      const double h_reciprocal = nl2/Trans.Elem1->Weight();
+      const double eta = kappa*ip.weight*nl2*h_reciprocal;
+
+      for (int i = 0; i < ndof1; i++)
+         for (int j = 0; j < ndof1; j++)
+            for (int d1 = 0; d1 < dim; ++d1)
+            {
+               elmat(i, j) += eta*shape1(i,d1)*shape1(j,d1);
+               for (int d2 = 0; d2 < dim; ++d2)
+               {
+                  const double val = w*dshape1(i,d1,d2)*shape1(j,d1)*normal(d2);
+                  elmat(i, j) -= val;
+                  elmat(j, i) -= val;
+               }
+            }
+
+      if (ndof2 > 0)
+      {
+         el2.CalcVShape(*Trans.Elem2, shape2);
+         el2.CalcGradVShape(*Trans.Elem2, dshape2);
+
+         for (int i = 0; i < ndof2; i++)
+            for (int j = 0; j < ndof2; j++)
+               for (int d1 = 0; d1 < dim; ++d1)
+               {
+                  elmat(ndof1 + i, ndof1 + j) += eta*shape2(i,d1)*shape2(j,d1);
+                  for (int d2 = 0; d2 < dim; ++d2)
+                  {
+                     const double val = w*dshape2(i,d1,d2)*shape2(j,d1)*normal(d2);
+                     elmat(ndof1 + i, ndof1 + j) += val;
+                     elmat(ndof1 + j, ndof1 + i) += val;
+                  }
+               }
+         for (int i = 0; i < ndof1; i++)
+            for (int j = 0; j < ndof2; j++)
+               for (int d1 = 0; d1 < dim; ++d1)
+               {
+                  const double jmp = eta*shape1(i,d1)*shape2(j,d1);
+                  elmat(i, ndof1 + j) -= jmp;
+                  elmat(ndof1 + j, i) -= jmp;
+                  for (int d2 = 0; d2 < dim; ++d2)
+                  {
+                     const double val1 = w*dshape1(i,d1,d2)*shape2(j,d1)*normal(d2)
+                                         - w*shape1(i,d1)*dshape2(j,d1,d2)*normal(d2);
+                     elmat(i, ndof1 + j) += val1;
+                     elmat(ndof1 + j, i) += val1;
+                  }
+               }
+      }
+   }
+}
+
+
 void ElasticityIntegrator::AssembleElementMatrix(
    const FiniteElement &el, ElementTransformation &Trans, DenseMatrix &elmat)
 {
