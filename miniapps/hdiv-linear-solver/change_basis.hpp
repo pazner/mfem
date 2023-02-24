@@ -17,7 +17,10 @@
 namespace mfem
 {
 
-/// Change of basis operator between L2 spaces
+/// @brief Change of basis operator between L2 spaces.
+///
+/// This represents the change-of-basis operator from the given L2 space to a
+/// space using the IntegratedGLL basis.
 class ChangeOfBasis_L2 : public Operator
 {
 private:
@@ -27,12 +30,16 @@ private:
    Array<double> Bt_1d; ///< 1D basis transformation matrix traspose.
    bool no_op; ///< If the basis types are the same, the operation is a no-op.
 public:
-   ChangeOfBasis_L2(FiniteElementSpace &fes1, FiniteElementSpace &fes2);
+   ChangeOfBasis_L2(FiniteElementSpace &fes);
    void Mult(const Vector &x, Vector &y) const override;
    void MultTranspose(const Vector &x, Vector &y) const override;
 };
 
-/// Change of basis operator between RT spaces
+/// Change of basis operator between RT spaces.
+///
+/// This represents the change-of-basis operator from the given RT space to a
+/// space using Gauss-Lobatto as the "open" basis and IntegratedGLL as the
+/// "closed" basis.
 class ChangeOfBasis_RT : public Operator
 {
 public:
@@ -65,7 +72,7 @@ private:
    const double *GetOpenMap(Mode mode) const;
    const double *GetClosedMap(Mode mode) const;
 public:
-   ChangeOfBasis_RT(FiniteElementSpace &fes1, FiniteElementSpace &fes2);
+   ChangeOfBasis_RT(FiniteElementSpace &fes);
    void Mult(const Vector &x, Vector &y) const override;
    void MultTranspose(const Vector &x, Vector &y) const override;
    void MultInverse(const Vector &x, Vector &y) const;
@@ -73,6 +80,26 @@ public:
    // limitations
    void MultRT_2D(const Vector &x, Vector &y, Mode mode) const;
    void MultRT_3D(const Vector &x, Vector &y, Mode mode) const;
+};
+
+class ModifiedMassIntegrator : public MassIntegrator
+{
+public:
+   ModifiedMassIntegrator() : MassIntegrator() { }
+   ModifiedMassIntegrator(IntegrationRule &ir) : MassIntegrator(&ir) { }
+   void AssemblePA(const FiniteElementSpace &fes) override;
+};
+
+class ChangeMapType_L2 : public Operator
+{
+   DGMassInverse M_val_inv;
+   BilinearForm M_val_int;
+   bool no_op;
+   mutable Vector z;
+public:
+   ChangeMapType_L2(FiniteElementSpace &fes);
+   void Mult(const Vector &x, Vector &y) const override;
+   void MultTranspose(const Vector &x, Vector &y) const override;
 };
 
 } // namespace mfem

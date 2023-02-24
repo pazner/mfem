@@ -73,7 +73,7 @@ class RadiationDiffusionLinearSolver : public Solver
 {
 private:
    ConstantCoefficient L_coeff, R_coeff;
-   HdivSaddlePointLinearSolver solver;
+   HdivSaddlePointSolver solver;
    double dt_prev;
 public:
    RadiationDiffusionLinearSolver(RadiationDiffusionOperator &rad_diff_);

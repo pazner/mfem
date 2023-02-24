@@ -189,7 +189,7 @@ RadiationDiffusionLinearSolver::RadiationDiffusionLinearSolver(
             L_coeff,
             R_coeff,
             rad_diff.empty,
-            L2CoefficientMode::RECIPROCAL),
+            HdivSaddlePointSolver::Mode::DARCY),
      dt_prev(0.0)
 { }
 
