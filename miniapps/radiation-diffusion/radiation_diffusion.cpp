@@ -19,7 +19,7 @@ RadiationDiffusionOperator::RadiationDiffusionOperator(ParMesh &mesh_,
                                                        int order)
    : mesh(mesh_),
      dim(mesh.Dimension()),
-     fec_l2(order-1, dim, b2, FiniteElement::INTEGRAL),
+     fec_l2(order-1, dim, b2, FiniteElement::VALUE),
      fes_l2(&mesh, &fec_l2),
      fec_rt(order-1, dim, b1, b2),
      fes_rt(&mesh, &fec_rt),

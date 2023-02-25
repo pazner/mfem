@@ -51,9 +51,11 @@ void LinearizedMaterialEnergyOperator::SetLinearizationState(
    const double *d_k = x_q.Read();
    double *d_qf = qf.Write();
 
+   const bool mtype_int = H.fes.GetFE(0)->GetMapType() == FiniteElement::INTEGRAL;
+
    MFEM_FORALL(ii, ne*nq_per_el,
    {
-      const double det_J = d_detJ[ii];
+      const double det_J = mtype_int ? d_detJ[ii] : 1.0;
       const double e_val = d_e[ii]/det_J;
       const double k_val = d_k[ii]/det_J;
       const double e_np1 = e_val + DT*k_val;
@@ -117,9 +119,11 @@ void MaterialEnergyOperator::Mult(const Vector &x, Vector &y) const
 
    const double DT = dt; // Assign to local so we don't access *this from kernel
 
+   const bool mtype_int = fes.GetFE(0)->GetMapType() == FiniteElement::INTEGRAL;
+
    MFEM_FORALL(ii, ne*nq_per_el,
    {
-      const double det_J = d_detJ[ii];
+      const double det_J = mtype_int ? d_detJ[ii] : 1.0;
       const double e_val = d_e[ii]/det_J;
       const double k_val = d_k[ii]/det_J;
 
