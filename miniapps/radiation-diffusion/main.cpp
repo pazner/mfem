@@ -177,7 +177,10 @@ int main(int argc, char *argv[])
                 << "Radiation energy error: " << E_error << "\n\n"
                 << "Relative errors:\n"
                 << "Material energy error:  " << e_error/e_norm << '\n'
-                << "Radiation energy error: " << E_error/E_norm << std::endl;
+                << "Radiation energy error: " << E_error/E_norm << "\n\n"
+                << "Norms:\n"
+                << "Material energy norm:   " << e_norm << '\n'
+                << "Radiation energy norm:  " << E_norm << std::endl;
    }
    return 0;
 }
