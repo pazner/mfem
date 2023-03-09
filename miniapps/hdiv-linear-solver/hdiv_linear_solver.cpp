@@ -129,7 +129,19 @@ HdivSaddlePointSolver::HdivSaddlePointSolver(
    if (mode == Mode::DARCY && !zero_l2_block)
    {
       ParBilinearForm mass_l2_unweighted(&fes_l2);
-      mass_l2_unweighted.AddDomainIntegrator(new MassIntegrator);
+      QuadratureFunction det_J_qf(qs);
+      QuadratureFunctionCoefficient det_J_coeff(det_J_qf);
+      if (convert_map_type)
+      {
+         const auto flags = GeometricFactors::DETERMINANTS;
+         auto *geom = fes_l2.GetMesh()->GetGeometricFactors(qs.GetIntRule(0), flags);
+         det_J_qf = geom->detJ;
+         mass_l2_unweighted.AddDomainIntegrator(new MassIntegrator(det_J_coeff));
+      }
+      else
+      {
+         mass_l2_unweighted.AddDomainIntegrator(new MassIntegrator);
+      }
       mass_l2_unweighted.SetAssemblyLevel(AssemblyLevel::PARTIAL);
       mass_l2_unweighted.Assemble();
       const int n_l2 = fes_l2.GetTrueVSize();
@@ -261,7 +273,7 @@ void HdivSaddlePointSolver::Setup()
 void HdivSaddlePointSolver::EliminateBC(Vector &b) const
 {
    const int n_ess_dofs = ess_rt_dofs.Size();
-   if (n_ess_dofs == 0) { return; }
+   if (fes_l2.GetParMesh()->ReduceInt(n_ess_dofs) == 0) { return; }
 
    const int n_l2 = offsets[1];
    const int n_rt = offsets[2]-offsets[1];
@@ -269,7 +281,7 @@ void HdivSaddlePointSolver::EliminateBC(Vector &b) const
    Vector bF(b, n_l2, n_rt);
 
    // SetBC must be called first
-   MFEM_VERIFY(x_bc.Size() == n_rt, "BCs not set");
+   MFEM_VERIFY(x_bc.Size() == n_rt || n_ess_dofs == 0, "BCs not set");
 
    // Create a vector z that has the BC values at essential DOFs, zero elsewhere
    z.SetSize(n_rt);
@@ -347,6 +359,7 @@ void HdivSaddlePointSolver::Mult(const Vector &b, Vector &x) const
    Vector xE(x, offsets[0], offsets[1]-offsets[0]);
    Vector xF(x, offsets[1], offsets[2]-offsets[1]);
 
+   z.SetSize(bE.Size()); // Size of z may have changed in EliminateBC
    L_inv->Mult(xE_prime, z);
 
    basis_l2.Mult(z, xE);
