@@ -207,7 +207,7 @@ void RadiationDiffusionLinearSolver::Setup(double dt)
    }
 }
 
-BrunnerNowackIteration::BrunnerNowackIteration(
+BrunnerNowakIteration::BrunnerNowakIteration(
    RadiationDiffusionOperator &rad_diff_)
    : IterativeSolver(rad_diff_.GetComm()),
      rad_diff(rad_diff_),
@@ -238,7 +238,7 @@ BrunnerNowackIteration::BrunnerNowackIteration(
    else { print_options.None(); }
 }
 
-void BrunnerNowackIteration::ApplyFullOperator(const Vector &x, Vector &y) const
+void BrunnerNowakIteration::ApplyFullOperator(const Vector &x, Vector &y) const
 {
    using namespace MMS;
 
@@ -287,7 +287,7 @@ void BrunnerNowackIteration::ApplyFullOperator(const Vector &x, Vector &y) const
    y_F.SyncAliasMemory(y);
 }
 
-void BrunnerNowackIteration::Mult(const Vector &b, Vector &x) const
+void BrunnerNowakIteration::Mult(const Vector &b, Vector &x) const
 {
    const int maxit = 100;
    const double tol = 1e-6;
@@ -387,12 +387,12 @@ void BrunnerNowackIteration::Mult(const Vector &b, Vector &x) const
    sync_x();
 }
 
-void BrunnerNowackIteration::Setup(double dt)
+void BrunnerNowakIteration::Setup(double dt)
 {
    N_eE.Setup(dt);
    EF_solver.Setup(dt);
 }
 
-void BrunnerNowackIteration::SetOperator(const Operator &op) { }
+void BrunnerNowakIteration::SetOperator(const Operator &op) { }
 
 } // namespace mfem

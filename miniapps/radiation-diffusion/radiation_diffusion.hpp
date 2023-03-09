@@ -28,7 +28,7 @@ class RadiationDiffusionOperator : public TimeDependentOperator
    friend class NonlinearEnergyOperator;
    friend class EnergyBlockJacobi;
    friend class RadiationDiffusionLinearSolver;
-   friend class BrunnerNowackIteration;
+   friend class BrunnerNowakIteration;
 private:
    static constexpr int b1 = BasisType::GaussLobatto; ///< "closed basis"
    static constexpr int b2 = BasisType::GaussLegendre; ///< "open basis"
@@ -69,8 +69,8 @@ private:
 
    Vector diag_L; ///< Diagonal of the L2 mass matrix.
 
-   /// Brunner-Nowack nonlinear (outer) iterative solver.
-   std::unique_ptr<BrunnerNowackIteration> nonlinear_solver;
+   /// Brunner-Nowak nonlinear (outer) iterative solver.
+   std::unique_ptr<BrunnerNowakIteration> nonlinear_solver;
 
    Array<int> offsets; ///< Offsets for the block vector [e, E, F].
 

@@ -77,7 +77,7 @@ RadiationDiffusionOperator::RadiationDiffusionOperator(ParMesh &mesh_,
                                      E_bdr_coeff));
    b_n_form.UseFastAssembly(true);
 
-   nonlinear_solver.reset(new BrunnerNowackIteration(*this));
+   nonlinear_solver.reset(new BrunnerNowakIteration(*this));
 
    SetTime(0);
 }

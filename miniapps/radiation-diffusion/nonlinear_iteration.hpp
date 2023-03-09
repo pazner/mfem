@@ -83,7 +83,7 @@ public:
    int GetNumIterations() const { return solver.GetNumIterations(); }
 };
 
-class BrunnerNowackIteration : public IterativeSolver
+class BrunnerNowakIteration : public IterativeSolver
 {
 private:
    RadiationDiffusionOperator &rad_diff;
@@ -99,7 +99,7 @@ private:
    void ApplyFullOperator(const Vector &x, Vector &y) const;
 
 public:
-   BrunnerNowackIteration(RadiationDiffusionOperator &rad_diff_);
+   BrunnerNowakIteration(RadiationDiffusionOperator &rad_diff_);
    void Mult(const Vector &b, Vector &x) const override;
    void SetOperator(const Operator &op) override;
    void Setup(const double dt);
