@@ -104,6 +104,7 @@ public:
    void ComputeFlux(Vector &x) const;
    /// Return the device memory class, do work on GPU if possible.
    MemoryClass GetMemoryClass() const override { return Device::GetMemoryClass(); }
+   void ReportTimings() const { nonlinear_solver->ReportTimings(); }
 };
 
 } // namespace mfem

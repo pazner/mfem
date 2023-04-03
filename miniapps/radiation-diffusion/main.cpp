@@ -125,6 +125,17 @@ int main(int argc, char *argv[])
    const double tf = 0.1/MMS::tau;
    int i = 0;
 
+   HYPRE_BigInt n_rt = fes_rt.GlobalTrueVSize();
+   HYPRE_BigInt n_l2 = fes_l2.GlobalTrueVSize();
+
+   if (Mpi::Root())
+   {
+      cout << '\n';
+      cout << "RT DOFs: " << n_rt << '\n';
+      cout << "L2 DOFs: " << n_l2 << '\n';
+      cout << "Final time: " << setprecision(4) << tf << "\n\n";
+   }
+
    auto sync_gridfunctions = [&]()
    {
       u.SyncToBlocks();
@@ -181,6 +192,8 @@ int main(int argc, char *argv[])
                 << "Norms:\n"
                 << "Material energy norm:   " << e_norm << '\n'
                 << "Radiation energy norm:  " << E_norm << std::endl;
+      std::cout << "\n\n";
+      rad_diff.ReportTimings();
    }
    return 0;
 }

@@ -328,12 +328,16 @@ void BrunnerNowakIteration::Mult(const Vector &b, Vector &x) const
 
    const double b_norm = Norm(b);
 
+   ++n_samples;
+
    for (int it = 0; it < maxit; ++it)
    {
+      ++bn_its;
       if (print)
       {
          std::cout << " " << std::setw(3) << it << "    " << std::flush;
       }
+      sw_residual.Start();
       // Compute full residual
       sync_xr();
       ApplyFullOperator(x, r);
@@ -362,21 +366,29 @@ void BrunnerNowakIteration::Mult(const Vector &b, Vector &x) const
       r_E.SyncAliasMemory(r);
       r_eE.SyncMemory(r);
 
+      sw_residual.Stop(); sw_newton.Start();
       // Nonlinear solve for correction to x_e, x_E
       eE_solver.Mult(r_eE, x_eE);
-      if (print )
+      newton_its += eE_solver.GetNumIterations();
+      sw_newton.Stop();
+      if (print)
       {
          std::cout << std::setw(15) << eE_solver.GetNumIterations() << std::flush;
       }
 
+      sw_residual.Start();
       // Compute residual again
       sync_xr();
       ApplyFullOperator(x, r);
       subtract(b, r, r); // Set r = b - J*x
+      sw_residual.Stop();
 
       // Linear solve for correction to x_E, x_F
+      sw_linear.Start();
       r_EF.SyncMemory(r);
       EF_solver.Mult(r_EF, c_EF);
+      lin_its += EF_solver.GetNumIterations();
+      sw_linear.Stop();
       if (print) { std::cout << EF_solver.GetNumIterations() << std::endl; }
 
       // Update x given the correction c_EF
@@ -394,5 +406,28 @@ void BrunnerNowakIteration::Setup(double dt)
 }
 
 void BrunnerNowakIteration::SetOperator(const Operator &op) { }
+
+void BrunnerNowakIteration::ReportTimings() const
+{
+   const double total = sw_linear.RealTime() + sw_newton.RealTime() + sw_residual.RealTime();
+   auto print_time = [total](const std::string &name, StopWatch &sw)
+   {
+      std::cout << std::setw(15) << std::left << (name + ": ")
+                << std::setprecision(4) << std::fixed << std::setw(10) << std::left << sw.RealTime()
+                << std::setprecision(2) << std::fixed << std::setw(6) << std::right << 100*sw.RealTime()/total << "%\n";
+   };
+   std::cout << "Total: "
+             << total
+             << '\n';
+   std::cout << "=======================\n";
+   print_time("Residual", sw_residual);
+   print_time("Newton", sw_newton);
+   print_time("Linear", sw_linear);
+   std::cout << "-----------------------\n";
+   std::cout << "Number of solves:         " << n_samples << '\n';
+   std::cout << "Brunner-Nowak iterations: " << double(bn_its)/n_samples << '\n';
+   std::cout << "Newton iterations:        " << double(newton_its)/n_samples << '\n';
+   std::cout << "Linear iterations:        " << double(lin_its)/n_samples << '\n';
+}
 
 } // namespace mfem

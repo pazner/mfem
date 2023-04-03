@@ -96,6 +96,9 @@ private:
    ConstantCoefficient L_coeff, R_coeff;
    RadiationDiffusionLinearSolver EF_solver;
 
+   mutable StopWatch sw_residual, sw_newton, sw_linear;
+   mutable long n_samples = 0, lin_its = 0, newton_its = 0, bn_its = 0;
+
    void ApplyFullOperator(const Vector &x, Vector &y) const;
 
 public:
@@ -103,6 +106,8 @@ public:
    void Mult(const Vector &b, Vector &x) const override;
    void SetOperator(const Operator &op) override;
    void Setup(const double dt);
+
+   void ReportTimings() const;
 };
 
 } // namespace mfem
