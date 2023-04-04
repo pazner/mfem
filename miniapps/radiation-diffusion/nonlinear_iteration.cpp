@@ -355,6 +355,7 @@ void BrunnerNowakIteration::Mult(const Vector &b, Vector &x) const
       if (r_norm/b_norm < tol)
       {
          if (print) { std::cout << "-\n"; }
+         sw_residual.Stop();
          break;
       }
 
