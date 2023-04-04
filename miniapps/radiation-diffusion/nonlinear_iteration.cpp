@@ -328,6 +328,13 @@ void BrunnerNowakIteration::Mult(const Vector &b, Vector &x) const
 
    const double b_norm = Norm(b);
 
+   if (n_samples == 1) // discard the first time (warm-up)
+   {
+      sw_residual.Clear();
+      sw_newton.Clear();
+      sw_linear.Clear();
+   }
+
    ++n_samples;
 
    for (int it = 0; it < maxit; ++it)
@@ -337,9 +344,9 @@ void BrunnerNowakIteration::Mult(const Vector &b, Vector &x) const
       {
          std::cout << " " << std::setw(3) << it << "    " << std::flush;
       }
+      sync_xr();
       sw_residual.Start();
       // Compute full residual
-      sync_xr();
       ApplyFullOperator(x, r);
       subtract(b, r, r); // Set r = b - J*x
 
