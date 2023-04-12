@@ -48,7 +48,7 @@ jobs:
     strategy:
       matrix:
         os: [windows-latest]
-        target: [opt]
+        target: [dbg, opt]
         mpi: [par]
         build-system: [cmake]
         hypre-target: [int32]
