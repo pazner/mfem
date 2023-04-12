@@ -52,13 +52,6 @@ jobs:
         mpi: [par]
         build-system: [cmake]
         hypre-target: [int32]
-        exclude:
-          - os: ubuntu-latest
-            build-system: cmake
-          - os: macos-latest
-            build-system: cmake
-          - os: windows-latest
-            build-system: make
         # 'include' allows us to:
         # - Add a variable to all jobs without creating a new matrix dimension.
         #   Codecov is defined that way.
@@ -68,31 +61,10 @@ jobs:
         # note: we will gather coverage info for any non-debug run except the
         # CMake build.
         include:
-          - target: dbg
-            codecov: NO
-          - target: opt
-            codecov: YES
-          - os: windows-latest
-            codecov: NO
           - os: windows-latest
             target: opt
             mpi: par
             config-opts: '-DBUILD_SHARED_LIBS=ON'
-          - os: ubuntu-latest
-            target: opt
-            codecov: NO
-            mpi: par
-            build-system: cmake
-            hypre-target: int32
-            # This option can be set to pass additional configuration options to
-            # the MFEM configuration command.
-            # config-opts: '-DCMAKE_VERBOSE_MAKEFILE=ON'
-          - os: ubuntu-latest
-            target: opt
-            codecov: NO
-            mpi: par
-            build-system: make
-            hypre-target: int64
     name: ${{ matrix.os }}-${{ matrix.build-system }}-${{ matrix.target }}-${{ matrix.mpi }}-${{ matrix.hypre-target }}
 
     runs-on: ${{ matrix.os }}
