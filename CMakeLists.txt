@@ -247,6 +247,7 @@ if (MFEM_USE_MPI)
   if (MFEM_MPIEXEC_NP)
     string(REPLACE " " ";" MPIEXEC_NUMPROC_FLAG ${MFEM_MPIEXEC_NP})
   endif()
+  set(MPIEXEC_PREFLAGS -d 3)
   # Parallel MFEM depends on hypre
   find_package(HYPRE REQUIRED)
   set(MFEM_HYPRE_VERSION ${HYPRE_VERSION})
