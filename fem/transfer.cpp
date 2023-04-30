@@ -933,6 +933,8 @@ TransferOperator::TransferOperator(const FiniteElementSpace& lFESpace_,
    }
    else if (lFESpace_.GetMesh()->GetNE() > 0
             && hFESpace_.GetMesh()->GetNE() > 0
+            && lFESpace_.GetMesh()->Dimension() > 1
+            && hFESpace_.GetMesh()->Dimension() > 1
             && lFESpace_.GetVDim() == 1
             && hFESpace_.GetVDim() == 1
             && dynamic_cast<const TensorBasisElement*>(lFESpace_.GetFE(0))
