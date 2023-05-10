@@ -140,11 +140,11 @@ jobs:
     #     export HOMEBREW_NO_INSTALL_CLEANUP=1
     #     brew install openmpi
 
-    # - name: get lcov (MacOS)
-    #   if: matrix.codecov == 'YES' && matrix.os == 'macos-latest'
-    #   run: |
-    #     export HOMEBREW_NO_INSTALL_CLEANUP=1
-    #     brew install lcov
+    - name: get lcov (MacOS)
+      if: matrix.codecov == 'YES' && matrix.os == 'macos-latest'
+      run: |
+        export HOMEBREW_NO_INSTALL_CLEANUP=1
+        brew install lcov
 
     # - name: get MPI (Windows)
     #   if: matrix.mpi == 'par' && matrix.os == 'windows-latest'
