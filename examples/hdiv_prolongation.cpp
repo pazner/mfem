@@ -106,6 +106,8 @@ struct Entity
    }
 };
 
+struct EntityDofs; // Forward declaration
+
 struct ElementEntityDofs
 {
    const Entity &entity;
@@ -222,20 +224,6 @@ struct ElementEntityDofs
       {
          ir_el[i] = entity.Transform(ir[i], local_index_orientation);
       }
-
-      /// Debug, delete me:
-      cout << "Entity " << entity.entity_index << ":\n";
-      cout << "    " << "Dimension: " << entity.dim << '\n';
-      cout << "    " << "DOFs: ";
-      for (int i = 0; i < global_dofs.Size(); ++i)
-      {
-         const int s_d = global_dofs[i];
-         const int d = (s_d >= 0) ? s_d : -1 - s_d;
-         std::cout << d;
-         if (s_d < 0) { std::cout << "*"; }
-         if (i < global_dofs.Size() - 1) { std::cout << ", "; }
-         else { std::cout << std::endl; }
-      }
    }
 
    DenseMatrix FormDofMatrix(const FiniteElementSpace &fes,
@@ -271,30 +259,57 @@ struct ElementEntityDofs
    }
 };
 
-struct PrimaryElementEntity
+// struct PrimaryElementEntity
+// {
+//    const Entity &entity;
+//    const ElementEntityDofs dofs;
+//    const int dof_offset;
+
+//    // For elements, no entity list is required
+//    PrimaryElementEntity(const FiniteElementSpace &fes, Entity &entity_,
+//                         int element_index, int dof_offset_)
+//       : entity(entity_),
+//         dofs(fes, entity, element_index),
+//         dof_offset(dof_offset_)
+//    { }
+// };
+
+struct ConstrainedElementEntity
 {
    const Entity &entity;
-   const ElementEntityDofs dofs;
+   ElementEntityDofs dofs;
+   const ConstrainedElementEntity &primary;
    const int dof_offset;
+   bool is_primary;
 
-   std::vector<std::reference_wrapper<const PrimaryElementEntity>>
-                                                                primary_children;
-   std::vector<std::reference_wrapper<const struct ConstrainedElementEntity>>
-                                                                              constrained_children;
+   std::vector<const ConstrainedElementEntity*> children;
+   DenseMatrix Pi;
+   std::vector<DenseMatrix> Pi_sub;
 
-   // For elements, no entity list is required
-   PrimaryElementEntity(const FiniteElementSpace &fes, Entity &entity_,
-                        int element_index, int dof_offset_)
+   ConstrainedElementEntity(const FiniteElementSpace &fes,
+                            const Entity &entity_,
+                            int element_index,
+                            const std::vector<EntityDofs> &entities,
+                            int dof_offset_)
+      : ConstrainedElementEntity(fes, entity_, *this, element_index, entities,
+                                 dof_offset_)
+   {
+      is_primary = true;
+   }
+
+   ConstrainedElementEntity(const FiniteElementSpace &fes,
+                            const Entity &entity_,
+                            const ConstrainedElementEntity &primary_,
+                            int element_index,
+                            const std::vector<EntityDofs> &entities,
+                            int dof_offset_)
       : entity(entity_),
         dofs(fes, entity, element_index),
+        primary(primary_),
         dof_offset(dof_offset_)
-   { }
-
-   PrimaryElementEntity(const FiniteElementSpace &fes, Entity &entity_,
-                        int element_index, int dof_offset_,
-                        const std::vector<struct EntityDofs> &entities)
-      : PrimaryElementEntity(fes, entity_, element_index, dof_offset_)
    {
+      is_primary = false;
+
       // This is an edge: add the vertices as children
       if (entity.dim == 1)
       {
@@ -305,28 +320,12 @@ struct PrimaryElementEntity
             AddChild(entities[iv]);
          }
       }
-   }
 
-   void AddChild(const struct EntityDofs &child_entity);
+      const IntegrationRule &ir_1 = dofs.ir_el;
+      const IntegrationRule &ir_2 = primary.dofs.ir_el;
 
-   int GetNumChildDofs() const;
-};
-
-struct ConstrainedElementEntity
-{
-   const Entity &entity;
-   const PrimaryElementEntity &primary;
-   ElementEntityDofs dofs;
-   DenseMatrix Pi;
-   std::vector<DenseMatrix> Pi_sub_1, Pi_sub_2;
-
-   ConstrainedElementEntity(const FiniteElementSpace &fes,
-                            const PrimaryElementEntity &primary_, int element_index)
-      : entity(primary_.entity),
-        primary(primary_),
-        dofs(fes, entity, element_index)
-   {
-      DenseMatrix Phi = dofs.FormDofMatrix(fes);
+      // Evaluate the constrained DOFs at the constraining points
+      DenseMatrix Phi = dofs.FormDofMatrix(fes, ir_1);
       const int ndof1 = Phi.Width();
       Phi.Transpose();
       DenseMatrix PhiTPhi(ndof1, ndof1);
@@ -343,59 +342,77 @@ struct ConstrainedElementEntity
          return C;
       };
 
-      const IntegrationRule &ir_el = primary.dofs.ir_el;
-      Pi = compute_constraint_matrix(primary.dofs.FormDofMatrix(fes, ir_el));
+      Pi = compute_constraint_matrix(primary.dofs.FormDofMatrix(fes, ir_2));
 
-      for (const PrimaryElementEntity &primary_child : primary.primary_children)
+      for (int i = 0; i < children.size(); ++i)
       {
-         Pi_sub_1.push_back(compute_constraint_matrix(
-                               primary_child.dofs.FormDofMatrix(fes, ir_el)));
-      }
+         const ConstrainedElementEntity &child_1 = *children[i];
+         const ConstrainedElementEntity &child_2 = *primary.children[i];
 
-      for (const ConstrainedElementEntity &constrained_child :
-           primary.constrained_children)
+         const DenseMatrix &C1 = child_1.Pi;
+         const DenseMatrix &C2 = child_2.Pi;
+
+         const DenseMatrix Psi1 = child_1.dofs.FormDofMatrix(fes, ir_1);
+         const DenseMatrix Psi2 = child_2.dofs.FormDofMatrix(fes, ir_2);
+
+         DenseMatrix Psi(Psi2.Height(), C2.Width());
+         Mult(Psi2, C2, Psi);
+         AddMult_a(-1.0, Psi1, C1, Psi);
+
+         Pi_sub.emplace_back(compute_constraint_matrix(Psi));
+      }
+   }
+
+   void AddChild(const EntityDofs &child_entity);
+
+   int GetNChildrenDofs() const
+   {
+      int ndof_children = 0;
+      for (const ConstrainedElementEntity *child : children)
       {
-         const DenseMatrix &C1 = constrained_child.Pi;
-         DenseMatrix C2 = compute_constraint_matrix(
-                             constrained_child.dofs.FormDofMatrix(fes, ir_el));
-         const int ndof2 = C1.Width();
-         Pi_sub_2.emplace_back(ndof1, ndof2);
-         Mult(C2, C1, Pi_sub_2.back());
+         ndof_children += child->dofs.local_dofs.Size();
       }
-
-      Pi.Print(std::cout, 20);
+      return ndof_children;
    }
 };
 
 struct EntityDofs
 {
    Entity entity;
-   PrimaryElementEntity primary;
+   // First entry of constrained is the primary
    std::vector<ConstrainedElementEntity> constrained;
 
    EntityDofs(const FiniteElementSpace &fes, int entity_index, int entity_dim,
               const Table &el_table, int dof_offset, const std::vector<EntityDofs> &entities)
-      : entity(*fes.GetMesh(), entity_dim, entity_index),
-        primary(fes, entity, GetPrimaryIndex(el_table, entity_index), dof_offset,
-                entities)
+      : entity(*fes.GetMesh(), entity_dim, entity_index)
    {
       Array<int> row;
       el_table.GetRow(entity_index, row);
-      for (int i = 1; i < row.Size(); ++i)
+      constrained.reserve(row.Size());
+      for (int i = 0; i < row.Size(); ++i)
       {
-         constrained.emplace_back(fes, primary, row[i]);
+         if (i == 0)
+         {
+            constrained.emplace_back(fes, entity, row[i], entities, dof_offset);
+         }
+         else
+         {
+            const ConstrainedElementEntity &primary = constrained.front();
+            constrained.emplace_back(fes, entity, primary, row[i], entities, dof_offset);
+         }
       }
    }
 
    // Version of the constructor for elements
    EntityDofs(const FiniteElementSpace &fes, int element_index, int dof_offset)
-      : entity(*fes.GetMesh(), fes.GetMesh()->Dimension(), element_index),
-        primary(fes, entity, element_index, dof_offset)
-   { }
+      : entity(*fes.GetMesh(), fes.GetMesh()->Dimension(), element_index)
+   {
+      MFEM_ABORT("Not supported yet");
+   }
 
    int GetNPrimaryDofs() const
    {
-      return primary.dofs.local_dofs.Size();
+      return constrained.front().dofs.local_dofs.Size();
    }
 
 private:
@@ -446,8 +463,8 @@ public:
 
       for (int iel = 0; iel < mesh.GetNE(); ++iel)
       {
-         entities.emplace_back(fes, iel, n_primary_dofs);
-         n_primary_dofs += entities.back().GetNPrimaryDofs();
+         // entities.emplace_back(fes, iel, n_primary_dofs);
+         // n_primary_dofs += entities.back().GetNPrimaryDofs();
       }
    }
 
@@ -457,33 +474,33 @@ public:
 
       for (const EntityDofs &entity : entities)
       {
-         const PrimaryElementEntity &primary = entity.primary;
-         // Set identity for primary DOFs
-         for (int k = 0; k < primary.dofs.global_dofs.Size(); ++k)
-         {
-            const int j = primary.dof_offset + k;
-            const int s_i = primary.dofs.global_dofs[k];
-            // const int s = (s_i >= 0) ? 1 : -1;
-            const int i = (s_i >= 0) ? s_i : -1 - s_i;
+         // const PrimaryElementEntity &primary = entity.primary;
+         // // Set identity for primary DOFs
+         // for (int k = 0; k < primary.dofs.global_dofs.Size(); ++k)
+         // {
+         //    const int j = primary.dof_offset + k;
+         //    const int s_i = primary.dofs.global_dofs[k];
+         //    // const int s = (s_i >= 0) ? 1 : -1;
+         //    const int i = (s_i >= 0) ? s_i : -1 - s_i;
 
-            // Debug check...
-            // const double val = P_.SearchRow(i, j);
-            // MFEM_ASSERT(val == 0 || val == s, "");
+         //    // Debug check...
+         //    // const double val = P_.SearchRow(i, j);
+         //    // MFEM_ASSERT(val == 0 || val == s, "");
 
-            // P_.Set(i, j, s);
+         //    // P_.Set(i, j, s);
 
-            const double val = P_.SearchRow(i, j);
-            MFEM_ASSERT(val == 0.0 || val == 1.0, "");
+         //    const double val = P_.SearchRow(i, j);
+         //    MFEM_ASSERT(val == 0.0 || val == 1.0, "");
 
-            std::cout << "Setting (" << i << "," << j << ") = " << 1 << '\n';
-            P_.Set(i, j, 1.0);
-         }
+         //    std::cout << "Setting (" << i << "," << j << ") = " << 1 << '\n';
+         //    P_.Set(i, j, 1.0);
+         // }
 
          // Place the interpolation matrices for constrained DOFs
          for (const ConstrainedElementEntity &constrained : entity.constrained)
          {
             auto set_constraint_submatrix = [&](const DenseMatrix &Pi,
-                                                const PrimaryElementEntity &p)
+                                                const ConstrainedElementEntity &p)
             {
                const int ndof1 = Pi.Height();
                const int ndof2 = Pi.Width();
@@ -507,21 +524,18 @@ public:
                      const double val_prev = P_.SearchRow(i, j);
                      MFEM_ASSERT(val_prev == 0.0 || std::abs(val - val_prev) < 1e-10, "");
 
-                     std::cout << "Setting (" << i << "," << j << ") = " << val << '\n';
+                     // std::cout << "Setting (" << i << "," << j << ") = " << val << '\n';
                      P_.Set(i, j, val);
                   }
                }
             };
 
-            set_constraint_submatrix(constrained.Pi, primary);
-            for (int i = 0; i < primary.primary_children.size(); ++i)
+            set_constraint_submatrix(constrained.Pi, constrained.primary);
+
+            for (int i = 0; i < constrained.children.size(); ++i)
             {
-               set_constraint_submatrix(constrained.Pi_sub_1[i], primary.primary_children[i]);
-            }
-            for (int i = 0; i < primary.constrained_children.size(); ++i)
-            {
-               const ConstrainedElementEntity &c = primary.constrained_children[i];
-               set_constraint_submatrix(constrained.Pi_sub_2[i], c.primary);
+               const ConstrainedElementEntity &c = *constrained.children[i];
+               set_constraint_submatrix(constrained.Pi_sub[i], c.primary);
             }
          }
       }
@@ -537,21 +551,15 @@ public:
    }
 };
 
-void PrimaryElementEntity::AddChild(const struct EntityDofs &child_entity)
+void ConstrainedElementEntity::AddChild(const EntityDofs &child_entity)
 {
    const int iel = dofs.element_index;
-   if (child_entity.primary.dofs.element_index == iel)
+   for (const ConstrainedElementEntity &constrained : child_entity.constrained)
    {
-      primary_children.push_back(child_entity.primary);
-   }
-   else
-   {
-      for (const ConstrainedElementEntity &constrained : child_entity.constrained)
+      if (constrained.dofs.element_index == iel)
       {
-         if (constrained.dofs.element_index == iel)
-         {
-            constrained_children.push_back(constrained);
-         }
+         children.push_back(&constrained);
+         return;
       }
    }
 }
@@ -617,7 +625,8 @@ int main(int argc, char *argv[])
 
    OptionsParser args(argc, argv);
    args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use.");
-   args.AddOption(&order, "-o", "--order", "Finite element polynomial degree");
+   // For now, hard-code order = 2. Can generalize to higher-order once implemented.
+   // args.AddOption(&order, "-o", "--order", "Finite element polynomial degree");
    args.AddOption(&ser_ref, "-rs", "--serial-refine",
                   "Number of times to refine the mesh in serial.");
    args.AddOption(&par_ref, "-rp", "--parallel-refine",
@@ -639,15 +648,6 @@ int main(int argc, char *argv[])
    cout << "Number of primary DOFs:" << constraints.n_primary_dofs << '\n';
    cout << "Number of entities:    " << constraints.entities.size() << '\n';
 
-   for (int i = 0; i < constraints.entities.size(); ++i)
-   {
-      cout << "Entity " << i << ":\n";
-
-      cout << "    " << "Dimension: " << constraints.entities[i].entity.dim << '\n';
-      cout << "    " << "Number of DOFs: " <<
-           constraints.entities[i].GetNPrimaryDofs() << '\n';
-   }
-
    SparseMatrix &P = constraints.GetProlongationMatrix();
    {
       std::ofstream f("P.txt");
@@ -658,7 +658,6 @@ int main(int argc, char *argv[])
    HYPRE_BigInt col_starts[2] = {0, P.Width()};
    HypreParMatrix P_par(MPI_COMM_WORLD, P.Height(), P.Width(), row_starts,
                         col_starts, &P);
-   P_par.Print("P.txt");
 
    Array<int> boundary_dofs;
    fes.GetBoundaryTrueDofs(boundary_dofs);
@@ -718,16 +717,16 @@ int main(int argc, char *argv[])
    pv.SetTime(0.0);
    pv.Save();
 
-   X = 0.0;
-   for (int i = 0; i < X.Size(); ++ i)
-   {
-      X[i] = 1.0;
-      P.Mult(X, x);
-      pv.SetCycle(pv.GetCycle() + 1);
-      pv.SetTime(pv.GetTime() + 1);
-      pv.Save();
-      X[i] = 0.0;
-   }
+   // X = 0.0;
+   // for (int i = 0; i < X.Size(); ++ i)
+   // {
+   //    X[i] = 1.0;
+   //    P.Mult(X, x);
+   //    pv.SetCycle(pv.GetCycle() + 1);
+   //    pv.SetTime(pv.GetTime() + 1);
+   //    pv.Save();
+   //    X[i] = 0.0;
+   // }
 
    return 0;
 }

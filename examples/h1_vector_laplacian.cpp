@@ -24,7 +24,7 @@ class RepeatedCoefficient : public VectorCoefficient
    Coefficient &coeff;
 public:
    RepeatedCoefficient(int dim, Coefficient &coeff_)
-   : VectorCoefficient(dim), coeff(coeff_)
+      : VectorCoefficient(dim), coeff(coeff_)
    { }
    void Eval(Vector &V, ElementTransformation &T, const IntegrationPoint &ip)
    {
