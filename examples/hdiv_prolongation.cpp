@@ -208,6 +208,12 @@ int main(int argc, char *argv[])
 
    X = 0.0;
    AdditivePreconditioner as(A, P_par);
+
+   {
+      // Eliminate all BCs (including tangential)
+      unique_ptr<HypreParMatrix>(as.A0->EliminateRowsCols(constraints.bdr_dofs));
+   }
+
    cg.SetPreconditioner(as);
    cg.Mult(B, X);
 
