@@ -258,21 +258,6 @@ struct ElementEntityDofs
    }
 };
 
-// struct PrimaryElementEntity
-// {
-//    const Entity &entity;
-//    const ElementEntityDofs dofs;
-//    const int dof_offset;
-
-//    // For elements, no entity list is required
-//    PrimaryElementEntity(const FiniteElementSpace &fes, Entity &entity_,
-//                         int element_index, int dof_offset_)
-//       : entity(entity_),
-//         dofs(fes, entity, element_index),
-//         dof_offset(dof_offset_)
-//    { }
-// };
-
 struct ConstrainedElementEntity
 {
    const Entity &entity;
@@ -428,9 +413,12 @@ class RT_ContinuityConstraints
 {
 public: // temporary
    std::vector<EntityDofs> entities;
+   Array<int> dof2entity;
+   Array<int> bdr_dofs;
    int n_primary_dofs;
    FiniteElementSpace &fes;
    SparseMatrix P;
+   SparseMatrix R;
 public:
    RT_ContinuityConstraints(FiniteElementSpace &fes_) : fes(fes_)
    {
@@ -460,11 +448,51 @@ public:
          n_primary_dofs += entities.back().GetNPrimaryDofs();
       }
 
-      for (int iel = 0; iel < mesh.GetNE(); ++iel)
+      dof2entity.SetSize(n_primary_dofs);
+      for (int i = 0; i < entities.size(); ++i)
       {
-         // entities.emplace_back(fes, iel, n_primary_dofs);
-         // n_primary_dofs += entities.back().GetNPrimaryDofs();
+         const ConstrainedElementEntity &p = entities[i].constrained[0];
+         for (int j = 0; j < p.dofs.local_dofs.Size(); ++j)
+         {
+            dof2entity[p.dof_offset + j] = i;
+         }
       }
+
+      // for (int iel = 0; iel < mesh.GetNE(); ++iel)
+      // {
+      // entities.emplace_back(fes, iel, n_primary_dofs);
+      // n_primary_dofs += entities.back().GetNPrimaryDofs();
+      // }
+
+      std::set<int> bdr_dof_vec;
+      auto add_bdr_dofs = [&](const ConstrainedElementEntity &p)
+      {
+         const int ndof = p.dofs.local_dofs.Size();
+         for (int i = 0; i < ndof; ++i)
+         {
+            bdr_dof_vec.emplace(p.dof_offset + i);
+         }
+      };
+
+      for (int ibe = 0; ibe < mesh.GetNBE(); ++ibe)
+      {
+         Array<int> bv, be, orientations;
+         mesh.GetBdrElementVertices(ibe, bv);
+         for (const int iv : bv)
+         {
+            add_bdr_dofs(entities[iv].constrained[0]);
+         }
+
+         const int offset = mesh.GetNV();
+         mesh.GetBdrElementEdges(ibe, be, orientations);
+         for (const int ie : be)
+         {
+            add_bdr_dofs(entities[offset + ie].constrained[0]);
+         }
+      }
+
+      bdr_dofs.SetSize(bdr_dof_vec.size());
+      std::copy(bdr_dof_vec.begin(), bdr_dof_vec.end(), bdr_dofs.begin());
    }
 
    void FormProlongationMatrix()
@@ -473,28 +501,6 @@ public:
 
       for (const EntityDofs &entity : entities)
       {
-         // const PrimaryElementEntity &primary = entity.primary;
-         // // Set identity for primary DOFs
-         // for (int k = 0; k < primary.dofs.global_dofs.Size(); ++k)
-         // {
-         //    const int j = primary.dof_offset + k;
-         //    const int s_i = primary.dofs.global_dofs[k];
-         //    // const int s = (s_i >= 0) ? 1 : -1;
-         //    const int i = (s_i >= 0) ? s_i : -1 - s_i;
-
-         //    // Debug check...
-         //    // const double val = P_.SearchRow(i, j);
-         //    // MFEM_ASSERT(val == 0 || val == s, "");
-
-         //    // P_.Set(i, j, s);
-
-         //    const double val = P_.SearchRow(i, j);
-         //    MFEM_ASSERT(val == 0.0 || val == 1.0, "");
-
-         //    std::cout << "Setting (" << i << "," << j << ") = " << 1 << '\n';
-         //    P_.Set(i, j, 1.0);
-         // }
-
          // Place the interpolation matrices for constrained DOFs
          for (const ConstrainedElementEntity &constrained : entity.constrained)
          {
