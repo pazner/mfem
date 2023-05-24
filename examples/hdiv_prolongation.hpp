@@ -543,10 +543,41 @@ public:
       P.Swap(P_);
    }
 
+   void FormRestrictionMatrix()
+   {
+      SparseMatrix R_(n_primary_dofs, fes.GetTrueVSize());
+
+      for (const EntityDofs &entity : entities)
+      {
+         const ConstrainedElementEntity &primary = entity.constrained[0];
+
+         const int ndof = primary.dofs.local_dofs.Size();
+         const int offset = primary.dof_offset;
+
+         for (int idx = 0; idx < ndof; ++idx)
+         {
+            const int i = offset + idx;
+            const int j_s = primary.dofs.global_dofs[idx];
+            const int j = (j_s >= 0) ? j_s : -1 - j_s;
+
+            R_.Set(i, j, 1.0);
+         }
+      }
+
+      R_.Finalize();
+      R.Swap(R_);
+   }
+
    SparseMatrix &GetProlongationMatrix()
    {
       if (P.Empty()) { FormProlongationMatrix(); }
       return P;
+   }
+
+   SparseMatrix &GetRestrictionMatrix()
+   {
+      if (R.Empty()) { FormRestrictionMatrix(); }
+      return R;
    }
 };
 
