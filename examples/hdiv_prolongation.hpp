@@ -2,6 +2,7 @@
 #define HDIV_PROLONGATION_HPP
 
 #include "mfem.hpp"
+#include <set>
 
 namespace mfem
 {
@@ -83,18 +84,13 @@ struct Entity
       {
          IntegrationPoint ipt;
          ipt.Init(0);
-         const double x1 = (io.orientation > 0) ? ip.x : 1.0 - ip.x;
-         const double x2 = (io.index == 0 || io.index == 3) ? 0.0 : 1.0;
-         if (io.index == 0 || io.index == 2)
-         {
-            ipt.x = x1;
-            ipt.y = x2;
-         }
-         else
-         {
-            ipt.x = x2;
-            ipt.y = x1;
-         }
+         const double t = (io.orientation > 0) ? ip.x : 1.0 - ip.x;
+         // const double x2 = (io.index == 0 || io.index == 3) ? 0.0 : 1.0;
+         if (io.index == 0) { ipt.x = t; ipt.y = 0; }
+         else if (io.index == 1) { ipt.x = 1; ipt.y = t; }
+         else if (io.index == 2) { ipt.x = 1 - t; ipt.y = 1; }
+         else if (io.index == 3) { ipt.x = 0; ipt.y = 1 - t; }
+         else { MFEM_ABORT(""); }
          return ipt;
       }
       else // dim == 2
@@ -193,8 +189,33 @@ struct ElementEntityDofs
       else if (entity.dim == 2)
       {
          // Exclude edges --- only include interior element DOFs
-         // local_dofs.SetSize(2*(p-1)*(p-2));
-         if (p > 2) { MFEM_ABORT("Not implemented."); }
+         local_dofs.SetSize(2*(p-1)*(p-2));
+         local_dofs = -1.0;
+
+         int idx = 0;
+
+         // x-parallel vectors
+         // Skip first and last
+         for (int iy = 1; iy < p - 1; ++iy)
+         {
+            for (int ix = 1; ix < p; ++ix)
+            {
+               local_dofs[idx] = ix + iy*(p+1);
+               ++idx;
+            }
+         }
+
+         const int offset = p*(p+1);
+         // y-parallel vectors
+         // Skip first and last
+         for (int iy = 1; iy < p; ++iy)
+         {
+            for (int ix = 1; ix < p - 1; ++ix)
+            {
+               local_dofs[idx] = offset + ix + iy*p;
+               ++idx;
+            }
+         }
       }
 
       auto set_global_dofs = [&](Array<int> &local, Array<int> &global)
@@ -269,6 +290,19 @@ struct ConstrainedElementEntity
    std::vector<const ConstrainedElementEntity*> children;
    DenseMatrix Pi;
    std::vector<DenseMatrix> Pi_sub;
+
+   ConstrainedElementEntity(const FiniteElementSpace &fes,
+                            const Entity &entity_,
+                            int element_index,
+                            int dof_offset_)
+      : entity(entity_),
+        dofs(fes, entity, element_index),
+        primary(*this),
+        dof_offset(dof_offset_),
+        is_primary(true)
+   {
+
+   }
 
    ConstrainedElementEntity(const FiniteElementSpace &fes,
                             const Entity &entity_,
@@ -388,15 +422,32 @@ struct EntityDofs
    }
 
    // Version of the constructor for elements
-   EntityDofs(const FiniteElementSpace &fes, int element_index, int dof_offset)
+   EntityDofs(const FiniteElementSpace &fes, int element_index, int dof_offset,
+              const std::vector<EntityDofs> &entities)
       : entity(*fes.GetMesh(), fes.GetMesh()->Dimension(), element_index)
    {
-      MFEM_ABORT("Not supported yet");
+      constrained.emplace_back(fes, entity, element_index, entities, dof_offset);
    }
 
    int GetNPrimaryDofs() const
    {
       return constrained.front().dofs.local_dofs.Size();
+   }
+
+   std::set<int> GetGlobalDofSet() const
+   {
+      std::set<int> global_dof_set;
+      for (const ConstrainedElementEntity &c : constrained)
+      {
+         const Array<int> &dofs = c.dofs.global_dofs;
+         for (const int d_s : dofs)
+         {
+            const int d_i = (d_s >= 0) ? d_s : -1 - d_s;
+            global_dof_set.insert(d_i);
+         }
+         // global_dof_set.insert(dofs.begin(), dofs.end());
+      }
+      return global_dof_set;
    }
 
 private:
@@ -417,8 +468,8 @@ public: // temporary
    Array<int> bdr_dofs;
    int n_primary_dofs;
    FiniteElementSpace &fes;
-   SparseMatrix P;
-   SparseMatrix R;
+   mutable SparseMatrix P;
+   mutable SparseMatrix R;
 public:
    RT_ContinuityConstraints(FiniteElementSpace &fes_) : fes(fes_)
    {
@@ -458,11 +509,12 @@ public:
          }
       }
 
-      // for (int iel = 0; iel < mesh.GetNE(); ++iel)
-      // {
-      // entities.emplace_back(fes, iel, n_primary_dofs);
-      // n_primary_dofs += entities.back().GetNPrimaryDofs();
-      // }
+      for (int iel = 0; iel < mesh.GetNE(); ++iel)
+      {
+         // entities.emplace_back(fes, iel, n_primary_dofs);
+         entities.emplace_back(fes, iel, n_primary_dofs, entities);
+         n_primary_dofs += entities.back().GetNPrimaryDofs();
+      }
 
       std::set<int> bdr_dof_vec;
       auto add_bdr_dofs = [&](const ConstrainedElementEntity &p)
@@ -495,7 +547,7 @@ public:
       std::copy(bdr_dof_vec.begin(), bdr_dof_vec.end(), bdr_dofs.begin());
    }
 
-   void FormProlongationMatrix()
+   void FormProlongationMatrix() const
    {
       SparseMatrix P_(fes.GetTrueVSize(), n_primary_dofs);
 
@@ -549,7 +601,7 @@ public:
       P.Swap(P_);
    }
 
-   void FormRestrictionMatrix()
+   void FormRestrictionMatrix() const
    {
       SparseMatrix R_(n_primary_dofs, fes.GetTrueVSize());
 
@@ -574,13 +626,13 @@ public:
       R.Swap(R_);
    }
 
-   SparseMatrix &GetProlongationMatrix()
+   SparseMatrix &GetProlongationMatrix() const
    {
       if (P.Empty()) { FormProlongationMatrix(); }
       return P;
    }
 
-   SparseMatrix &GetRestrictionMatrix()
+   SparseMatrix &GetRestrictionMatrix() const
    {
       if (R.Empty()) { FormRestrictionMatrix(); }
       return R;
