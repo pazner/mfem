@@ -7,6 +7,70 @@
 namespace mfem
 {
 
+std::vector<int> CartesianSubset(
+   const std::vector<int> &sizes,
+   const std::vector<std::pair<int,int>> &ranges,
+   const int offset = 0)
+{
+   // Number of dimensions
+   const int ndim = sizes.size();
+
+   auto decode_index = [](const int i_s, const int n)
+   {
+      return (i_s >= 0) ? i_s : n + i_s + 1;
+   };
+
+   // Compute size of the requested subset (product of sizes in each dimension)
+   std::vector<int> sub_sizes(ndim);
+   for (int d = 0; d < ndim; ++d)
+   {
+      const int i1 = decode_index(ranges[d].first, sizes[d]);
+      const int i2 = decode_index(ranges[d].second, sizes[d]);
+      const int sz = i2 - i1;
+      sub_sizes[d] = sz;
+   }
+   const int subset_size = std::accumulate(
+                              sub_sizes.begin(), sub_sizes.end(), 1, std::multiplies<int>());
+
+   std::vector<int> subset(subset_size, offset);
+   for (int i = 0; i < subset_size; ++i)
+   {
+      // Convert from linear (subset) index into Cartesian index
+      std::vector<int> idx(ndim);
+      int j = i;
+      for (int d = 0; d < ndim; ++d)
+      {
+         idx[d] = decode_index(ranges[d].first, sizes[d]) + (j % sub_sizes[d]);
+         j /= sub_sizes[d];
+      }
+      // Convert from Cartesian index into linear (superset) index
+      for (int d = 0; d < ndim; ++d)
+      {
+         subset[i] += idx[d] * (d == 0 ? 1 : sizes[d-1]);
+      }
+   }
+   return subset;
+}
+
+std::vector<int> RT_CartesianSubset(
+   const int p,
+   const int dim,
+   const std::vector<std::pair<int,int>> &ranges)
+{
+   std::vector<int> dofs;
+
+   for (int d = 0; d < dim; ++d)
+   {
+      std::vector<int> sizes(dim, p);
+      sizes[d] += 1;
+
+      const int offset = d*pow(p, dim-1)*(p+1);
+      std::vector<int> dofs_d = CartesianSubset(sizes, ranges, offset);
+      dofs.insert(dofs.end(), dofs_d.begin(), dofs_d.end());
+   }
+   return dofs;
+}
+
 struct LocalIndexOrientation
 {
    const int index, orientation;
@@ -185,6 +249,39 @@ struct ElementEntityDofs
             // (iy + 1) below since skipping the first DOF (vertex)
             local_dofs[nx + iy] = ndof_per_dim + offset_y + (iy+1)*stride_y;
          }
+
+         // std::vector<int> sizes_x = {p+1, p};
+         // std::vector<int> sizes_y = {p, p+1};
+         std::vector<std::pair<int,int>> ranges;
+
+         std::pair<int,int> L = {0, 1};
+         std::pair<int,int> R = {-2, -1};
+         std::pair<int,int> I = {1, -2};
+
+         if (loc == 0) { ranges = {I, L}; }
+         else if (loc == 1) { ranges = {R, I}; }
+         else if (loc == 2) { ranges = {I, R}; }
+         else if (loc == 3) { ranges = {L, I}; }
+
+         auto dofs = RT_CartesianSubset(p, dim, ranges);
+
+         // auto dofs_x = CartesianSubset(sizes_x, ranges);
+         // auto dofs_y = CartesianSubset(sizes_y, ranges, p*(p+1));
+         // dofs_x.insert(dofs_x.end(), dofs_y.begin(), dofs_y.end());
+
+         // std::cout << "loc = " << loc << '\n';
+         // for (int i = 0; i < dofs.size(); ++i)
+         // {
+         //    std::cout << dofs[i];
+         //    if (i < dofs.size() - 1) { std::cout << ", "; }
+         //    else { std::cout << '\n'; }
+         // }
+         // for (int i = 0; i < local_dofs.Size(); ++i)
+         // {
+         //    std::cout << local_dofs[i];
+         //    if (i < local_dofs.Size() - 1) { std::cout << ", "; }
+         //    else { std::cout << "\n\n"; }
+         // }
       }
       else if (entity.dim == 2)
       {
@@ -216,6 +313,29 @@ struct ElementEntityDofs
                ++idx;
             }
          }
+
+         std::vector<int> sizes_x = {p+1, p};
+         std::vector<int> sizes_y = {p, p+1};
+         std::vector<std::pair<int,int>> ranges_x = {{1, -2}, {1, -2}};
+         std::vector<std::pair<int,int>> ranges_y = {{1, -2}, {1, -2}};
+         auto dofs_x = CartesianSubset(sizes_x, ranges_x);
+         auto dofs_y = CartesianSubset(sizes_y, ranges_y, p*(p+1));
+
+         dofs_x.insert(dofs_x.end(), dofs_y.begin(), dofs_y.end());
+
+         // std::cout << "element: \n";
+         // for (int i = 0; i < dofs_x.size(); ++i)
+         // {
+         //    std::cout << dofs_x[i];
+         //    if (i < dofs_x.size() - 1) { std::cout << ", "; }
+         //    else { std::cout << '\n'; }
+         // }
+         // for (int i = 0; i < local_dofs.Size(); ++i)
+         // {
+         //    std::cout << local_dofs[i];
+         //    if (i < local_dofs.Size() - 1) { std::cout << ", "; }
+         //    else { std::cout << "\n\n"; }
+         // }
       }
 
       auto set_global_dofs = [&](Array<int> &local, Array<int> &global)

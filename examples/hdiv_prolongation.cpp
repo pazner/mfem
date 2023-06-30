@@ -101,16 +101,18 @@ int main(int argc, char *argv[])
    int order = 2;
    int ser_ref = 0;
    int par_ref = 0;
+   double kappa = 20.0;
 
    OptionsParser args(argc, argv);
    args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use.");
    // For now, hard-code order = 2. Can generalize to higher-order once implemented.
-   // args.AddOption(&order, "-o", "--order", "Finite element polynomial degree");
+   args.AddOption(&order, "-o", "--order", "Finite element polynomial degree");
    args.AddOption(&ser_ref, "-rs", "--serial-refine",
                   "Number of times to refine the mesh in serial.");
    args.AddOption(&par_ref, "-rp", "--parallel-refine",
                   "Number of times to refine the mesh in parallel.");
    args.AddOption(&par_ref, "-vis", "--visualize", "Vector to visualize.");
+   args.AddOption(&kappa, "-k", "--kappa", "IP-DG penalty parameter.");
    args.ParseCheck();
 
    ParMesh mesh = LoadParMesh(mesh_file, ser_ref, par_ref);
@@ -129,6 +131,10 @@ int main(int argc, char *argv[])
    cout << "Number of entities:    " << constraints.entities.size() << '\n';
 
    SparseMatrix &P = constraints.GetProlongationMatrix();
+   {
+      std::ofstream f("P.txt");
+      P.PrintMatlab(f);
+   }
 
    std::string vis_vec_str(vis_vector);
    if (!vis_vec_str.empty())
@@ -152,9 +158,10 @@ int main(int argc, char *argv[])
       return 0;
    }
 
+   SparseMatrix &R = constraints.GetRestrictionMatrix();
    {
-      std::ofstream f("P.txt");
-      P.PrintMatlab(f);
+      std::ofstream f("R.txt");
+      R.PrintMatlab(f);
    }
 
    HYPRE_BigInt row_starts[2] = {0, P.Height()};
@@ -163,7 +170,7 @@ int main(int argc, char *argv[])
                         col_starts, &P);
 
    Array<int> boundary_dofs;
-   fes.GetBoundaryTrueDofs(boundary_dofs);
+   // fes.GetBoundaryTrueDofs(boundary_dofs);
 
    FunctionCoefficient scalar_f_coeff(f), scalar_u_coeff(u);
    RepeatedCoefficient f_coeff(dim, scalar_f_coeff);
@@ -181,8 +188,8 @@ int main(int argc, char *argv[])
 
    ParBilinearForm a(&fes);
    a.AddDomainIntegrator(new VectorFEDiffusionIntegrator);
-   a.AddInteriorFaceIntegrator(new VectorFE_DGDiffusionIntegrator(20.0));
-   a.AddBdrFaceIntegrator(new VectorFE_DGDiffusionIntegrator(20.0));
+   a.AddInteriorFaceIntegrator(new VectorFE_DGDiffusionIntegrator(kappa));
+   a.AddBdrFaceIntegrator(new VectorFE_DGDiffusionIntegrator(kappa));
    a.Assemble();
 
    // 10. Form the linear system A X = B. This includes eliminating boundary
@@ -195,6 +202,7 @@ int main(int argc, char *argv[])
    B.Randomize(1);
 
    HypreBoomerAMG amg(A);
+   amg.SetPrintLevel(0);
 
    CGSolver cg(MPI_COMM_WORLD);
    cg.SetRelTol(1e-12);
@@ -203,10 +211,10 @@ int main(int argc, char *argv[])
    cg.SetPreconditioner(amg);
    cg.SetOperator(A);
 
+   std::cout << "\n=== AMG ===\n";
    X = 0.0;
    cg.Mult(B, X);
 
-   X = 0.0;
    AdditivePreconditioner as(A, P_par);
 
    {
@@ -214,49 +222,83 @@ int main(int argc, char *argv[])
       unique_ptr<HypreParMatrix>(as.A0->EliminateRowsCols(constraints.bdr_dofs));
    }
 
+   std::cout << "\n=== Subspace Correction ===\n";
    cg.SetPreconditioner(as);
+   X = 0.0;
    cg.Mult(B, X);
 
 
+   Vector B0(as.A0->Height());
+   Vector X0(as.A0->Height());
+   B0.Randomize(1);
+
+   cg.SetPreconditioner(amg);
+   cg.SetOperator(*as.A0);
+   std::cout << "\n=== H1 intersect RT ===\n";
+   X0 = 0.0;
+   cg.Mult(B0, X0);
+
    // std::unique_ptr<HypreParMatrix> A0(RAP(&A, &P_par));
    // A0->Print("A0.txt");
+   Vector ones(dim);
+   ones = 1.0;
+   VectorConstantCoefficient ones_coeff(ones);
 
-   // HypreBoomerAMG amg(*A0);
-   // CGSolver cg(MPI_COMM_WORLD);
-   // cg.SetRelTol(1e-12);
-   // cg.SetMaxIter(2000);
-   // cg.SetPrintLevel(1);
-   // cg.SetPreconditioner(amg);
-   // cg.SetOperator(*A0);
+   ParGridFunction ones_gf(&fes);
+   ones_gf.ProjectCoefficient(ones_coeff);
 
-   // Vector B(P.Width());
+   Vector diag(constraints.n_primary_dofs);
+   constraints.GetRestrictionMatrix().Mult(ones_gf, diag);
+   // for (int i = 0; i < diag.Size(); ++i) { diag[i] = 1.0/diag[i]; }
+   SparseMatrix D_diag(diag);
+   HypreParMatrix D(MPI_COMM_WORLD, constraints.n_primary_dofs, col_starts,
+                    &D_diag);
+   unique_ptr<HypreParMatrix> DtAD(RAP(as.A0.get(), &D));
+
+   DtAD->Print("DtAD");
+
+   cg.SetPreconditioner(amg);
+   cg.SetOperator(*DtAD);
+   // cg.SetOperator(*as.A0);
+
+   B0.SetSize(DtAD->Height());
+   X0.SetSize(DtAD->Height());
+
+   B0.Randomize(1);
+   std::cout << "\n=== Rescaled H1 intersect RT ===\n";
+   X0 = 0.0;
+   cg.Mult(B0, X0);
    // P.MultTranspose(b, B);
 
    // Vector X(P.Width());
    // X = 0.0;
    // cg.Mult(B, X);
 
-   // P.Mult(X, x);
-
+#if 1
    ParaViewDataCollection pv("RTProlongation", &mesh);
    pv.SetPrefixPath("ParaView");
    pv.SetHighOrderOutput(true);
+   // pv.SetHighOrderOutput(false);
    pv.SetLevelsOfDetail(order + 1);
    pv.RegisterField("u", &x);
    pv.SetCycle(0);
    pv.SetTime(0.0);
-   pv.Save();
+   // pv.Save();
 
-   // X = 0.0;
-   // for (int i = 0; i < X.Size(); ++ i)
-   // {
-   //    X[i] = 1.0;
-   //    P.Mult(X, x);
-   //    pv.SetCycle(pv.GetCycle() + 1);
-   //    pv.SetTime(pv.GetTime() + 1);
-   //    pv.Save();
-   //    X[i] = 0.0;
-   // }
+   X.SetSize(as.A0->Height());
+   X = 0.0;
+   Vector Y(X.Size());
+   for (int i = 0; i < X.Size(); ++ i)
+   {
+      X[i] = 1.0;
+      D.Mult(X, Y);
+      P.Mult(Y, x);
+      pv.Save();
+      pv.SetCycle(pv.GetCycle() + 1);
+      pv.SetTime(pv.GetTime() + 1);
+      X[i] = 0.0;
+   }
+#endif
 
    return 0;
 }

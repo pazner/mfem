@@ -59,7 +59,7 @@ struct PatchSmoother : Solver
                      const int iel2 = c.dofs.element_index;
                      if (patch_el_set.find(iel2) == patch_el_set.end())
                      {
-                        bdr_dof = true;
+                        // bdr_dof = true;
                         break;
                      }
                   }
@@ -107,7 +107,8 @@ struct PatchSmoother : Solver
             x.AddElementVector(dofs, z2);
          }
       }
-      x *= 1.0/4.0;
+      // x *= 1.0/4.0;
+      x *= 1.0/10.0;
 
       for (const int i : ess_dofs)
       {
@@ -116,6 +117,21 @@ struct PatchSmoother : Solver
    }
 
    void MultTranspose(const Vector &b, Vector &x) const { Mult(b, x); }
+};
+
+// class JacobiSmoother : public DSmoother
+// {
+// public:
+//    JacobiSmoother(const SparseMatrix &A) : DSmoother(A) { }
+//    void MultTranspose(const Vector &x, Vector &y) const { Mult(x, y); }
+// };
+
+template <typename T>
+struct SymmetricSmoother : T
+{
+   template <typename... Args>
+   SymmetricSmoother(Args&&... args) : T(args...) { }
+   void MultTranspose(const Vector &x, Vector &y) const { Mult(x, y); }
 };
 
 struct H1_Intersect_RT
@@ -138,9 +154,9 @@ struct H1_Intersect_RT
         constraints(fes)
    {
       a.AddDomainIntegrator(new VectorFEDiffusionIntegrator);
-      // a.AddInteriorFaceIntegrator(new VectorFE_DGDiffusionIntegrator(20.0));
-      // a.AddBdrFaceIntegrator(new VectorFE_DGDiffusionIntegrator(20.0));
-      a.AddDomainIntegrator(new VectorFEMassIntegrator);
+      a.AddInteriorFaceIntegrator(new VectorFE_DGDiffusionIntegrator(20.0));
+      a.AddBdrFaceIntegrator(new VectorFE_DGDiffusionIntegrator(20.0));
+      // a.AddDomainIntegrator(new VectorFEMassIntegrator);
       a.Assemble();
 
       // fes.GetEssentialTrueDofs(ess_bdr, bdr_dofs);
@@ -160,8 +176,11 @@ struct H1_Intersect_RT
       else
       {
          // HypreSmoother *smoother = new HypreSmoother(*A0, HypreSmoother::l1GS);
+         // HypreSmoother *smoother = new GSSmoother()
          // smoother->SetOperatorSymmetry(true);
-         PatchSmoother *smoother = new PatchSmoother(fes, *A0, *P, constraints);
+         auto *smoother = new SymmetricSmoother<GSSmoother>(*A0);
+         // auto *smoother = new SymmetricSmoother<DSmoother>(*A0, 1);
+         // PatchSmoother *smoother = new PatchSmoother(fes, *A0, *P, constraints);
          // UMFPackSolver *smoother = new UMFPackSolver(*A0);
          S.reset(smoother);
       }

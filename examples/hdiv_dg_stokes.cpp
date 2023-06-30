@@ -68,10 +68,6 @@ struct DofSmoother : Solver
             x.AddElementVector(dofs, z2);
          }
       }
-      // for (const int i : ess_dofs)
-      // {
-      //    x[i] = b[i];
-      // }
    }
 
    void MultTranspose(const Vector &b, Vector &x) const { Mult(b, x); }
@@ -99,6 +95,61 @@ struct AdditiveSchwarz : Solver
       P.MultTranspose(b, z1);
       C.Mult(z1, z2);
       P.Mult(z2, z3);
+
+      S.Mult(b, x);
+      x += z3;
+   }
+};
+
+struct RT_IP_AdditiveSchwarz : Solver
+{
+   H1_FECollection h1_fec;
+   FiniteElementSpace h1_fes;
+   Array<int> h1_ess_dofs;
+   DofSmoother S;
+   DiscreteLinearOperator interp;
+   SparseMatrix I;
+   SparseMatrix A_h1;
+   UMFPackSolver C;
+
+   mutable Vector z1, z2, z3;
+
+   RT_IP_AdditiveSchwarz(
+      FiniteElementSpace &rt_fes,
+      const Array<int> &ess_bdr,
+      const Array<int> &rt_ess_dofs,
+      const SparseMatrix &A
+   ) : Solver(rt_fes.GetTrueVSize()),
+      h1_fec(rt_fes.GetMaxElementOrder() - 1, rt_fes.GetMesh()->Dimension()),
+      h1_fes(rt_fes.GetMesh(), &h1_fec, rt_fes.GetMesh()->Dimension()),
+      S(RT_ContinuityConstraints(rt_fes), A, rt_ess_dofs),
+      interp(&h1_fes, &rt_fes)
+   {
+      h1_fes.GetEssentialTrueDofs(ess_bdr, h1_ess_dofs);
+
+      interp.AddDomainInterpolator(new IdentityInterpolator);
+      interp.Assemble();
+      interp.Finalize();
+      interp.FormRectangularSystemMatrix(h1_ess_dofs, rt_ess_dofs, I);
+
+      unique_ptr<SparseMatrix> A_h1_ptr(RAP(I, A, I));
+      A_h1.Swap(*A_h1_ptr);
+
+      A_h1.EliminateBC(h1_ess_dofs, SparseMatrix::DIAG_ONE);
+      C.SetOperator(A_h1);
+   }
+
+   void SetOperator(const Operator &op) { }
+
+   void Mult(const Vector &b, Vector &x) const
+   {
+      z1.SetSize(I.Width());
+      z2.SetSize(I.Width());
+      z3.SetSize(I.Height());
+
+      I.MultTranspose(b, z1);
+      C.Mult(z1, z2);
+      I.Mult(z2, z3);
 
       S.Mult(b, x);
       x += z3;
@@ -140,47 +191,66 @@ int main(int argc, char *argv[])
    RT_FECollection rt_fec(order-1, dim, b1, b2);
    FiniteElementSpace rt_fes(&mesh, &rt_fec);
 
-   H1_FECollection h1_fec(order - 1, dim, b1);
-   FiniteElementSpace h1_fes(&mesh, &h1_fec, dim);
+   L2_FECollection l2_fec(order-1, dim, b1);
+   FiniteElementSpace l2_fes(&mesh, &l2_fec);
 
    cout << "RT DOFs: " << rt_fes.GetTrueVSize() << '\n';
-   cout << "H1 DOFs: " << h1_fes.GetTrueVSize() << '\n';
 
-   Array<int> ess_bdr(mesh.bdr_attributes.Max());
-   ess_bdr = 1;
-   Array<int> h1_ess_dofs, rt_ess_dofs;
-   h1_fes.GetEssentialTrueDofs(ess_bdr, h1_ess_dofs);
+   Array<int> ess_bdr;
+
+   if (mesh.bdr_attributes.Size() > 0)
+   {
+      ess_bdr.SetSize(mesh.bdr_attributes.Max());
+      ess_bdr = 1;
+   }
+   // ess_bdr = 0;
+
+   Array<int> rt_ess_dofs;
+   Array<int> l2_ess_dofs; // empty
    rt_fes.GetEssentialTrueDofs(ess_bdr, rt_ess_dofs);
 
-   DiscreteLinearOperator interp(&h1_fes, &rt_fes);
-   interp.AddDomainInterpolator(new IdentityInterpolator);
-   interp.Assemble();
-   interp.Finalize();
+   BilinearForm k(&rt_fes);
+   k.AddDomainIntegrator(new VectorFEDiffusionIntegrator);
+   k.AddInteriorFaceIntegrator(new VectorFE_DGDiffusionIntegrator(kappa));
+   k.AddBdrFaceIntegrator(new VectorFE_DGDiffusionIntegrator(kappa));
+   k.SetDiagonalPolicy(Operator::DIAG_ONE);
+   k.Assemble();
+   SparseMatrix K;
+   k.FormSystemMatrix(rt_ess_dofs, K);
 
-   SparseMatrix I;
-   interp.FormRectangularSystemMatrix(h1_ess_dofs, rt_ess_dofs, I);
+   // RT_IP_AdditiveSchwarz as(rt_fes, ess_bdr, rt_ess_dofs, K);
+   UMFPackSolver as(K);
 
-   BilinearForm a(&rt_fes);
-   a.AddDomainIntegrator(new VectorFEDiffusionIntegrator);
-   a.AddInteriorFaceIntegrator(new VectorFE_DGDiffusionIntegrator(kappa));
-   a.AddBdrFaceIntegrator(new VectorFE_DGDiffusionIntegrator(kappa));
-   a.Assemble();
-   SparseMatrix A;
-   a.FormSystemMatrix(rt_ess_dofs, A);
+   MixedBilinearForm d(&rt_fes, &l2_fes);
+   d.AddDomainIntegrator(new VectorFEDivergenceIntegrator);
+   d.Assemble();
+   SparseMatrix D, Dt;
+   d.FormRectangularSystemMatrix(rt_ess_dofs, l2_ess_dofs, D);
+   {
+      unique_ptr<SparseMatrix> Dt_ptr(Transpose(D));
+      Dt.Swap(*Dt_ptr);
+   }
 
-   unique_ptr<SparseMatrix> A_h1(RAP(I, A, I));
+   Array<int> offsets({0, rt_fes.GetTrueVSize(), l2_fes.GetTrueVSize()});
+   offsets.PartialSum();
 
-   // BCs...
-   A.EliminateBC(rt_ess_dofs, SparseMatrix::DIAG_ONE);
-   A_h1->EliminateBC(h1_ess_dofs, SparseMatrix::DIAG_ONE);
+   BlockOperator A(offsets);
+   A.SetBlock(0, 0, &K);
+   A.SetBlock(0, 1, &Dt, -1.0);
+   A.SetBlock(1, 0, &D, -1.0);
 
-   RT_ContinuityConstraints constraints(rt_fes);
-   DofSmoother S(constraints, A, rt_ess_dofs);
+   BilinearForm w(&l2_fes);
+   w.AddDomainIntegrator(new MassIntegrator);
+   w.Assemble();
+   w.Finalize();
+   SparseMatrix &W = w.SpMat();
 
-   HYPRE_BigInt row_starts[2] = {0, A_h1->Height()};
-   HypreParMatrix A_h1_hyp(MPI_COMM_WORLD, A_h1->Height(), row_starts, A_h1.get());
-   // HypreBoomerAMG C(A_h1_hyp);
-   UMFPackSolver C(*A_h1);
+   BilinearForm m(&rt_fes);
+   m.AddDomainIntegrator(new VectorFEMassIntegrator);
+   m.Assemble();
+   m.Finalize();
+   SparseMatrix M;
+   m.FormSystemMatrix(rt_ess_dofs, M);
 
    auto save_matrix = [](const Operator &A, const string &fname)
    {
@@ -188,26 +258,34 @@ int main(int argc, char *argv[])
       A.PrintMatlab(f);
    };
 
-   save_matrix(*A_h1, "A_h1.txt");
-   save_matrix(I, "I.txt");
-   save_matrix(A, "A.txt");
+   save_matrix(K, "K.txt");
+   save_matrix(M, "M.txt");
+   save_matrix(W, "W.txt");
+   save_matrix(D, "D.txt");
 
-   AdditiveSchwarz as(S, C, I);
+   // return 0;
 
-   save_matrix(as, "as.txt");
+   DGMassInverse M_inv(l2_fes);
 
-   CGSolver cg(MPI_COMM_WORLD);
-   cg.SetRelTol(1e-12);
-   cg.SetMaxIter(2000);
-   cg.SetPrintLevel(1);
-   cg.SetOperator(A);
-   cg.SetPreconditioner(as);
+   BlockDiagonalPreconditioner P(offsets);
+   P.SetDiagonalBlock(0, &as);
+   P.SetDiagonalBlock(1, &M_inv);
+
+   MINRESSolver krylov(MPI_COMM_WORLD);
+   krylov.SetRelTol(1e-12);
+   krylov.SetMaxIter(2000);
+   krylov.SetPrintLevel(1);
+   krylov.SetOperator(A);
+   krylov.SetPreconditioner(P);
 
    Vector X(A.Height()), B(A.Height());
 
    B.Randomize(1);
+   B.SetSubVector(rt_ess_dofs, 0.0);
+   for (int i = offsets[1]; i < offsets[2]; ++i) { B[i] = 0.0; }
+
    X = 0.0;
-   cg.Mult(B, X);
+   krylov.Mult(B, X);
 
    return 0;
 }
