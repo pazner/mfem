@@ -249,3 +249,44 @@ TEST_CASE("QuadratureInterpolator",
    const auto nz = 3; // number of element in z
    testQuadratureInterpolator(dim, p, q, l, nx, ny, nz);
 } // TEST_CASE "QuadratureInterpolator"
+
+TEST_CASE("H(div) QuadratureInterpolator", "[QuadratureInterpolator][CUDA]")
+{
+   auto fname = GENERATE(
+                   "../../data/star.mesh", "../../data/star-q3.mesh",
+                   "../../data/fichera.mesh", "../../data/fichera-q3.mesh"
+                );
+
+   auto order = GENERATE(1, 2, 3);
+
+   Mesh mesh = Mesh::LoadFromFile(fname);
+   const int dim = mesh.Dimension();
+   RT_FECollection fec(order, dim);
+   FiniteElementSpace fes(&mesh, &fec);
+
+   QuadratureSpace qs(&mesh, 2*order);
+
+   auto q_interp = fes.GetQuadratureInterpolator(qs);
+   q_interp->SetOutputLayout(QVectorLayout::byVDIM);
+
+   GridFunction gf(&fes);
+   gf.Randomize(1);
+
+   QuadratureFunction qf1(qs, dim), qf2(qs, dim);
+
+   auto R = fes.GetElementRestriction(ElementDofOrdering::LEXICOGRAPHIC);
+   Vector evec(R->Height());
+   R->Mult(gf, evec);
+   q_interp->Values(evec, qf1);
+
+   for (int iel = 0; iel < qs.GetNE(); ++iel)
+   {
+      DenseMatrix values;
+      auto ir = qs.GetElementIntRule(iel);
+      qf2.GetValues(iel, values);
+      gf.GetVectorValues(*mesh.GetElementTransformation(iel), ir, values);
+   }
+
+   qf2 -= qf1;
+   REQUIRE(qf2.Normlinf() == MFEM_Approx(0.0));
+}

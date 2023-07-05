@@ -30,9 +30,9 @@ QuadratureInterpolator::QuadratureInterpolator(const FiniteElementSpace &fes,
 {
    d_buffer.UseDevice(true);
    if (fespace->GetNE() == 0) { return; }
-   const FiniteElement *fe = fespace->GetFE(0);
-   MFEM_VERIFY(dynamic_cast<const ScalarFiniteElement*>(fe) != NULL,
-               "Only scalar finite elements are supported");
+   // const FiniteElement *fe = fespace->GetFE(0);
+   // MFEM_VERIFY(dynamic_cast<const ScalarFiniteElement*>(fe) != NULL,
+   //             "Only scalar finite elements are supported");
 }
 
 QuadratureInterpolator::QuadratureInterpolator(const FiniteElementSpace &fes,
@@ -46,9 +46,9 @@ QuadratureInterpolator::QuadratureInterpolator(const FiniteElementSpace &fes,
 {
    d_buffer.UseDevice(true);
    if (fespace->GetNE() == 0) { return; }
-   const FiniteElement *fe = fespace->GetFE(0);
-   MFEM_VERIFY(dynamic_cast<const ScalarFiniteElement*>(fe) != NULL,
-               "Only scalar finite elements are supported");
+   // const FiniteElement *fe = fespace->GetFE(0);
+   // MFEM_VERIFY(dynamic_cast<const ScalarFiniteElement*>(fe) != NULL,
+   //             "Only scalar finite elements are supported");
 }
 
 namespace internal
@@ -466,21 +466,55 @@ void QuadratureInterpolator::Mult(const Vector &e_vec,
    const bool use_tensor_eval =
       use_tensor_products &&
       dynamic_cast<const TensorBasisElement*>(fe) != nullptr;
+   const bool hdiv = fe->GetMapType() == FiniteElement::H_DIV;
    const IntegrationRule *ir =
       IntRule ? IntRule : &qspace->GetElementIntRule(0);
    const DofToQuad::Mode mode =
       use_tensor_eval ? DofToQuad::TENSOR : DofToQuad::FULL;
    const DofToQuad &maps = fe->GetDofToQuad(*ir, mode);
    const GeometricFactors *geom = nullptr;
+   int geom_flags = 0;
    if (eval_flags & PHYSICAL_DERIVATIVES)
    {
-      const int jacobians = GeometricFactors::JACOBIANS;
-      geom = fespace->GetMesh()->GetGeometricFactors(*ir, jacobians);
+      geom_flags |= GeometricFactors::JACOBIANS;
+   }
+   if (hdiv)
+   {
+      geom_flags |= GeometricFactors::JACOBIANS | GeometricFactors::DETERMINANTS;
+   }
+   if (geom_flags)
+   {
+      geom = fespace->GetMesh()->GetGeometricFactors(*ir, geom_flags);
    }
 
    MFEM_ASSERT(fespace->GetMesh()->GetNumGeometries(
                   fespace->GetMesh()->Dimension()) == 1,
                "mixed meshes are not supported");
+
+   if (hdiv)
+   {
+      auto *vfe = dynamic_cast<const VectorTensorFiniteElement*>(fe);
+      MFEM_ASSERT(vfe != nullptr, "");
+      const DofToQuad &maps_o = vfe->GetDofToQuadOpen(*ir, mode);
+
+      MFEM_VERIFY(use_tensor_eval, "Not implemented.");
+      MFEM_VERIFY(!(eval_flags & DERIVATIVES), "Not implemented.");
+      MFEM_VERIFY(!(eval_flags & PHYSICAL_DERIVATIVES), "Not implemented.");
+      MFEM_VERIFY(!(eval_flags & DETERMINANTS), "Not implemented.");
+
+      if (q_layout == QVectorLayout::byNODES)
+      {
+         HdivTensorValues<QVectorLayout::byNODES>(
+            ne, vdim, geom, maps, maps_o, e_vec, q_val);
+      }
+      else
+      {
+         HdivTensorValues<QVectorLayout::byVDIM>(
+            ne, vdim, geom, maps, maps_o, e_vec, q_val);
+      }
+
+      return;
+   }
 
    if (use_tensor_eval)
    {
