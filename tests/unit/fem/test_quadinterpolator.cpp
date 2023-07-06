@@ -272,21 +272,42 @@ TEST_CASE("H(div) QuadratureInterpolator", "[QuadratureInterpolator][CUDA]")
    GridFunction gf(&fes);
    gf.Randomize(1);
 
-   QuadratureFunction qf1(qs, dim), qf2(qs, dim);
-
    auto R = fes.GetElementRestriction(ElementDofOrdering::LEXICOGRAPHIC);
    Vector evec(R->Height());
    R->Mult(gf, evec);
-   q_interp->Values(evec, qf1);
 
-   for (int iel = 0; iel < qs.GetNE(); ++iel)
+   SECTION("Values")
    {
-      DenseMatrix values;
-      auto ir = qs.GetElementIntRule(iel);
-      qf2.GetValues(iel, values);
-      gf.GetVectorValues(*mesh.GetElementTransformation(iel), ir, values);
+      QuadratureFunction qf1(qs, dim), qf2(qs, dim);
+
+      // Set qf1 using the QuadratureInterpolator
+      q_interp->Values(evec, qf1);
+
+      // Set qf2 using GridFunction::GetVectorValues
+      for (int iel = 0; iel < qs.GetNE(); ++iel)
+      {
+         DenseMatrix values;
+         auto ir = qs.GetElementIntRule(iel);
+         qf2.GetValues(iel, values);
+         gf.GetVectorValues(*mesh.GetElementTransformation(iel), ir, values);
+      }
+
+      qf2 -= qf1;
+      REQUIRE(qf2.Normlinf() == MFEM_Approx(0.0));
    }
 
-   qf2 -= qf1;
-   REQUIRE(qf2.Normlinf() == MFEM_Approx(0.0));
+   SECTION("Divergence")
+   {
+      QuadratureFunction qf1(qs), qf2(qs);
+
+      // Set qf1 using the QuadratureInterpolator
+      q_interp->PhysDivergence(evec, qf1);
+
+      // Set qf2 using DivergenceGridFunctionCoefficient
+      DivergenceGridFunctionCoefficient div_coeff(&gf);
+      div_coeff.Project(qf2);
+
+      qf2 -= qf1;
+      REQUIRE(qf2.Normlinf() == MFEM_Approx(0.0));
+   }
 }

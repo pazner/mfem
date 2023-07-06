@@ -12,7 +12,6 @@
 // Internal header, included only by .cpp files
 
 #include "../quadinterpolator.hpp"
-#include "eval.hpp"
 
 namespace mfem
 {
@@ -23,7 +22,17 @@ namespace internal
 namespace quadrature_interpolator
 {
 
-// Tensor-product evaluation of quadrature point values: dispatch function.
+// Tensor-product evaluation of H(div) quadrature point divergence: dispatch function.
+template<QVectorLayout VL>
+void HdivTensorDivergence(const int NE,
+                          const int vdim,
+                          const GeometricFactors *geom,
+                          const DofToQuad &maps,
+                          const DofToQuad &maps_o,
+                          const Vector &e_vec,
+                          Vector &q_val);
+
+// Tensor-product evaluation of H(div) quadrature point values: dispatch function.
 template<QVectorLayout VL>
 void HdivTensorValues(const int NE,
                       const int vdim,
@@ -31,46 +40,7 @@ void HdivTensorValues(const int NE,
                       const DofToQuad &maps,
                       const DofToQuad &maps_o,
                       const Vector &e_vec,
-                      Vector &q_val)
-{
-   if (NE == 0) { return; }
-   const int dim = maps.FE->GetDim();
-   const int D1D = maps.ndof;
-   const int Q1D = maps.nqpt;
-   const double *Bc = maps.B.Read();
-   const double *Bo = maps_o.B.Read();
-   const double *X = e_vec.Read();
-   const double *J = geom->J.Read();
-   const double *detJ = geom->detJ.Read();
-   double *Y = q_val.Write();
-
-   constexpr QVectorLayout L = VL;
-
-   if (dim == 2)
-   {
-      constexpr int MD = MAX_D1D;
-      constexpr int MQ = MAX_Q1D;
-      MFEM_VERIFY(D1D <= MD, "Orders higher than " << MD-1
-                  << " are not supported!");
-      MFEM_VERIFY(Q1D <= MQ, "Quadrature rules with more than "
-                  << MQ << " 1D points are not supported!");
-      HdivValues2D<L,MD,MQ>(NE,J,detJ,Bc,Bo,X,Y,vdim,D1D,Q1D);
-   }
-   else if (dim == 3)
-   {
-      constexpr int MD = 8;
-      constexpr int MQ = 8;
-      MFEM_VERIFY(D1D <= MD, "Orders higher than " << MD-1
-                  << " are not supported!");
-      MFEM_VERIFY(Q1D <= MQ, "Quadrature rules with more than "
-                  << MQ << " 1D points are not supported!");
-      HdivValues3D<L,MD,MQ>(NE,J,detJ,Bc,Bo,X,Y,vdim,D1D,Q1D);
-   }
-   else
-   {
-      MFEM_ABORT("Dimension not supported");
-   }
-}
+                      Vector &q_val);
 
 // Tensor-product evaluation of quadrature point values: dispatch function.
 template<QVectorLayout VL>

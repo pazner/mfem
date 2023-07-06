@@ -123,6 +123,10 @@ public:
        @a e_vec at quadrature points. */
    void PhysDerivatives(const Vector &e_vec, Vector &q_der) const;
 
+   /** @brief Interpolate the derivatives in physical space of the E-vector
+       @a e_vec at quadrature points. */
+   void PhysDivergence(const Vector &e_vec, Vector &q_der) const;
+
    /** @brief Compute the determinants of the derivatives (with respect to
        reference coordinates) of the E-vector @a e_vec at quadrature points. */
    void Determinants(const Vector &e_vec, Vector &q_det) const;

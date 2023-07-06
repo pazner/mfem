@@ -751,6 +751,46 @@ void QuadratureInterpolator::PhysDerivatives(const Vector &e_vec,
    Mult(e_vec, PHYSICAL_DERIVATIVES, empty, q_der, empty);
 }
 
+void QuadratureInterpolator::PhysDivergence(const Vector &e_vec,
+                                            Vector &q_div) const
+{
+   using namespace internal::quadrature_interpolator;
+
+   const int ne = fespace->GetNE();
+   if (ne == 0) { return; }
+   const int vdim = fespace->GetVDim();
+   const FiniteElement *fe = fespace->GetFE(0);
+   const bool hdiv = fe->GetMapType() == FiniteElement::H_DIV;
+   MFEM_VERIFY(hdiv, "Requires H(div) space");
+   const IntegrationRule *ir =
+      IntRule ? IntRule : &qspace->GetElementIntRule(0);
+   const bool use_tensor_eval =
+      use_tensor_products &&
+      dynamic_cast<const TensorBasisElement*>(fe) != nullptr;
+   MFEM_VERIFY(use_tensor_eval, "");
+   const DofToQuad::Mode mode =
+      use_tensor_eval ? DofToQuad::TENSOR : DofToQuad::FULL;
+   const DofToQuad &maps = fe->GetDofToQuad(*ir, mode);
+   const GeometricFactors *geom = nullptr;
+   geom = fespace->GetMesh()->GetGeometricFactors(
+             *ir, GeometricFactors::DETERMINANTS);
+
+   auto *vfe = dynamic_cast<const VectorTensorFiniteElement*>(fe);
+   MFEM_VERIFY(vfe != nullptr, "");
+   const DofToQuad &maps_o = vfe->GetDofToQuadOpen(*ir, mode);
+
+   if (q_layout == QVectorLayout::byNODES)
+   {
+      HdivTensorDivergence<QVectorLayout::byNODES>(
+         ne, vdim, geom, maps, maps_o, e_vec, q_div);
+   }
+   else
+   {
+      HdivTensorDivergence<QVectorLayout::byVDIM>(
+         ne, vdim, geom, maps, maps_o, e_vec, q_div);
+   }
+}
+
 void QuadratureInterpolator::Determinants(const Vector &e_vec,
                                           Vector &q_det) const
 {
