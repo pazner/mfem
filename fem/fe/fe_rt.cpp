@@ -20,6 +20,56 @@ namespace mfem
 
 using namespace std;
 
+const double RT_SegmentElement::nk[2] = { 1., 1. };
+
+RT_SegmentElement::RT_SegmentElement(const int p, const int cb_type)
+   : VectorTensorFiniteElement(1, p+2, p+1, cb_type, H_DIV,
+                               DofMapType::L2_DOF_MAP),
+     dof2nk(dof)
+{
+   if (obasis1d.IsIntegratedType()) { is_nodal = false; }
+
+   const double *cp = poly1d.ClosedPoints(p + 1, cb_type);
+
+   dof_map.SetSize(dof);
+   dof_map[0] = 0;
+   dof_map[dof - 1] = 1;
+   for (int i = 1; i < dof - 1; ++i)
+   {
+      dof_map[i] = i + 1;
+   }
+
+   // set dof2nk and Nodes
+   for (int i = 0; i < p + 1; i++)
+   {
+      dof2nk[i] = (i == 0) ? 0 : 1;
+      Nodes.IntPoint(i).x = cp[i];
+   }
+}
+
+void RT_SegmentElement::CalcShape(const IntegrationPoint &ip,
+                                  Vector &shape) const
+{
+   Vector shape_cx(order + 1);
+   basis1d.Eval(ip.x, shape_cx);
+   for (int i = 0; i < dof; ++i) { shape[dof_map[i]] = shape_cx[i]; }
+}
+
+void RT_SegmentElement::CalcVShape(const IntegrationPoint &ip,
+                                   DenseMatrix &shape) const
+{
+   Vector shape_vec(shape.Write(), dof);
+   CalcShape(ip, shape_vec);
+}
+
+void RT_SegmentElement::CalcDivShape(const IntegrationPoint &ip,
+                                     Vector &divshape) const
+{
+   Vector shape_cx(order + 1), dshape_cx(order + 1);
+   basis1d.Eval(ip.x, shape_cx, dshape_cx);
+   for (int i = 0; i < dof; ++i) { divshape[dof_map[i]] = dshape_cx[i]; }
+}
+
 const double RT_QuadrilateralElement::nk[8] =
 { 0., -1.,  1., 0.,  0., 1.,  -1., 0. };
 

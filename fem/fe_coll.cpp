@@ -2416,7 +2416,12 @@ RT_FECollection::RT_FECollection(const int order, const int dim,
    }
 
    const int pp1 = p + 1;
-   if (dim == 2)
+   if (dim == 1)
+   {
+      RT_Elements[Geometry::SEGMENT] = new RT_SegmentElement(p, cb_type);
+      RT_dof[Geometry::SEGMENT] = p;
+   }
+   else if (dim == 2)
    {
       // TODO: cb_type, ob_type for triangles
       RT_Elements[Geometry::TRIANGLE] = new RT_TriangleElement(p);
@@ -2495,7 +2500,12 @@ void RT_FECollection::InitFaces(const int p, const int dim_,
       QuadDofOrd[i] = NULL;
    }
 
-   if (dim_ == 2)
+   if (dim_ == 1)
+   {
+      RT_dof[Geometry::POINT] = 1;
+      RT_Elements[Geometry::POINT] = new PointFiniteElement;
+   }
+   else if (dim_ == 2)
    {
       L2_SegmentElement *l2_seg = new L2_SegmentElement(p, ob_type);
       l2_seg->SetMapType(map_type);
