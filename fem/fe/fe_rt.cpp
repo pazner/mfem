@@ -20,7 +20,7 @@ namespace mfem
 
 using namespace std;
 
-const double RT_SegmentElement::nk[2] = { 1., 1. };
+const double RT_SegmentElement::nk[2] = { 1. };
 
 RT_SegmentElement::RT_SegmentElement(const int p, const int cb_type)
    : VectorTensorFiniteElement(1, p+2, p+1, cb_type, H_DIV,
@@ -40,9 +40,9 @@ RT_SegmentElement::RT_SegmentElement(const int p, const int cb_type)
    }
 
    // set dof2nk and Nodes
-   for (int i = 0; i < p + 1; i++)
+   for (int i = 0; i < dof; i++)
    {
-      dof2nk[i] = (i == 0) ? 0 : 1;
+      dof2nk[i] = 0;
       Nodes.IntPoint(i).x = cp[i];
    }
 }

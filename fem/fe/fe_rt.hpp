@@ -24,7 +24,7 @@ namespace mfem
 /// (This is equivalent to the standard 1D H1 element on a segment)
 class RT_SegmentElement : public VectorTensorFiniteElement
 {
-   static const double nk[2];
+   static const double nk[1];
 
    Array<int> dof2nk;
 
