@@ -20,7 +20,7 @@ namespace mfem
 
 using namespace std;
 
-const double RT_SegmentElement::nk[2] = { 1. };
+const double RT_SegmentElement::nk[1] = { 1. };
 
 RT_SegmentElement::RT_SegmentElement(const int p, const int cb_type)
    : VectorTensorFiniteElement(1, p+2, p+1, cb_type, H_DIV,
