@@ -199,6 +199,10 @@ public:
    /// to by @a idx.
    int GetMeshFaceIndex(int idx) const { return face_indices[idx]; }
 
+   /// @brief Given a mesh face index, return the associated index in the
+   /// quadrature space.
+   int GetEntityIndexOfFace(int face_idx) { return face_indices_inv.at(face_idx); }
+
    /// @brief Returns the index associated with the face described by @a T.
    ///
    /// The index may differ from the mesh face or boundary element index
