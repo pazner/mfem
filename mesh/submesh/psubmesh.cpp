@@ -287,7 +287,8 @@ ParSubMesh::ParSubMesh(const ParMesh &parent, SubMesh::From from,
 
             if (Dim == 3)
             {
-               int pbeid = parent_face_to_be[parent_face_ids_[i]];
+               int pbeid = Dim == 3 ? parent_face_to_be[parent_face_ids_[i]] :
+                           parent_face_to_be[parent_edge_ids_[i]];
                if (pbeid != -1)
                {
                   boundary[j]->SetAttribute(parent.GetBdrAttribute(pbeid));
