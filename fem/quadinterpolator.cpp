@@ -462,11 +462,12 @@ void QuadratureInterpolator::Mult(const Vector &e_vec,
    const int ne = fespace->GetNE();
    if (ne == 0) { return; }
    const int vdim = fespace->GetVDim();
+   const int dim = fespace->GetMesh()->Dimension();
    const FiniteElement *fe = fespace->GetFE(0);
    const bool use_tensor_eval =
       use_tensor_products &&
       dynamic_cast<const TensorBasisElement*>(fe) != nullptr;
-   const bool hdiv = fe->GetMapType() == FiniteElement::H_DIV;
+   const bool hdiv = fe->GetMapType() == FiniteElement::H_DIV && dim > 1;
    const IntegrationRule *ir =
       IntRule ? IntRule : &qspace->GetElementIntRule(0);
    const DofToQuad::Mode mode =
@@ -758,6 +759,14 @@ void QuadratureInterpolator::PhysDivergence(const Vector &e_vec,
 
    const int ne = fespace->GetNE();
    if (ne == 0) { return; }
+
+   const int dim = fespace->GetMesh()->Dimension();
+
+   if (dim == 1)
+   {
+      return PhysDerivatives(e_vec, q_div);
+   }
+
    const int vdim = fespace->GetVDim();
    const FiniteElement *fe = fespace->GetFE(0);
    const bool hdiv = fe->GetMapType() == FiniteElement::H_DIV;
