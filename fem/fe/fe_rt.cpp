@@ -58,7 +58,7 @@ void RT_SegmentElement::CalcShape(const IntegrationPoint &ip,
 void RT_SegmentElement::CalcVShape(const IntegrationPoint &ip,
                                    DenseMatrix &shape) const
 {
-   Vector shape_vec(shape.Write(), dof);
+   Vector shape_vec(shape.HostWrite(), dof);
    CalcShape(ip, shape_vec);
 }
 
