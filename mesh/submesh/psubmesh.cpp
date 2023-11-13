@@ -18,7 +18,6 @@
 #include <algorithm>
 #include "psubmesh.hpp"
 #include "submesh_utils.hpp"
-#include "../point.hpp"
 #include "../segment.hpp"
 
 namespace mfem
@@ -236,11 +235,13 @@ ParSubMesh::ParSubMesh(const ParMesh &parent, SubMesh::From from,
 
    // Add boundaries
    {
-      int num_codim_1;
-      if (Dim == 1) { num_codim_1 = NumOfVertices; }
-      else if (Dim == 2) { num_codim_1 = NumOfEdges; }
-      else if (Dim == 3) { num_codim_1 = NumOfFaces; }
-      else { MFEM_ABORT("Invalid dimension."); }
+      const int num_codim_1 = [this]()
+      {
+         if (Dim == 1) { return NumOfVertices; }
+         else if (Dim == 2) { return NumOfEdges; }
+         else if (Dim == 3) { return NumOfFaces; }
+         else { MFEM_ABORT("Invalid dimension."); return -1; }
+      }();
 
       if (Dim == 3)
       {
@@ -260,32 +261,18 @@ ParSubMesh::ParSubMesh(const ParMesh &parent, SubMesh::From from,
       }
 
       boundary.SetSize(NumOfBdrElements);
-      Array<int> &be2face = (Dim == 2) ? be_to_edge : be_to_face;
-      if (Dim > 1) { be2face.SetSize(NumOfBdrElements); }
-
-      Array<int> parent_face_to_be;
-      int max_bdr_attr = -1;
-      if (Dim == 3)
-      {
-         parent_face_to_be = parent.GetFaceToBdrElMap();
-         max_bdr_attr = parent.bdr_attributes.Max();
-      }
+      be_to_face.SetSize(NumOfBdrElements);
+      Array<int> parent_face_to_be = parent.GetFaceToBdrElMap();
+      int max_bdr_attr = parent.bdr_attributes.Max();
 
       for (int i = 0, j = 0; i < num_codim_1; i++)
       {
          if (GetFaceInformation(i).IsBoundary())
          {
-            if (Dim == 1)
-            {
-               boundary[j] = new Point(&i, 1);
-            }
-            else
-            {
-               boundary[j] = faces[i]->Duplicate(this);
-               be2face[j] = i;
-            }
+            boundary[j] = faces[i]->Duplicate(this);
+            be_to_face[j] = i;
 
-            if (Dim == 3)
+            if (from == SubMesh::From::Domain && Dim >= 2)
             {
                int pbeid = Dim == 3 ? parent_face_to_be[parent_face_ids_[i]] :
                            parent_face_to_be[parent_edge_ids_[i]];
@@ -302,7 +289,6 @@ ParSubMesh::ParSubMesh(const ParMesh &parent, SubMesh::From from,
             {
                boundary[j]->SetAttribute(SubMesh::GENERATED_ATTRIBUTE);
             }
-
             ++j;
          }
       }
@@ -343,7 +329,7 @@ ParSubMesh::ParSubMesh(const ParMesh &parent, SubMesh::From from,
    if (Dim > 1)
    {
       if (!el_to_edge) { el_to_edge = new Table; }
-      NumOfEdges = GetElementToEdgeTable(*el_to_edge, be_to_edge);
+      NumOfEdges = GetElementToEdgeTable(*el_to_edge);
    }
 
    SetAttributes();
