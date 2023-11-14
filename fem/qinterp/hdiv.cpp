@@ -29,7 +29,7 @@ namespace quadrature_interpolator
 {
 
 // Template compute kernel for H(div) Values in 2D: tensor product version.
-template<QVectorLayout Q_LAYOUT, int MAX_D1D, int MAX_Q1D>
+template<QVectorLayout Q_LAYOUT, int MAX_D1D = 0, int MAX_Q1D = 0>
 static void HdivValues2D(const int NE,
                          const double *J_,
                          const double *detJ_,
@@ -53,25 +53,25 @@ static void HdivValues2D(const int NE,
 
    mfem::forall_2D_batch(NE, Q1D, Q1D, 1, [=] MFEM_HOST_DEVICE (int e)
    {
-      constexpr int MQ1 = MAX_Q1D;
-      constexpr int MD1 = MAX_D1D;
-      constexpr int MDQ = (MQ1 > MD1) ? MQ1 : MD1;
+      constexpr int MQ = MAX_Q1D ? MAX_Q1D : DofQuadLimits::MAX_Q1D;
+      constexpr int MD = MAX_D1D ? MAX_D1D : DofQuadLimits::MAX_D1D;
+      constexpr int MDQ = (MQ > MD) ? MQ : MD;
 
-      MFEM_SHARED double sBc[MQ1*MD1];
-      MFEM_SHARED double sBo[MQ1*MD1];
+      MFEM_SHARED double sBc[MQ*MD];
+      MFEM_SHARED double sBo[MQ*MD];
       MFEM_SHARED double sm0[MDQ*MDQ];
       MFEM_SHARED double sm1[MDQ*MDQ];
       MFEM_SHARED double sm2[2*MDQ*MDQ];
 
-      kernels::internal::LoadB<MD1,MQ1>(D1D,Q1D,bc,sBc);
-      kernels::internal::LoadB<MD1,MQ1>(D1D-1,Q1D,bo,sBo);
+      kernels::internal::LoadB<MD,MQ>(D1D,Q1D,bc,sBc);
+      kernels::internal::LoadB<MD,MQ>(D1D-1,Q1D,bo,sBo);
 
       ConstDeviceMatrix Bc(sBc, D1D,Q1D);
       ConstDeviceMatrix Bo(sBo, D1D-1,Q1D);
 
-      DeviceMatrix DD(sm0, MD1, MD1);
-      DeviceMatrix DQ(sm1, MD1, MQ1);
-      DeviceCube QQ(sm2, MQ1, MQ1, 2);
+      DeviceMatrix DD(sm0, MD, MD);
+      DeviceMatrix DQ(sm1, MD, MQ);
+      DeviceCube QQ(sm2, MQ, MQ, 2);
 
       for (int c = 0; c < VDIM; c++)
       {
@@ -160,7 +160,7 @@ static void HdivValues2D(const int NE,
 }
 
 // Template compute kernel for H(div) Values in 3D: tensor product version.
-template<QVectorLayout Q_LAYOUT, int MAX_D1D, int MAX_Q1D>
+template<QVectorLayout Q_LAYOUT, int MAX_D1D = 0, int MAX_Q1D = 0>
 static void HdivValues3D(const int NE,
                          const double *J_,
                          const double *detJ_,
@@ -184,9 +184,12 @@ static void HdivValues3D(const int NE,
 
    mfem::forall(NE, [=] MFEM_HOST_DEVICE (int e)
    {
+      constexpr int MQ = MAX_Q1D ? MAX_Q1D : 8;
+      constexpr int MD = MAX_D1D ? MAX_D1D : 8;
+
       for (int c = 0; c < VDIM; c++)
       {
-         double QQQ_[MAX_Q1D*MAX_Q1D*MAX_Q1D*3];
+         double QQQ_[MQ*MQ*MQ*3];
          DeviceTensor<4> QQQ(QQQ_, Q1D, Q1D, Q1D, 3);
          for (int d = 0; d < 3; ++d)
          {
@@ -198,11 +201,11 @@ static void HdivValues3D(const int NE,
             const auto &By = (d == 1) ? Bc : Bo;
             const auto &Bz = (d == 2) ? Bc : Bo;
 
-            double DQQ[MAX_D1D*MAX_Q1D*MAX_Q1D];
+            double DQQ[MD*MQ*MQ];
 
             for (int dz = 0; dz < d1d_z; ++dz)
             {
-               double DDQ[MAX_D1D*MAX_D1D*MAX_Q1D];
+               double DDQ[MD*MD*MQ];
 
                // Eval x
                for (int dy = 0; dy < d1d_y; ++dy)
@@ -305,23 +308,23 @@ void HdivTensorValues(const int NE,
 
    if (dim == 2)
    {
-      constexpr int MD = MAX_D1D;
-      constexpr int MQ = MAX_Q1D;
+      const int MD = DeviceDofQuadLimits::Get().MAX_D1D;
+      const int MQ = DeviceDofQuadLimits::Get().MAX_Q1D;
       MFEM_VERIFY(D1D <= MD, "Orders higher than " << MD-1
                   << " are not supported!");
       MFEM_VERIFY(Q1D <= MQ, "Quadrature rules with more than "
                   << MQ << " 1D points are not supported!");
-      HdivValues2D<L,MD,MQ>(NE,J,detJ,Bc,Bo,X,Y,vdim,D1D,Q1D);
+      HdivValues2D<L>(NE,J,detJ,Bc,Bo,X,Y,vdim,D1D,Q1D);
    }
    else if (dim == 3)
    {
-      constexpr int MD = 8;
-      constexpr int MQ = 8;
+      const int MD = 8;
+      const int MQ = 8;
       MFEM_VERIFY(D1D <= MD, "Orders higher than " << MD-1
                   << " are not supported!");
       MFEM_VERIFY(Q1D <= MQ, "Quadrature rules with more than "
                   << MQ << " 1D points are not supported!");
-      HdivValues3D<L,MD,MQ>(NE,J,detJ,Bc,Bo,X,Y,vdim,D1D,Q1D);
+      HdivValues3D<L>(NE,J,detJ,Bc,Bo,X,Y,vdim,D1D,Q1D);
    }
    else
    {
@@ -330,7 +333,7 @@ void HdivTensorValues(const int NE,
 }
 
 // Template compute kernel for H(div) divergence in 2D: tensor product version.
-template<QVectorLayout Q_LAYOUT, int MAX_D1D, int MAX_Q1D>
+template<QVectorLayout Q_LAYOUT, int MAX_D1D = 0, int MAX_Q1D = 0>
 static void HdivDivergence2D(const int NE,
                              const double *detJ_,
                              const double *bo_,
@@ -352,14 +355,14 @@ static void HdivDivergence2D(const int NE,
 
    mfem::forall(NE, [=] MFEM_HOST_DEVICE (int e)
    {
-      constexpr int MQ1 = MAX_Q1D;
-      constexpr int MD1 = MAX_D1D;
+      constexpr int MQ = MAX_Q1D ? MAX_Q1D : DofQuadLimits::MAX_Q1D;
+      constexpr int MD = MAX_D1D ? MAX_D1D : DofQuadLimits::MAX_D1D;
 
-      double DQ_[MD1*MQ1];
-      double QQ_[MD1*MQ1];
+      double DQ_[MD*MQ];
+      double QQ_[MD*MQ];
 
-      DeviceMatrix DQ(DQ_, MQ1, MD1);
-      DeviceMatrix QQ(QQ_, MQ1, MQ1);
+      DeviceMatrix DQ(DQ_, MQ, MD);
+      DeviceMatrix QQ(QQ_, MQ, MQ);
 
       for (int c = 0; c < VDIM; c++)
       {
@@ -422,7 +425,7 @@ static void HdivDivergence2D(const int NE,
 }
 
 // Template compute kernel for H(div) divergence in 3D: tensor product version.
-template<QVectorLayout Q_LAYOUT, int MAX_D1D, int MAX_Q1D>
+template<QVectorLayout Q_LAYOUT, int MAX_D1D = 0, int MAX_Q1D = 0>
 static void HdivDivergence3D(const int NE,
                              const double *detJ_,
                              const double *bo_,
@@ -444,9 +447,12 @@ static void HdivDivergence3D(const int NE,
 
    mfem::forall(NE, [=] MFEM_HOST_DEVICE (int e)
    {
+      constexpr int MQ = MAX_Q1D ? MAX_Q1D : 8;
+      constexpr int MD = MAX_D1D ? MAX_D1D : 8;
+
       for (int c = 0; c < VDIM; c++)
       {
-         double QQQ_[MAX_Q1D*MAX_Q1D*MAX_Q1D*3];
+         double QQQ_[MQ*MQ*MQ*3];
          DeviceCube QQQ(QQQ_, Q1D, Q1D, Q1D);
 
          for (int qz = 0; qz < Q1D; ++qz)
@@ -469,11 +475,11 @@ static void HdivDivergence3D(const int NE,
             const auto &By = (d == 1) ? Gc : Bo;
             const auto &Bz = (d == 2) ? Gc : Bo;
 
-            double DQQ[MAX_D1D*MAX_Q1D*MAX_Q1D];
+            double DQQ[MD*MQ*MQ];
 
             for (int dz = 0; dz < d1d_z; ++dz)
             {
-               double DDQ[MAX_D1D*MAX_D1D*MAX_Q1D];
+               double DDQ[MD*MD*MQ];
 
                // Eval x
                for (int dy = 0; dy < d1d_y; ++dy)
@@ -562,23 +568,23 @@ void HdivTensorDivergence(const int NE,
 
    if (dim == 2)
    {
-      constexpr int MD = MAX_D1D;
-      constexpr int MQ = MAX_Q1D;
+      const int MD = DeviceDofQuadLimits::Get().MAX_D1D;
+      const int MQ = DeviceDofQuadLimits::Get().MAX_Q1D;
       MFEM_VERIFY(D1D <= MD, "Orders higher than " << MD-1
                   << " are not supported!");
       MFEM_VERIFY(Q1D <= MQ, "Quadrature rules with more than "
                   << MQ << " 1D points are not supported!");
-      HdivDivergence2D<L,MD,MQ>(NE,detJ,Bo,Gc,X,Y,vdim,D1D,Q1D);
+      HdivDivergence2D<L>(NE,detJ,Bo,Gc,X,Y,vdim,D1D,Q1D);
    }
    else if (dim == 3)
    {
-      constexpr int MD = 8;
-      constexpr int MQ = 8;
+      const int MD = 8;
+      const int MQ = 8;
       MFEM_VERIFY(D1D <= MD, "Orders higher than " << MD-1
                   << " are not supported!");
       MFEM_VERIFY(Q1D <= MQ, "Quadrature rules with more than "
                   << MQ << " 1D points are not supported!");
-      HdivDivergence3D<L,MD,MQ>(NE,detJ,Bo,Gc,X,Y,vdim,D1D,Q1D);
+      HdivDivergence3D<L>(NE,detJ,Bo,Gc,X,Y,vdim,D1D,Q1D);
    }
    else
    {
