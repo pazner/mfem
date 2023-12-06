@@ -71,6 +71,18 @@ PixelImage PixelImage::Coarsen() const
    return PixelImage(new_width, new_height, new_data);
 }
 
+bool PixelImage::Empty() const
+{
+   for (int i = 0; i < width; ++i)
+   {
+      for (int j = 0; j < height; ++j)
+      {
+         if ((*this)(i,j) != 0) { return false; }
+      }
+   }
+   return true;
+}
+
 int PixelImage::operator()(int i, int j) const { return data[i + width*j]; }
 
 int PixelImage::operator[](int i) const { return data[i]; }

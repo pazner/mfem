@@ -31,6 +31,8 @@ public:
    int operator()(int i, int j) const;
    int operator[](int i) const;
 
+   bool Empty() const;
+
 private:
    int width = -1;
    int height = -1;
