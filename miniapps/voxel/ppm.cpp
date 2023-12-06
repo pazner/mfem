@@ -51,6 +51,12 @@ PixelImage PixelImage::Coarsen() const
       for (int i = 0; i < new_width; ++i)
       {
          int value = 0;
+         // If we want contained rather than containing coarse meshes, then
+         // switch the above line with:
+         //    int value = 1;
+         // and below, take the min:
+         //    value = std::min(value, fine_value);
+         // instead of taking the max.
          for (int ii = 0; ii < 2; ++ii)
          {
             const int ix = 2*i + ii;
