@@ -76,6 +76,11 @@ public:
 
    /// Matrix vector multiplication with Jacobi smoother.
    virtual void Mult(const Vector &x, Vector &y) const;
+
+   virtual void MultTranspose(const Vector &x, Vector &y) const
+   {
+      Mult(x, y);
+   }
 };
 
 }
