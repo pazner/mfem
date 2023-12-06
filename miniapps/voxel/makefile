@@ -21,12 +21,12 @@ CONFIG_MK = $(MFEM_BUILD_DIR)/config/config.mk
 MFEM_LIB_FILE = mfem_is_not_built
 -include $(CONFIG_MK)
 
-VOXEL_HEADERS = ppm.hpp image_mesh.hpp mg.hpp
-VOXEL_SRC = ppm.cpp image_mesh.cpp mg.cpp
+VOXEL_HEADERS = ppm.hpp image_mesh.hpp mg.hpp mg_elasticity.hpp
+VOXEL_SRC = ppm.cpp image_mesh.cpp mg.cpp mg_elasticity.cpp
 VOXEL_OBJ = $(VOXEL_SRC:.cpp=.o)
 
 SEQ_MINIAPPS =
-PAR_MINIAPPS = voxel_mg
+PAR_MINIAPPS = voxel_mg voxel_elasticity mk_diag_mesh
 
 ifeq ($(MFEM_USE_MPI),NO)
    MINIAPPS = $(SEQ_MINIAPPS)

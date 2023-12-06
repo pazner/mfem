@@ -365,9 +365,12 @@ miniapps/spde/generate_random_field
 miniapps/spde/ParaView
 
 miniapps/voxel/ParaView
+miniapps/voxel/voxel_elasticity
 miniapps/voxel/voxel_mg
+miniapps/voxel/mk_diag_mesh
 miniapps/voxel/mesh.mesh
 miniapps/voxel/sol.gf
+miniapps/voxel/diag.pgm
 
 # Unit test binary and outputs
 tests/unit/output_meshes
