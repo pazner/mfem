@@ -9,7 +9,6 @@
 // terms of the BSD-3 license. We welcome feedback and contributions, see file
 // CONTRIBUTING.md for details.
 
-#include "image_mesh.hpp"
 #include "mg.hpp"
 
 namespace mfem
@@ -97,24 +96,30 @@ ImageProlongation::ImageProlongation(
 void ImageProlongation::Mult(const Vector &u_coarse, Vector &u_fine) const
 {
    const int coarse_ne = coarse_fes.GetNE();
+   const int vdim = coarse_fes.GetVDim();
    Array<int> coarse_vdofs, fine_vdofs;
    Vector u_coarse_local, u_fine_local;
-   for (int i = 0; i < coarse_ne; ++i)
+   for (int vd = 0; vd < vdim; ++vd)
    {
-      coarse_fes.GetElementVDofs(i, coarse_vdofs);
-      u_coarse.GetSubVector(coarse_vdofs, u_coarse_local);
-
-      for (int j = parent_offsets[i]; j < parent_offsets[i+1]; ++j)
+      for (int i = 0; i < coarse_ne; ++i)
       {
-         const ParentIndex &parent = parents[j];
+         coarse_fes.GetElementDofs(i, coarse_vdofs);
+         coarse_fes.DofsToVDofs(vd, coarse_vdofs);
+         u_coarse.GetSubVector(coarse_vdofs, u_coarse_local);
 
-         fine_fes.GetElementVDofs(parent.element_index, fine_vdofs);
-         u_fine_local.SetSize(fine_vdofs.Size());
+         for (int j = parent_offsets[i]; j < parent_offsets[i+1]; ++j)
+         {
+            const ParentIndex &parent = parents[j];
 
-         const DenseMatrix &P = local_P(parent.pmat_index);
-         P.Mult(u_coarse_local, u_fine_local);
+            fine_fes.GetElementDofs(parent.element_index, fine_vdofs);
+            fine_fes.DofsToVDofs(vd, fine_vdofs);
+            u_fine_local.SetSize(fine_vdofs.Size());
 
-         u_fine.SetSubVector(fine_vdofs, u_fine_local);
+            const DenseMatrix &P = local_P(parent.pmat_index);
+            P.Mult(u_coarse_local, u_fine_local);
+
+            u_fine.SetSubVector(fine_vdofs, u_fine_local);
+         }
       }
    }
 
@@ -133,33 +138,41 @@ void ImageProlongation::MultTranspose(
    processed = false;
 
    const int coarse_ne = coarse_fes.GetNE();
+   const int vdim = coarse_fes.GetVDim();
+
    Array<int> coarse_vdofs, fine_vdofs;
    Vector u_coarse_local, u_fine_local;
-   for (int i = 0; i < coarse_ne; ++i)
+
+   for (int vd = 0; vd < vdim; ++vd)
    {
-      coarse_fes.GetElementVDofs(i, coarse_vdofs);
-      u_coarse_local.SetSize(coarse_vdofs.Size());
-
-      for (int j = parent_offsets[i]; j < parent_offsets[i+1]; ++j)
+      for (int i = 0; i < coarse_ne; ++i)
       {
-         const ParentIndex &parent = parents[j];
+         coarse_fes.GetElementDofs(i, coarse_vdofs);
+         coarse_fes.DofsToVDofs(vd, coarse_vdofs);
+         u_coarse_local.SetSize(coarse_vdofs.Size());
 
-         fine_fes.GetElementVDofs(parent.element_index, fine_vdofs);
-         u_fine.GetSubVector(fine_vdofs, u_fine_local);
-
-         for (int k = 0; k < fine_vdofs.Size(); ++k)
+         for (int j = parent_offsets[i]; j < parent_offsets[i+1]; ++j)
          {
-            if (processed[fine_vdofs[k]]) { u_fine_local[k] = 0.0; }
-         }
+            const ParentIndex &parent = parents[j];
 
-         const DenseMatrix &P = local_P(parent.pmat_index);
-         P.MultTranspose(u_fine_local, u_coarse_local);
+            fine_fes.GetElementDofs(parent.element_index, fine_vdofs);
+            fine_fes.DofsToVDofs(vd, fine_vdofs);
+            u_fine.GetSubVector(fine_vdofs, u_fine_local);
 
-         u_coarse.AddElementVector(coarse_vdofs, u_coarse_local);
+            for (int k = 0; k < fine_vdofs.Size(); ++k)
+            {
+               if (processed[fine_vdofs[k]]) { u_fine_local[k] = 0.0; }
+            }
 
-         for (int k : fine_vdofs)
-         {
-            processed[k] = true;
+            const DenseMatrix &P = local_P(parent.pmat_index);
+            P.MultTranspose(u_fine_local, u_coarse_local);
+
+            u_coarse.AddElementVector(coarse_vdofs, u_coarse_local);
+
+            for (int k : fine_vdofs)
+            {
+               processed[k] = true;
+            }
          }
       }
    }
@@ -175,31 +188,40 @@ void ImageProlongation::Coarsen(const Vector &u_fine, Vector &u_coarse) const
    u_coarse = 0.0;
 
    const int coarse_ne = coarse_fes.GetNE();
+   const int vdim = coarse_fes.GetVDim();
+
    Array<int> coarse_vdofs, fine_vdofs;
    Vector u_coarse_local, u_fine_local;
-   for (int i = 0; i < coarse_ne; ++i)
+
+   for (int vd = 0; vd < vdim; ++vd)
    {
-      coarse_fes.GetElementVDofs(i, coarse_vdofs);
-      u_coarse_local.SetSize(coarse_vdofs.Size());
-
-      for (int j = parent_offsets[i]; j < parent_offsets[i+1]; ++j)
+      for (int i = 0; i < coarse_ne; ++i)
       {
-         const ParentIndex &parent = parents[j];
+         coarse_fes.GetElementDofs(i, coarse_vdofs);
+         coarse_fes.DofsToVDofs(vd, coarse_vdofs);
+         u_coarse_local.SetSize(coarse_vdofs.Size());
 
-         fine_fes.GetElementVDofs(parent.element_index, fine_vdofs);
-         u_fine.GetSubVector(fine_vdofs, u_fine_local);
-
-         const DenseMatrix &R = local_R(parent.pmat_index);
-
-         for (int k = 0; k < R.Height(); ++k)
+         for (int j = parent_offsets[i]; j < parent_offsets[i+1]; ++j)
          {
-            if (!std::isfinite(R(k,0))) { continue; }
-            Vector R_row(R.Width());
-            R.GetRow(k, R_row);
-            u_coarse[coarse_vdofs[k]] = R_row*u_fine_local;
+            const ParentIndex &parent = parents[j];
+
+            fine_fes.GetElementDofs(parent.element_index, fine_vdofs);
+            fine_fes.DofsToVDofs(vd, fine_vdofs);
+            u_fine.GetSubVector(fine_vdofs, u_fine_local);
+
+            const DenseMatrix &R = local_R(parent.pmat_index);
+
+            for (int k = 0; k < R.Height(); ++k)
+            {
+               if (!std::isfinite(R(k,0))) { continue; }
+               Vector R_row(R.Width());
+               R.GetRow(k, R_row);
+               u_coarse[coarse_vdofs[k]] = R_row*u_fine_local;
+            }
          }
       }
    }
+
    for (int i : coarse_ess_dofs)
    {
       u_coarse[i] = 0.0;
@@ -213,7 +235,8 @@ ImageMultigrid::ImageMultigrid(const ImageMesh &&fine_mesh,
    ImageMesh *current_mesh = meshes.back().get();
 
    while (current_mesh->GetImage().Width() >= 4 &&
-          current_mesh->GetImage().Height() >= 4)
+          current_mesh->GetImage().Height() >= 4 &&
+          !current_mesh->GetImage().Coarsen().Empty())
    {
       std::cout << "Current mesh: " << current_mesh->GetNE() << '\n';
       ImageMesh *new_mesh = new ImageMesh(current_mesh->Coarsen());

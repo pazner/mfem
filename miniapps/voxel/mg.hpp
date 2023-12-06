@@ -13,6 +13,7 @@
 #define MG_HPP
 
 #include "mfem.hpp"
+#include "image_mesh.hpp"
 
 namespace mfem
 {
