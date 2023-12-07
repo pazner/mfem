@@ -369,6 +369,8 @@ miniapps/voxel/voxel_elasticity
 miniapps/voxel/image_mg
 miniapps/voxel/mk_diag_mesh
 miniapps/voxel/mesh.mesh
+miniapps/voxel/displaced.mesh
+miniapps/voxel/original.mesh
 miniapps/voxel/sol.gf
 miniapps/voxel/diag.pgm
 

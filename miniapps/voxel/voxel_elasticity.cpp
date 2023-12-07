@@ -42,11 +42,11 @@ int main(int argc, char *argv[])
    // mg.GetFineForm().RecoverFEMSolution(X, b, x);
    // x.Save("sol.gf");
 
+   mesh.Save("original.mesh");
    mesh.SetNodalFESpace(&fespace);
-   GridFunction &nodes = *mesh.GetNodes();
-   nodes += x;
-   x *= -1;
+   *mesh.GetNodes() += x;
    mesh.Save("displaced.mesh");
+   x *= -1;
    x.Save("sol.gf");
    x *= -1;
 
