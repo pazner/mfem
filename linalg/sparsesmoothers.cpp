@@ -51,6 +51,25 @@ void GSSmoother::Mult(const Vector &x, Vector &y) const
    }
 }
 
+void GSSmoother::MultTranspose(const Vector &x, Vector &y) const
+{
+   if (!iterative_mode)
+   {
+      y = 0.0;
+   }
+   for (int i = 0; i < iterations; i++)
+   {
+      if (type != 2)
+      {
+         oper->Gauss_Seidel_back(x, y);
+      }
+      if (type != 1)
+      {
+         oper->Gauss_Seidel_forw(x, y);
+      }
+   }
+}
+
 /// Create the Jacobi smoother.
 DSmoother::DSmoother(const SparseMatrix &a, int t, double s, int it)
    : SparseSmoother(a)

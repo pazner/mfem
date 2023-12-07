@@ -49,6 +49,8 @@ public:
 
    /// Matrix vector multiplication with GS Smoother.
    virtual void Mult(const Vector &x, Vector &y) const;
+
+   virtual void MultTranspose(const Vector &x, Vector &y) const;
 };
 
 /// Data type for scaled Jacobi-type smoother of sparse matrix
