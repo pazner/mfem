@@ -47,7 +47,7 @@ int main(int argc, char *argv[])
    x.Save("sol.gf");
    fespace.GetMesh()->Save("mesh.mesh");
 
-   ParaViewDataCollection pv("VoxelMG", fespace.GetMesh());
+   ParaViewDataCollection pv("ImageMG", fespace.GetMesh());
    pv.SetPrefixPath("ParaView");
    pv.SetHighOrderOutput(true);
    pv.SetLevelsOfDetail(order + 1);
