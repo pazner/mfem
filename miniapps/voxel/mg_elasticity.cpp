@@ -47,7 +47,8 @@ ImageElasticityMultigrid::ImageElasticityMultigrid(
       OperatorHandle A;
       forms[i]->FormSystemMatrix(*ess_dofs[i], A);
 
-      DSmoother *smoother = new DSmoother(*A.As<SparseMatrix>(), 0, 0.8);
+      // DSmoother *smoother = new DSmoother(*A.As<SparseMatrix>(), 0, 0.8);
+      GSSmoother *smoother = new GSSmoother(*A.As<SparseMatrix>());
       AddLevel(A.Ptr(), smoother, false, true);
    }
 

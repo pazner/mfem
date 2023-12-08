@@ -367,6 +367,7 @@ miniapps/spde/ParaView
 miniapps/voxel/ParaView
 miniapps/voxel/voxel_elasticity
 miniapps/voxel/image_mg
+miniapps/voxel/voxel_mg
 miniapps/voxel/mk_diag_mesh
 miniapps/voxel/mesh.mesh
 miniapps/voxel/displaced.mesh

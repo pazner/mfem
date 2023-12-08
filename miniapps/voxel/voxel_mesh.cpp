@@ -1,0 +1,189 @@
+#include "voxel_mesh.hpp"
+
+namespace mfem
+{
+
+VoxelMesh::VoxelMesh(const std::string &filename, double h_) : Mesh(filename),
+   h(h_)
+{
+   Vector mmin, mmax;
+   GetBoundingBox(mmin, mmax, 0);
+
+   n.resize(Dim);
+   for (int i = 0; i < Dim; ++i) { n[i] = (mmax[i] - mmin[i])/h; }
+
+   auto translate = [mmin](const Vector &x_old, Vector &x_new)
+   {
+      subtract(x_old, mmin, x_new);
+   };
+   VectorFunctionCoefficient translate_coeff(Dim, translate);
+
+   Transform(translate_coeff);
+
+   Vector center;
+   std::vector<int> center_idx(Dim);
+   idx2lex.resize(NumOfElements);
+   for (int i = 0; i < NumOfElements; ++i)
+   {
+      GetElementCenter(i, center);
+      for (int d = 0; d < Dim; ++d)
+      {
+         center_idx[d] = std::floor(center[d] / h);
+      }
+
+      LexIndex lex(center_idx.data(), Dim);
+      idx2lex[i] = lex;
+      lex2idx[lex.LinearIndex(n)] = i;
+   }
+}
+
+VoxelMesh::VoxelMesh(double h_, const std::vector<int> &n_)
+   : Mesh(n_.size(), 0, 0), h(h_), n(n_) { }
+
+VoxelMesh VoxelMesh::Coarsen() const
+{
+   double new_h = 2.0*h;
+   std::vector<int> new_n(Dim);
+   for (int i = 0; i < Dim; ++i)
+   {
+      new_n[i] = static_cast<int>(std::ceil(0.5*n[i]));
+   }
+   VoxelMesh coarsened_mesh(new_h, new_n);
+
+   std::vector<int> new_n_vert(Dim);
+   for (int i = 0; i < Dim; ++i) { new_n_vert[i] = new_n[i] + 1; }
+
+   std::unordered_map<int,int> lex2vert;
+
+   auto coords_to_lex = [&](const std::array<double,3> &coords)
+   {
+      LexIndex idx;
+      idx.ndim = Dim;
+      for (int d = 0; d < Dim; ++d)
+      {
+         idx.coords[d] = static_cast<int>(std::round(coords[d] / h));
+      }
+      return idx;
+   };
+
+   auto maybe_add_vertex = [&](const LexIndex &lex,
+                               const std::array<double,3> &coords)
+   {
+      const int lin_idx = lex.LinearIndex(new_n_vert);
+      if (lex2vert.find(lin_idx) == lex2vert.end())
+      {
+         lex2vert[lin_idx] = coarsened_mesh.NumOfVertices;
+         coarsened_mesh.AddVertex(coords.data());
+      }
+   };
+
+   std::array<double,3> v;
+
+   // Add every even-indexed vertex and all of its neighbors
+   for (int iv = 0; iv < NumOfVertices; ++iv)
+   {
+      // Populate v with the coordinates of vertex iv
+      {
+         const double *v_iv = vertices[iv]();
+         std::copy(v_iv, v_iv + Dim, v.begin());
+      }
+
+      // Retain only the even-numbered vertices
+      LexIndex lex = coords_to_lex(v);
+      bool even = true;
+      for (int d = 0; d < Dim; ++d)
+      {
+         if (lex.coords[d] % 2 != 0)
+         {
+            even = false;
+            break;
+         }
+      }
+      if (!even) { continue; }
+
+      // Add the vertex to the coarse mesh (if it doesn't exist already)
+      for (int d = 0; d < Dim; ++d) { lex.coords[d] /= 2; }
+      maybe_add_vertex(lex, v);
+
+      // Add all of its neighbors to the coarse mesh (if they don't exist)
+      const int ngrid = std::pow(3, Dim);
+
+      std::array<int,3> shift;
+      for (int i = 0; i < ngrid; ++i)
+      {
+         int j = i;
+         bool in_bounds = true;
+         for (int d = 0; d < Dim; ++d)
+         {
+            shift[d] = (j % 3) - 1;
+            j /= 3;
+
+            if (lex.coords[d] + shift[d] < 0 ||
+                lex.coords[d] + shift[d] >= new_n_vert[d])
+            {
+               in_bounds = false; break;
+            }
+         }
+
+         if (!in_bounds) { continue; }
+
+         for (int d = 0; d < Dim; ++d)
+         {
+            v[d] += shift[d]*new_h;
+            lex.coords[d] += shift[d];
+         }
+
+         // If this vertex hasn't been added yet, add it.
+         maybe_add_vertex(lex, v);
+
+         // Reset (shift back)
+         for (int d = 0; d < Dim; ++d)
+         {
+            v[d] -= shift[d]*new_h;
+            lex.coords[d] -= shift[d];
+         }
+      }
+   }
+
+   // Get the vertex integration rule for the geometry
+   const IntegrationRule &ir = *Geometries.GetVertices(GetElementGeometry(0));
+
+   // Having added all the (potential) coarse mesh vertices, we now add the
+   // coarse mesh elements
+   for (int ie = 0; ie < NumOfElements; ++ie)
+   {
+      LexIndex lex = idx2lex[ie];
+      // Figure out which macro element we're in
+      for (int d = 0; d < Dim; ++d) { lex.coords[d] /= 2; }
+
+      const int lin_idx = lex.LinearIndex(new_n);
+      if (coarsened_mesh.lex2idx.find(lin_idx) == coarsened_mesh.lex2idx.end())
+      {
+         coarsened_mesh.lex2idx[lin_idx] = coarsened_mesh.NumOfElements;
+         coarsened_mesh.idx2lex.push_back(lex);
+
+         std::vector<int> el_vert(ir.Size());
+         for (int iv = 0; iv < ir.Size(); ++iv)
+         {
+            std::array<double,3> ip;
+            ir[iv].Get(ip.data(), Dim);
+            for (int d = 0; d < Dim; ++d) { lex.coords[d] += ip[d]; }
+            const int v_lin_idx = lex.LinearIndex(new_n_vert);
+            el_vert[iv] = lex2vert[v_lin_idx];
+            // Reset
+            for (int d = 0; d < Dim; ++d) { lex.coords[d] -= ip[d]; }
+         }
+
+         if (Dim == 1) { MFEM_ABORT("To be implemented"); }
+         else if (Dim == 2) { coarsened_mesh.AddQuad(el_vert.data()); }
+         else if (Dim == 3) { coarsened_mesh.AddHex(el_vert.data()); }
+         else { MFEM_ABORT("Unsupported dimension."); }
+      }
+   }
+
+   coarsened_mesh.RemoveUnusedVertices();
+   coarsened_mesh.FinalizeMesh();
+   return coarsened_mesh;
+}
+
+}
