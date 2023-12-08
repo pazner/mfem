@@ -50,7 +50,7 @@ ImageProlongation::ImageProlongation(
       {
          for (int ii = 0; ii < 2; ++ii)
          {
-            const int fine_idx = fine_mesh.GetElementIndex(2*lex.x + ii, 2*lex.y + jj);
+            const int fine_idx = fine_mesh.GetElementIndex(2*lex[0] + ii, 2*lex[1] + jj);
             if (fine_idx >= 0)
             {
                parents[offset] = {fine_idx, ii + 2*jj};

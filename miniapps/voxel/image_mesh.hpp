@@ -14,18 +14,12 @@
 
 #include "mfem.hpp"
 #include "ppm.hpp"
+#include "lex.hpp"
 
 #include <unordered_map>
 
 namespace mfem
 {
-
-struct LexIndex
-{
-   int x;
-   int y;
-   LexIndex(int x_, int y_) : x(x_), y(y_) { }
-};
 
 class ImageMesh : public Mesh
 {
