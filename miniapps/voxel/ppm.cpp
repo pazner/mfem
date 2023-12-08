@@ -11,7 +11,6 @@
 
 #include "ppm.hpp"
 #include <fstream>
-#include <cstdint>
 
 namespace mfem
 {
