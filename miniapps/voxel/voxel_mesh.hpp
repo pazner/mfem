@@ -32,6 +32,16 @@ public:
    VoxelMesh(const std::string &filename, double h);
 
    VoxelMesh Coarsen() const;
+
+   int GetElementIndex(const LexIndex &lex) const
+   {
+      const auto result = lex2idx.find(lex.LinearIndex(n));
+      if (result != lex2idx.end()) { return result->second; }
+      return -1; // invalid index: element not found
+   }
+   LexIndex GetLexicographicIndex(int idx) const { return idx2lex[idx]; }
+
+   const std::vector<int> &GetVoxelBounds() const { return n; }
 };
 
 }
