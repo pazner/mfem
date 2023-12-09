@@ -39,16 +39,4 @@ int main(int argc, char *argv[])
    pv.Save();
 
    return 0;
-
-   for (int iv = 0; iv < mesh.GetNV(); ++iv)
-   {
-      const double *v = mesh.GetVertex(iv);
-      for (int j = 0; j < 3; ++j)
-      {
-         std::cout << v[j]/h << '\t';
-      }
-      std::cout << '\n';
-   }
-
-   return 0;
 }

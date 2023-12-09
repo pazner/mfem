@@ -6,6 +6,8 @@ namespace mfem
 VoxelMesh::VoxelMesh(const std::string &filename, double h_) : Mesh(filename),
    h(h_)
 {
+   SetCurvature(0);
+
    Vector mmin, mmax;
    GetBoundingBox(mmin, mmax, 0);
 
@@ -32,8 +34,11 @@ VoxelMesh::VoxelMesh(const std::string &filename, double h_) : Mesh(filename),
       }
 
       LexIndex lex(center_idx.data(), Dim);
+      const int lin_idx = lex.LinearIndex(n);
+
       idx2lex[i] = lex;
-      lex2idx[lex.LinearIndex(n)] = i;
+      MFEM_VERIFY(lex2idx.find(lin_idx) == lex2idx.end(), "");
+      lex2idx[lin_idx] = i;
    }
 }
 
@@ -169,7 +174,7 @@ VoxelMesh VoxelMesh::Coarsen() const
             ir[iv].Get(ip.data(), Dim);
             for (int d = 0; d < Dim; ++d) { lex.coords[d] += ip[d]; }
             const int v_lin_idx = lex.LinearIndex(new_n_vert);
-            el_vert[iv] = lex2vert[v_lin_idx];
+            el_vert[iv] = lex2vert.at(v_lin_idx);
             // Reset
             for (int d = 0; d < Dim; ++d) { lex.coords[d] -= ip[d]; }
          }
