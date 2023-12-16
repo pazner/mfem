@@ -24,6 +24,13 @@ int main(int argc, char *argv[])
    FiniteElementSpace &fespace = mg.GetFineSpace();
    const int nl = mg.nlevels;
 
+   for (int i = 0; i < nl; ++i)
+   {
+      std::cout << "Level " << i << "\\\\";
+      std::cout << mg.meshes[nl-1-i]->GetNE() << " elements\\\\";
+      std::cout << mg.spaces[nl-1-i]->GetTrueVSize() << " DOFs\n";
+   }
+
    ConstantCoefficient one(1.0);
    LinearForm b(&fespace);
    b.AddDomainIntegrator(new DomainLFIntegrator(one));

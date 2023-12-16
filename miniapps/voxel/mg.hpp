@@ -19,12 +19,6 @@
 namespace mfem
 {
 
-struct ParentIndex
-{
-   int element_index;
-   int pmat_index;
-};
-
 class VoxelProlongation : public Operator
 {
    const FiniteElementSpace &coarse_fes;

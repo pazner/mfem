@@ -44,6 +44,15 @@ public:
    const std::vector<int> &GetVoxelBounds() const { return n; }
 };
 
+struct ParentIndex
+{
+   int element_index;
+   int pmat_index;
+};
+
+void GetVoxelParents(const VoxelMesh &coarse_mesh, const VoxelMesh &fine_mesh,
+                     Array<ParentIndex> &parents, Array<int> &parent_offsets);
+
 }
 
 #endif

@@ -14,6 +14,12 @@ VoxelMesh::VoxelMesh(const std::string &filename, double h_) : Mesh(filename),
    n.resize(Dim);
    for (int i = 0; i < Dim; ++i) { n[i] = (mmax[i] - mmin[i])/h; }
 
+   int prod = 1;
+   for (int i = 0; i < Dim; ++i) { prod *= n[i]; }
+   std::cout << "Elements: " << GetNE() << '\n';
+   std::cout << "Bounding: " << prod << '\n';
+   std::cout << "Fraction: " << 100.0*GetNE()/prod << "%\n";
+
    auto translate = [mmin](const Vector &x_old, Vector &x_new)
    {
       subtract(x_old, mmin, x_new);
@@ -189,6 +195,58 @@ VoxelMesh VoxelMesh::Coarsen() const
    coarsened_mesh.RemoveUnusedVertices();
    coarsened_mesh.FinalizeMesh();
    return coarsened_mesh;
+}
+
+void GetVoxelParents(const VoxelMesh &coarse_mesh, const VoxelMesh &fine_mesh,
+                     Array<ParentIndex> &parents, Array<int> &parent_offsets)
+{
+   const int dim = coarse_mesh.Dimension();
+   const int coarse_ne = coarse_mesh.GetNE();
+   const int ngrid = pow(2, dim); // number of fine elements per coarse elements
+
+   parent_offsets.SetSize(coarse_ne + 1);
+   parents.SetSize(ngrid*coarse_ne);
+
+   int offset = 0;
+   for (int ie = 0; ie < coarse_ne; ++ie)
+   {
+      parent_offsets[ie] = offset;
+      LexIndex lex = coarse_mesh.GetLexicographicIndex(ie);
+
+      // Convert from coarse lexicographic index to fine index
+      for (int d = 0; d < dim; ++d)
+      {
+         lex.coords[d] *= 2;
+      }
+
+      for (int i = 0; i < ngrid; ++i)
+      {
+         int j = i;
+         std::array<int,3> shift;
+         for (int d = 0; d < dim; ++d)
+         {
+            shift[d] = j % 2;
+            j /= 2;
+
+            lex.coords[d] += shift[d];
+         }
+
+         const int fine_idx = fine_mesh.GetElementIndex(lex);
+         if (fine_idx >= 0)
+         {
+            parents[offset] = {fine_idx, i};
+            ++offset;
+         }
+
+         // Reset
+         for (int d = 0; d < dim; ++d)
+         {
+            lex.coords[d] -= shift[d];
+         }
+      }
+   }
+   parent_offsets.Last() = offset;
+   parents.SetSize(offset);
 }
 
 }

@@ -36,52 +36,9 @@ VoxelProlongation::VoxelProlongation(
    VoxelMesh &fine_mesh = GetVoxelMesh(fine_fes);
 
    const int dim = coarse_mesh.Dimension();
-   const int coarse_ne = coarse_mesh.GetNE();
    const int ngrid = pow(2, dim); // number of fine elements per coarse elements
 
-   parent_offsets.SetSize(coarse_ne + 1);
-   parents.SetSize(ngrid*coarse_ne);
-
-   int offset = 0;
-   for (int ie = 0; ie < coarse_ne; ++ie)
-   {
-      parent_offsets[ie] = offset;
-      LexIndex lex = coarse_mesh.GetLexicographicIndex(ie);
-
-      // Convert from coarse lexicographic index to fine index
-      for (int d = 0; d < dim; ++d)
-      {
-         lex.coords[d] *= 2;
-      }
-
-      for (int i = 0; i < ngrid; ++i)
-      {
-         int j = i;
-         std::array<int,3> shift;
-         for (int d = 0; d < dim; ++d)
-         {
-            shift[d] = j % 2;
-            j /= 2;
-
-            lex.coords[d] += shift[d];
-         }
-
-         const int fine_idx = fine_mesh.GetElementIndex(lex);
-         if (fine_idx >= 0)
-         {
-            parents[offset] = {fine_idx, i};
-            ++offset;
-         }
-
-         // Reset
-         for (int d = 0; d < dim; ++d)
-         {
-            lex.coords[d] -= shift[d];
-         }
-      }
-   }
-   parent_offsets.Last() = offset;
-   parents.SetSize(offset);
+   GetVoxelParents(coarse_mesh, fine_mesh, parents, parent_offsets);
 
    // Set up the local prolongation matrices
 
