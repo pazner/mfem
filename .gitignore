@@ -365,10 +365,13 @@ miniapps/spde/generate_random_field
 miniapps/spde/ParaView
 
 miniapps/voxel/ParaView
+miniapps/voxel/Voxel
 miniapps/voxel/voxel_elasticity
 miniapps/voxel/image_mg
 miniapps/voxel/voxel_mg
 miniapps/voxel/mk_diag_mesh
+miniapps/voxel/preprocess
+miniapps/voxel/par_solve
 miniapps/voxel/mesh.mesh
 miniapps/voxel/displaced.mesh
 miniapps/voxel/original.mesh
