@@ -344,7 +344,7 @@ void ParVoxelProlongation::MultTranspose(
                                        ndof_per_el);
 
          const DenseMatrix &P = local_P(f2c.pmat_index);
-         P.MultTranspose(u_fine_lvec, u_coarse_local);
+         P.MultTranspose(u_fine_local, u_coarse_local);
 
          offset += ndof_per_el;
       }
