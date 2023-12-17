@@ -120,19 +120,44 @@ int main(int argc, char *argv[])
    ParGridFunction xf(&fine_fes);
    xf.SetFromTrueDofs(xf_tv);
 
+   L2_FECollection l2_fec(0, fine_mesh.Dimension());
+   ParFiniteElementSpace l2_fes(&fine_mesh, &l2_fec);
+   ParGridFunction rank_gf(&l2_fes);
+   rank_gf = Mpi::WorldRank();
+
    ParaViewDataCollection pv("ParSolve", &fine_mesh);
    pv.SetPrefixPath("ParaView");
    pv.SetHighOrderOutput(true);
    pv.SetLevelsOfDetail(order + 1);
    pv.RegisterField("u", &xf);
+   pv.RegisterField("rank", &rank_gf);
    pv.SetCycle(0);
    pv.SetTime(0);
    pv.Save();
+
+   pv.DeregisterField("rank");
 
    pv.SetMesh(&coarse_mesh);
    pv.RegisterField("u", &xc);
    pv.SetCycle(1);
    pv.SetTime(1);
+   pv.Save();
+
+   xf.ProjectCoefficient(coeff);
+   pv.SetMesh(&fine_mesh);
+   pv.RegisterField("u", &xf);
+   pv.SetCycle(2);
+   pv.SetTime(2);
+   pv.Save();
+
+   xf.GetTrueDofs(xf_tv);
+   P.Coarsen(xf_tv, xc_tv);
+   xc.SetFromTrueDofs(xc_tv);
+
+   pv.SetMesh(&coarse_mesh);
+   pv.RegisterField("u", &xc);
+   pv.SetCycle(3);
+   pv.SetTime(3);
    pv.Save();
 
    return 0;
