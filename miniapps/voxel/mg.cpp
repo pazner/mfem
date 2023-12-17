@@ -461,7 +461,7 @@ void ImageProlongation::Coarsen(const Vector &u_fine, Vector &u_coarse) const
    const int vdim = coarse_fes.GetVDim();
 
    Array<int> coarse_vdofs, fine_vdofs;
-   Vector u_coarse_local, u_fine_local;
+   Vector u_fine_local;
 
    for (int vd = 0; vd < vdim; ++vd)
    {
@@ -469,7 +469,6 @@ void ImageProlongation::Coarsen(const Vector &u_fine, Vector &u_coarse) const
       {
          coarse_fes.GetElementDofs(i, coarse_vdofs);
          coarse_fes.DofsToVDofs(vd, coarse_vdofs);
-         u_coarse_local.SetSize(coarse_vdofs.Size());
 
          for (int j = parent_offsets[i]; j < parent_offsets[i+1]; ++j)
          {
