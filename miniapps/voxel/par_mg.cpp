@@ -198,8 +198,6 @@ void ParVoxelProlongation::Mult(const Vector &u_coarse, Vector &u_fine) const
 
    const int ndof_per_el = coarse_fes.GetFE(0)->GetDof();
 
-   const int vd = 0; // <-- TODO!!!
-
    // Communication
    const MPI_Comm comm = coarse_fes.GetComm();
    const int nsend = mapping.coarse_to_fine.size();
@@ -217,18 +215,22 @@ void ParVoxelProlongation::Mult(const Vector &u_coarse, Vector &u_fine) const
                             ndof_per_el * vdim);
 
       int offset = 0;
-      for (const auto &c2f : mapping.coarse_to_fine[i].coarse_to_fine)
+
+      for (int vd = 0; vd < vdim; ++vd)
       {
-         coarse_fes.GetElementDofs(c2f.coarse_element_index, coarse_vdofs);
-         coarse_fes.DofsToVDofs(vd, coarse_vdofs);
-         u_coarse_lvec.GetSubVector(coarse_vdofs, u_coarse_local);
+         for (const auto &c2f : mapping.coarse_to_fine[i].coarse_to_fine)
+         {
+            coarse_fes.GetElementDofs(c2f.coarse_element_index, coarse_vdofs);
+            coarse_fes.DofsToVDofs(vd, coarse_vdofs);
+            u_coarse_lvec.GetSubVector(coarse_vdofs, u_coarse_local);
 
-         u_fine_local.NewDataAndSize(&c2f_buffers[i][offset], ndof_per_el);
+            u_fine_local.NewDataAndSize(&c2f_buffers[i][offset], ndof_per_el);
 
-         const DenseMatrix &P = local_P(c2f.pmat_index);
-         P.Mult(u_coarse_local, u_fine_local);
+            const DenseMatrix &P = local_P(c2f.pmat_index);
+            P.Mult(u_coarse_local, u_fine_local);
 
-         offset += ndof_per_el;
+            offset += ndof_per_el;
+         }
       }
 
       MPI_Isend(c2f_buffers[i].data(), c2f_buffers[i].size(),
@@ -246,25 +248,29 @@ void ParVoxelProlongation::Mult(const Vector &u_coarse, Vector &u_fine) const
 
    // Local computations
    const int coarse_ne = coarse_fes.GetNE();
-   for (int i = 0; i < coarse_ne; ++i)
+
+   for (int vd = 0; vd < vdim; ++vd)
    {
-      coarse_fes.GetElementDofs(i, coarse_vdofs);
-      coarse_fes.DofsToVDofs(vd, coarse_vdofs);
-      u_coarse_lvec.GetSubVector(coarse_vdofs, u_coarse_local);
-
-      for (int j = mapping.local_parent_offsets[i];
-           j < mapping.local_parent_offsets[i+1]; ++j)
+      for (int i = 0; i < coarse_ne; ++i)
       {
-         const ParentIndex &parent = mapping.local_parents[j];
+         coarse_fes.GetElementDofs(i, coarse_vdofs);
+         coarse_fes.DofsToVDofs(vd, coarse_vdofs);
+         u_coarse_lvec.GetSubVector(coarse_vdofs, u_coarse_local);
 
-         fine_fes.GetElementDofs(parent.element_index, fine_vdofs);
-         fine_fes.DofsToVDofs(vd, fine_vdofs);
-         u_fine_local.SetSize(fine_vdofs.Size());
+         for (int j = mapping.local_parent_offsets[i];
+              j < mapping.local_parent_offsets[i+1]; ++j)
+         {
+            const ParentIndex &parent = mapping.local_parents[j];
 
-         const DenseMatrix &P = local_P(parent.pmat_index);
-         P.Mult(u_coarse_local, u_fine_local);
+            fine_fes.GetElementDofs(parent.element_index, fine_vdofs);
+            fine_fes.DofsToVDofs(vd, fine_vdofs);
+            u_fine_local.SetSize(fine_vdofs.Size());
 
-         u_fine_lvec.SetSubVector(fine_vdofs, u_fine_local);
+            const DenseMatrix &P = local_P(parent.pmat_index);
+            P.Mult(u_coarse_local, u_fine_local);
+
+            u_fine_lvec.SetSubVector(fine_vdofs, u_fine_local);
+         }
       }
    }
 
@@ -273,12 +279,16 @@ void ParVoxelProlongation::Mult(const Vector &u_coarse, Vector &u_fine) const
    {
       MPI_Wait(&recv_req[i], MPI_STATUS_IGNORE);
       int offset = 0;
-      for (const auto &f2c : mapping.fine_to_coarse[i].fine_to_coarse)
+      for (int vd = 0; vd < vdim; ++vd)
       {
-         u_fine_local.NewDataAndSize(&f2c_buffers[i][offset], ndof_per_el);
-         fine_fes.GetElementVDofs(f2c.fine_element_index, fine_vdofs);
-         u_fine_lvec.SetSubVector(fine_vdofs, u_fine_local);
-         offset += ndof_per_el;
+         for (const auto &f2c : mapping.fine_to_coarse[i].fine_to_coarse)
+         {
+            u_fine_local.NewDataAndSize(&f2c_buffers[i][offset], ndof_per_el);
+            fine_fes.GetElementDofs(f2c.fine_element_index, fine_vdofs);
+            fine_fes.DofsToVDofs(vd, fine_vdofs);
+            u_fine_lvec.SetSubVector(fine_vdofs, u_fine_local);
+            offset += ndof_per_el;
+         }
       }
    }
 
@@ -306,8 +316,6 @@ void ParVoxelProlongation::MultTranspose(
 
    const int ndof_per_el = coarse_fes.GetFE(0)->GetDof();
 
-   const int vd = 0; // <-- TODO!!!
-
    Array<bool> processed(u_fine_lvec.Size());
    processed = false;
 
@@ -328,26 +336,29 @@ void ParVoxelProlongation::MultTranspose(
          mapping.fine_to_coarse[i].fine_to_coarse.size() * ndof_per_el * vdim);
 
       int offset = 0;
-      for (const auto &f2c : mapping.fine_to_coarse[i].fine_to_coarse)
+      for (int vd = 0; vd < vdim; ++vd)
       {
-         fine_fes.GetElementDofs(f2c.fine_element_index, fine_vdofs);
-         fine_fes.DofsToVDofs(vd, fine_vdofs);
-         u_fine_lvec.GetSubVector(fine_vdofs, u_fine_local);
-
-         for (int k = 0; k < fine_vdofs.Size(); ++k)
+         for (const auto &f2c : mapping.fine_to_coarse[i].fine_to_coarse)
          {
-            const int k_dof = fine_vdofs[k];
-            if (processed[k_dof]) { u_fine_local[k] = 0.0; }
-            processed[k_dof] = true;
+            fine_fes.GetElementDofs(f2c.fine_element_index, fine_vdofs);
+            fine_fes.DofsToVDofs(vd, fine_vdofs);
+            u_fine_lvec.GetSubVector(fine_vdofs, u_fine_local);
+
+            for (int k = 0; k < fine_vdofs.Size(); ++k)
+            {
+               const int k_dof = fine_vdofs[k];
+               if (processed[k_dof]) { u_fine_local[k] = 0.0; }
+               processed[k_dof] = true;
+            }
+
+            u_coarse_local.NewDataAndSize(&f2c_buffers[i][offset],
+                                          ndof_per_el);
+
+            const DenseMatrix &P = local_P(f2c.pmat_index);
+            P.MultTranspose(u_fine_local, u_coarse_local);
+
+            offset += ndof_per_el;
          }
-
-         u_coarse_local.NewDataAndSize(&f2c_buffers[i][offset],
-                                       ndof_per_el);
-
-         const DenseMatrix &P = local_P(f2c.pmat_index);
-         P.MultTranspose(u_fine_local, u_coarse_local);
-
-         offset += ndof_per_el;
       }
 
       MPI_Isend(f2c_buffers[i].data(),
@@ -369,32 +380,36 @@ void ParVoxelProlongation::MultTranspose(
    u_coarse_lvec = 0.0;
 
    const int coarse_ne = coarse_fes.GetNE();
-   for (int i = 0; i < coarse_ne; ++i)
+
+   for (int vd = 0; vd < vdim; ++vd)
    {
-      coarse_fes.GetElementDofs(i, coarse_vdofs);
-      coarse_fes.DofsToVDofs(vd, coarse_vdofs);
-      u_coarse_local.SetSize(coarse_vdofs.Size());
-
-      for (int j = mapping.local_parent_offsets[i];
-           j < mapping.local_parent_offsets[i+1]; ++j)
+      for (int i = 0; i < coarse_ne; ++i)
       {
-         const ParentIndex &parent = mapping.local_parents[j];
+         coarse_fes.GetElementDofs(i, coarse_vdofs);
+         coarse_fes.DofsToVDofs(vd, coarse_vdofs);
+         u_coarse_local.SetSize(coarse_vdofs.Size());
 
-         fine_fes.GetElementDofs(parent.element_index, fine_vdofs);
-         fine_fes.DofsToVDofs(vd, fine_vdofs);
-         u_fine_lvec.GetSubVector(fine_vdofs, u_fine_local);
-
-         for (int k = 0; k < fine_vdofs.Size(); ++k)
+         for (int j = mapping.local_parent_offsets[i];
+              j < mapping.local_parent_offsets[i+1]; ++j)
          {
-            const int k_dof = fine_vdofs[k];
-            if (processed[k_dof]) { u_fine_local[k] = 0.0; }
-            processed[k_dof] = true;
+            const ParentIndex &parent = mapping.local_parents[j];
+
+            fine_fes.GetElementDofs(parent.element_index, fine_vdofs);
+            fine_fes.DofsToVDofs(vd, fine_vdofs);
+            u_fine_lvec.GetSubVector(fine_vdofs, u_fine_local);
+
+            for (int k = 0; k < fine_vdofs.Size(); ++k)
+            {
+               const int k_dof = fine_vdofs[k];
+               if (processed[k_dof]) { u_fine_local[k] = 0.0; }
+               processed[k_dof] = true;
+            }
+
+            const DenseMatrix &P = local_P(parent.pmat_index);
+            P.MultTranspose(u_fine_local, u_coarse_local);
+
+            u_coarse_lvec.AddElementVector(coarse_vdofs, u_coarse_local);
          }
-
-         const DenseMatrix &P = local_P(parent.pmat_index);
-         P.MultTranspose(u_fine_local, u_coarse_local);
-
-         u_coarse_lvec.AddElementVector(coarse_vdofs, u_coarse_local);
       }
    }
 
@@ -403,13 +418,18 @@ void ParVoxelProlongation::MultTranspose(
    {
       MPI_Wait(&recv_req[i], MPI_STATUS_IGNORE);
       int offset = 0;
-      for (const auto &c2f : mapping.coarse_to_fine[i].coarse_to_fine)
+
+      for (int vd = 0; vd < vdim; ++vd)
       {
-         u_coarse_local.NewDataAndSize(&c2f_buffers[i][offset],
-                                       ndof_per_el);
-         coarse_fes.GetElementVDofs(c2f.coarse_element_index, coarse_vdofs);
-         u_coarse_lvec.AddElementVector(coarse_vdofs, u_coarse_local);
-         offset += ndof_per_el;
+         for (const auto &c2f : mapping.coarse_to_fine[i].coarse_to_fine)
+         {
+            u_coarse_local.NewDataAndSize(&c2f_buffers[i][offset],
+                                          ndof_per_el);
+            coarse_fes.GetElementDofs(c2f.coarse_element_index, coarse_vdofs);
+            coarse_fes.DofsToVDofs(vd, coarse_vdofs);
+            u_coarse_lvec.AddElementVector(coarse_vdofs, u_coarse_local);
+            offset += ndof_per_el;
+         }
       }
    }
 
@@ -436,8 +456,6 @@ void ParVoxelProlongation::Coarsen(const Vector &u_fine, Vector &u_coarse) const
 
    const int ndof_per_el = coarse_fes.GetFE(0)->GetDof();
 
-   const int vd = 0; // <-- TODO!!!
-
    // Communication
    const MPI_Comm comm = coarse_fes.GetComm();
    const int nsend = mapping.fine_to_coarse.size();
@@ -455,32 +473,36 @@ void ParVoxelProlongation::Coarsen(const Vector &u_fine, Vector &u_coarse) const
          mapping.fine_to_coarse[i].fine_to_coarse.size() * ndof_per_el * vdim);
 
       int offset = 0;
-      for (const auto &f2c : mapping.fine_to_coarse[i].fine_to_coarse)
+
+      for (int vd = 0; vd < vdim; ++vd)
       {
-         fine_fes.GetElementDofs(f2c.fine_element_index, fine_vdofs);
-         fine_fes.DofsToVDofs(vd, fine_vdofs);
-         u_fine_lvec.GetSubVector(fine_vdofs, u_fine_local);
-
-         u_coarse_local.NewDataAndSize(&f2c_buffers[i][offset],
-                                       ndof_per_el);
-
-         const DenseMatrix &R = local_R(f2c.pmat_index);
-
-         for (int k = 0; k < R.Height(); ++k)
+         for (const auto &f2c : mapping.fine_to_coarse[i].fine_to_coarse)
          {
-            Vector R_row(R.Width());
-            R.GetRow(k, R_row);
-            if (std::isfinite(R(k,0)))
-            {
-               u_coarse_local[k] = R_row*u_fine_local;
-            }
-            else
-            {
-               u_coarse_local[k] = std::numeric_limits<double>::infinity();
-            }
-         }
+            fine_fes.GetElementDofs(f2c.fine_element_index, fine_vdofs);
+            fine_fes.DofsToVDofs(vd, fine_vdofs);
+            u_fine_lvec.GetSubVector(fine_vdofs, u_fine_local);
 
-         offset += ndof_per_el;
+            u_coarse_local.NewDataAndSize(&f2c_buffers[i][offset],
+                                          ndof_per_el);
+
+            const DenseMatrix &R = local_R(f2c.pmat_index);
+
+            for (int k = 0; k < R.Height(); ++k)
+            {
+               Vector R_row(R.Width());
+               R.GetRow(k, R_row);
+               if (std::isfinite(R(k,0)))
+               {
+                  u_coarse_local[k] = R_row*u_fine_local;
+               }
+               else
+               {
+                  u_coarse_local[k] = std::numeric_limits<double>::infinity();
+               }
+            }
+
+            offset += ndof_per_el;
+         }
       }
 
       MPI_Isend(f2c_buffers[i].data(),
@@ -502,28 +524,32 @@ void ParVoxelProlongation::Coarsen(const Vector &u_fine, Vector &u_coarse) const
    u_coarse_lvec = 0.0;
 
    const int coarse_ne = coarse_fes.GetNE();
-   for (int i = 0; i < coarse_ne; ++i)
+
+   for (int vd = 0; vd < vdim; ++vd)
    {
-      coarse_fes.GetElementDofs(i, coarse_vdofs);
-      coarse_fes.DofsToVDofs(vd, coarse_vdofs);
-
-      for (int j = mapping.local_parent_offsets[i];
-           j < mapping.local_parent_offsets[i+1]; ++j)
+      for (int i = 0; i < coarse_ne; ++i)
       {
-         const ParentIndex &parent = mapping.local_parents[j];
+         coarse_fes.GetElementDofs(i, coarse_vdofs);
+         coarse_fes.DofsToVDofs(vd, coarse_vdofs);
 
-         fine_fes.GetElementDofs(parent.element_index, fine_vdofs);
-         fine_fes.DofsToVDofs(vd, fine_vdofs);
-         u_fine_lvec.GetSubVector(fine_vdofs, u_fine_local);
-
-         const DenseMatrix &R = local_R(parent.pmat_index);
-
-         for (int k = 0; k < R.Height(); ++k)
+         for (int j = mapping.local_parent_offsets[i];
+              j < mapping.local_parent_offsets[i+1]; ++j)
          {
-            if (!std::isfinite(R(k,0))) { continue; }
-            Vector R_row(R.Width());
-            R.GetRow(k, R_row);
-            u_coarse_lvec[coarse_vdofs[k]] = R_row*u_fine_local;
+            const ParentIndex &parent = mapping.local_parents[j];
+
+            fine_fes.GetElementDofs(parent.element_index, fine_vdofs);
+            fine_fes.DofsToVDofs(vd, fine_vdofs);
+            u_fine_lvec.GetSubVector(fine_vdofs, u_fine_local);
+
+            const DenseMatrix &R = local_R(parent.pmat_index);
+
+            for (int k = 0; k < R.Height(); ++k)
+            {
+               if (!std::isfinite(R(k,0))) { continue; }
+               Vector R_row(R.Width());
+               R.GetRow(k, R_row);
+               u_coarse_lvec[coarse_vdofs[k]] = R_row*u_fine_local;
+            }
          }
       }
    }
@@ -533,17 +559,22 @@ void ParVoxelProlongation::Coarsen(const Vector &u_fine, Vector &u_coarse) const
    {
       MPI_Wait(&recv_req[i], MPI_STATUS_IGNORE);
       int offset = 0;
-      for (const auto &c2f : mapping.coarse_to_fine[i].coarse_to_fine)
+
+      for (int vd = 0; vd < vdim; ++vd)
       {
-         u_coarse_local.NewDataAndSize(&c2f_buffers[i][offset],
-                                       ndof_per_el);
-         coarse_fes.GetElementVDofs(c2f.coarse_element_index, coarse_vdofs);
-         for (int k = 0; k < coarse_vdofs.Size(); ++k)
+         for (const auto &c2f : mapping.coarse_to_fine[i].coarse_to_fine)
          {
-            const double val = u_coarse_local[k];
-            if (std::isfinite(val)) { u_coarse_lvec[coarse_vdofs[k]] = val; }
+            u_coarse_local.NewDataAndSize(&c2f_buffers[i][offset],
+                                          ndof_per_el);
+            coarse_fes.GetElementDofs(c2f.coarse_element_index, coarse_vdofs);
+            coarse_fes.DofsToVDofs(vd, coarse_vdofs);
+            for (int k = 0; k < coarse_vdofs.Size(); ++k)
+            {
+               const double val = u_coarse_local[k];
+               if (std::isfinite(val)) { u_coarse_lvec[coarse_vdofs[k]] = val; }
+            }
+            offset += ndof_per_el;
          }
-         offset += ndof_per_el;
       }
    }
 
