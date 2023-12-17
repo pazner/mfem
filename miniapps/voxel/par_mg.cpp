@@ -556,4 +556,139 @@ void ParVoxelProlongation::Coarsen(const Vector &u_fine, Vector &u_coarse) const
    MPI_Waitall(nsend, send_req.data(), MPI_STATUSES_IGNORE);
 }
 
+ParMesh LoadParMesh(const std::string &prefix)
+{
+   std::ifstream f(MakeParFilename(prefix + ".mesh.", Mpi::WorldRank()));
+   return ParMesh(MPI_COMM_WORLD, f, false);
+}
+
+ParVoxelMapping LoadVoxelMapping(const std::string &prefix)
+{
+   ParVoxelMapping mapping;
+
+   std::ifstream f(MakeParFilename(prefix + ".mapping.", Mpi::WorldRank()));
+   MFEM_VERIFY(f.good(), "Error opening ifstream");
+
+   // Load local parents
+   int local_parents_size;
+   f >> local_parents_size;
+   mapping.local_parents.SetSize(local_parents_size);
+   for (int i = 0; i < local_parents_size; ++i)
+   {
+      f >> mapping.local_parents[i].element_index;
+      f >> mapping.local_parents[i].pmat_index;
+   }
+
+   // Load local parent offsets
+   int local_parent_offsets_size;
+   f >> local_parent_offsets_size;
+   mapping.local_parent_offsets.SetSize(local_parent_offsets_size);
+   for (int i = 0; i < local_parent_offsets_size; ++i)
+   {
+      f >> mapping.local_parent_offsets[i];
+   }
+
+   // Read coarse to fine
+   int coarse_to_fine_size;
+   f >> coarse_to_fine_size;
+   mapping.coarse_to_fine.resize(coarse_to_fine_size);
+   for (int i = 0; i < coarse_to_fine_size; ++i)
+   {
+      f >> mapping.coarse_to_fine[i].rank;
+      int c2f_size;
+      f >> c2f_size;
+      mapping.coarse_to_fine[i].coarse_to_fine.resize(c2f_size);
+      for (int j = 0; j < c2f_size; ++j)
+      {
+         f >> mapping.coarse_to_fine[i].coarse_to_fine[j].coarse_element_index;
+         f >> mapping.coarse_to_fine[i].coarse_to_fine[j].pmat_index;
+      }
+   }
+
+   // Read fine to coarse
+   int fine_to_coarse_size;
+   f >> fine_to_coarse_size;
+   mapping.fine_to_coarse.resize(fine_to_coarse_size);
+   for (int i = 0; i < fine_to_coarse_size; ++i)
+   {
+      f >> mapping.fine_to_coarse[i].rank;
+      int f2c_size;
+      f >> f2c_size;
+      mapping.fine_to_coarse[i].fine_to_coarse.resize(f2c_size);
+      for (int j = 0; j < f2c_size; ++j)
+      {
+         f >> mapping.fine_to_coarse[i].fine_to_coarse[j].fine_element_index;
+         f >> mapping.fine_to_coarse[i].fine_to_coarse[j].pmat_index;
+      }
+   }
+
+   return mapping;
+}
+
+ParVoxelMultigrid::ParVoxelMultigrid(const std::string &dir, int order)
+{
+   const int nlevels = [&dir]()
+   {
+      int np, nl;
+      std::ifstream f(dir + "/info.txt");
+      f >> np >> nl;
+      MFEM_VERIFY(np == Mpi::WorldSize(), "Must run with " << np << " ranks.");
+      return nl;
+   }();
+
+   // Load data from files. We start with the coarsest mesh, and load
+   // increasingly fine meshes in sequence. (On disk, the level_0 files
+   // correspond to the finest mesh).
+   for (int i = nlevels - 1; i >= 0; --i)
+   {
+      const std::string level_str = dir + "/level_" + std::to_string(i);
+      meshes.emplace_back(new ParMesh(LoadParMesh(level_str)));
+      if (i < nlevels - 1)
+      {
+         mappings.emplace_back(new ParVoxelMapping(LoadVoxelMapping(level_str)));
+      }
+   }
+
+   const int dim = meshes[0]->Dimension();
+   fec.reset(new H1_FECollection(order, dim));
+
+   for (int i = 0; i < nlevels; ++i)
+   {
+      spaces.emplace_back(new ParFiniteElementSpace(meshes[i].get(), fec.get()));
+
+      ess_dofs.emplace_back(new Array<int>);
+      spaces[i]->GetBoundaryTrueDofs(*ess_dofs[i]);
+
+      forms.emplace_back(new ParBilinearForm(spaces[i].get()));
+      forms[i]->AddDomainIntegrator(new DiffusionIntegrator);
+      // forms[i]->AddDomainIntegrator(new MassIntegrator);
+      forms[i]->SetAssemblyLevel(AssemblyLevel::PARTIAL);
+      forms[i]->Assemble();
+
+      OperatorPtr opr(Operator::ANY_TYPE);
+      forms[i]->FormSystemMatrix(*ess_dofs[i], opr);
+      opr.SetOperatorOwner(false);
+
+      Vector diag(spaces[i]->GetTrueVSize());
+      forms[i]->AssembleDiagonal(diag);
+
+      Solver *smoother = new OperatorChebyshevSmoother(
+         *opr, diag, *ess_dofs[i], 2, meshes[i]->GetComm());
+      AddLevel(opr.Ptr(), smoother, true, true);
+   }
+
+   for (int i = 0; i < nlevels - 1; ++i)
+   {
+      prolongations.emplace_back(
+         new ParVoxelProlongation(*spaces[i], *ess_dofs[i], *spaces[i+1], *ess_dofs[i+1],
+                                  *mappings[i]));
+   }
+}
+
+void ParVoxelMultigrid::FormFineLinearSystem(
+   Vector &x, Vector &b, OperatorHandle &A, Vector& X, Vector& B)
+{
+   forms.back()->FormLinearSystem(*ess_dofs.back(), x, b, A, X, B);
+}
+
 }

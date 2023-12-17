@@ -95,6 +95,34 @@ public:
    void Coarsen(const Vector &u_fine, Vector &u_coarse) const;
 };
 
+template <typename T> using vec_unique_ptr = std::vector<std::unique_ptr<T>>;
+
+class ParVoxelMultigrid : public MultigridBase
+{
+private:
+   vec_unique_ptr<ParMesh> meshes;
+   vec_unique_ptr<ParFiniteElementSpace> spaces;
+   vec_unique_ptr<ParBilinearForm> forms;
+   vec_unique_ptr<Array<int>> ess_dofs;
+   vec_unique_ptr<ParVoxelProlongation> prolongations;
+   vec_unique_ptr<ParVoxelMapping> mappings;
+   std::unique_ptr<H1_FECollection> fec;
+
+   virtual const Operator* GetProlongationAtLevel(int level) const override
+   {
+      return prolongations[level].get();
+   }
+
+public:
+   ParVoxelMultigrid(const std::string &dir, int order = 1);
+
+   ParFiniteElementSpace &GetFineSpace() { return *spaces.back(); }
+   Operator &GetFineOperator() { return *operators.Last(); }
+   ParBilinearForm &GetFineForm() { return *forms.back(); }
+   void FormFineLinearSystem(
+      Vector& x, Vector& b, OperatorHandle& A, Vector& X, Vector& B);
+};
+
 }
 
 #endif
