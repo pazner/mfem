@@ -105,6 +105,9 @@ private:
    vec_unique_ptr<ParVoxelMapping> mappings;
    std::unique_ptr<H1_FECollection> fec;
 
+   ConstantCoefficient lambda{1.0};
+   ConstantCoefficient mu{1.0};
+
    virtual const Operator* GetProlongationAtLevel(int level) const override
    {
       return prolongations[level].get();

@@ -21,10 +21,14 @@ int main(int argc, char *argv[])
    ParVoxelMultigrid mg(dir, order);
    ParFiniteElementSpace &fespace = mg.GetFineSpace();
    ParMesh &mesh = *fespace.GetParMesh();
+   const int dim = mesh.Dimension();
 
-   ConstantCoefficient one(1.0);
+   Vector f_vec(dim);
+   f_vec = 1.0;
+   VectorConstantCoefficient f(f_vec);
+
    ParLinearForm b(&fespace);
-   b.AddDomainIntegrator(new DomainLFIntegrator(one));
+   b.AddDomainIntegrator(new VectorDomainLFIntegrator(f));
    b.Assemble();
 
    GridFunction x(&fespace);

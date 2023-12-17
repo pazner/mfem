@@ -688,15 +688,16 @@ ParVoxelMultigrid::ParVoxelMultigrid(const std::string &dir, int order)
 
    for (int i = 0; i < nlevels; ++i)
    {
-      spaces.emplace_back(new ParFiniteElementSpace(meshes[i].get(), fec.get()));
+      spaces.emplace_back(new ParFiniteElementSpace(meshes[i].get(), fec.get(), dim));
 
       ess_dofs.emplace_back(new Array<int>);
       spaces[i]->GetBoundaryTrueDofs(*ess_dofs[i]);
 
       forms.emplace_back(new ParBilinearForm(spaces[i].get()));
-      forms[i]->AddDomainIntegrator(new DiffusionIntegrator);
+      // forms[i]->AddDomainIntegrator(new DiffusionIntegrator);
       // forms[i]->AddDomainIntegrator(new MassIntegrator);
-      forms[i]->SetAssemblyLevel(AssemblyLevel::PARTIAL);
+      forms[i]->AddDomainIntegrator(new ElasticityIntegrator(lambda, mu));
+      // forms[i]->SetAssemblyLevel(AssemblyLevel::PARTIAL);
       forms[i]->Assemble();
 
       OperatorPtr opr(Operator::ANY_TYPE);
@@ -706,9 +707,9 @@ ParVoxelMultigrid::ParVoxelMultigrid(const std::string &dir, int order)
       Vector diag(spaces[i]->GetTrueVSize());
       forms[i]->AssembleDiagonal(diag);
 
-      Solver *smoother = new OperatorChebyshevSmoother(
-         *opr, diag, *ess_dofs[i], 2, meshes[i]->GetComm());
-      AddLevel(opr.Ptr(), smoother, true, true);
+      // l1-Jacobi smoother
+      Solver *smoother = new HypreSmoother(*opr.As<HypreParMatrix>(), 1);
+      AddLevel(opr.Ptr(), smoother, false, true);
    }
 
    for (int i = 0; i < nlevels - 1; ++i)
