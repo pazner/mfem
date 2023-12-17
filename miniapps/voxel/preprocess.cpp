@@ -1,6 +1,7 @@
 #include "mfem.hpp"
 #include "voxel_mesh.hpp"
 #include "par_mg.hpp"
+#include "../../fem/picojson.h"
 
 using namespace std;
 using namespace mfem;
@@ -122,9 +123,11 @@ int main(int argc, char *argv[])
    }
 
    {
-      std::ofstream f(dir + "/info.txt");
-      f << np << '\n';
-      f << level + 1 << '\n';
+      picojson::object info;
+      info["np"] = picojson::value(double(np));
+      info["nlevels"] = picojson::value(double(level + 1));
+      std::ofstream f(dir + "/info.json");
+      f << picojson::value(info) << '\n';
    }
 
    return 0;

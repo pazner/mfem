@@ -10,6 +10,7 @@
 // CONTRIBUTING.md for details.
 
 #include "par_mg.hpp"
+#include "../../fem/picojson.h"
 
 namespace mfem
 {
@@ -629,11 +630,13 @@ ParVoxelMultigrid::ParVoxelMultigrid(const std::string &dir, int order)
 {
    const int nlevels = [&dir]()
    {
-      int np, nl;
-      std::ifstream f(dir + "/info.txt");
-      f >> np >> nl;
+      std::ifstream f(dir + "/info.json");
+      picojson::value json;
+      f >> json;
+      const int np = json.get("np").get<double>();
+      const int nlevels = json.get("nlevels").get<double>();
       MFEM_VERIFY(np == Mpi::WorldSize(), "Must run with " << np << " ranks.");
-      return nl;
+      return nlevels;
    }();
 
    // Load data from files. We start with the coarsest mesh, and load
