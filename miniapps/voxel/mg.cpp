@@ -153,18 +153,15 @@ void VoxelProlongation::MultTranspose(
 
             for (int k = 0; k < fine_vdofs.Size(); ++k)
             {
+               const int k_dof = fine_vdofs[k];
                if (processed[fine_vdofs[k]]) { u_fine_local[k] = 0.0; }
+               processed[k_dof] = true;
             }
 
             const DenseMatrix &P = local_P(parent.pmat_index);
             P.MultTranspose(u_fine_local, u_coarse_local);
 
             u_coarse.AddElementVector(coarse_vdofs, u_coarse_local);
-
-            for (int k : fine_vdofs)
-            {
-               processed[k] = true;
-            }
          }
       }
    }
