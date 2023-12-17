@@ -73,11 +73,8 @@ class ParVoxelProlongation : public Operator
    DenseTensor local_P;
    DenseTensor local_R;
 
-   mutable std::vector<std::vector<double>> mult_send_buffers;
-   mutable std::vector<std::vector<double>> mult_recv_buffers;
-
-   mutable std::vector<std::vector<double>> mult_transp_send_buffers;
-   mutable std::vector<std::vector<double>> mult_transp_recv_buffers;
+   mutable std::vector<std::vector<double>> c2f_buffers;
+   mutable std::vector<std::vector<double>> f2c_buffers;
 
    mutable Vector u_coarse_lvec;
    mutable Vector u_fine_lvec;

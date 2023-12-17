@@ -204,17 +204,17 @@ void ParVoxelProlongation::Mult(const Vector &u_coarse, Vector &u_fine) const
    const MPI_Comm comm = coarse_fes.GetComm();
    const int nsend = mapping.coarse_to_fine.size();
    std::vector<MPI_Request> send_req(nsend);
-   mult_send_buffers.resize(nsend);
+   c2f_buffers.resize(nsend);
 
    const int nrecv = mapping.fine_to_coarse.size();
    std::vector<MPI_Request> recv_req(nrecv);
-   mult_recv_buffers.resize(nrecv);
+   f2c_buffers.resize(nrecv);
 
    // Fill send buffers, start non-blocking send
    for (int i = 0; i < nsend; ++i)
    {
-      mult_send_buffers[i].resize(mapping.coarse_to_fine[i].coarse_to_fine.size() *
-                                  ndof_per_el * vdim);
+      c2f_buffers[i].resize(mapping.coarse_to_fine[i].coarse_to_fine.size() *
+                            ndof_per_el * vdim);
 
       int offset = 0;
       for (const auto &c2f : mapping.coarse_to_fine[i].coarse_to_fine)
@@ -223,7 +223,7 @@ void ParVoxelProlongation::Mult(const Vector &u_coarse, Vector &u_fine) const
          coarse_fes.DofsToVDofs(vd, coarse_vdofs);
          u_coarse_lvec.GetSubVector(coarse_vdofs, u_coarse_local);
 
-         u_fine_local.NewDataAndSize(&mult_send_buffers[i][offset], ndof_per_el);
+         u_fine_local.NewDataAndSize(&c2f_buffers[i][offset], ndof_per_el);
 
          const DenseMatrix &P = local_P(c2f.pmat_index);
          P.Mult(u_coarse_local, u_fine_local);
@@ -231,16 +231,16 @@ void ParVoxelProlongation::Mult(const Vector &u_coarse, Vector &u_fine) const
          offset += ndof_per_el;
       }
 
-      MPI_Isend(mult_send_buffers[i].data(), mult_send_buffers[i].size(),
+      MPI_Isend(c2f_buffers[i].data(), c2f_buffers[i].size(),
                 MPI_DOUBLE, mapping.coarse_to_fine[i].rank, 0, comm, &send_req[i]);
    }
 
    // Allocate the receive buffers, start non-blocking receive
    for (int i = 0; i < nrecv; ++i)
    {
-      mult_recv_buffers[i].resize(mapping.fine_to_coarse[i].fine_to_coarse.size() *
-                                  ndof_per_el * vdim);
-      MPI_Irecv(mult_recv_buffers[i].data(), mult_recv_buffers[i].size(),
+      f2c_buffers[i].resize(mapping.fine_to_coarse[i].fine_to_coarse.size() *
+                            ndof_per_el * vdim);
+      MPI_Irecv(f2c_buffers[i].data(), f2c_buffers[i].size(),
                 MPI_DOUBLE, mapping.fine_to_coarse[i].rank, 0, comm, &recv_req[i]);
    }
 
@@ -275,7 +275,7 @@ void ParVoxelProlongation::Mult(const Vector &u_coarse, Vector &u_fine) const
       int offset = 0;
       for (const auto &f2c : mapping.fine_to_coarse[i].fine_to_coarse)
       {
-         u_fine_local.NewDataAndSize(&mult_recv_buffers[i][offset], ndof_per_el);
+         u_fine_local.NewDataAndSize(&f2c_buffers[i][offset], ndof_per_el);
          fine_fes.GetElementVDofs(f2c.fine_element_index, fine_vdofs);
          u_fine_lvec.SetSubVector(fine_vdofs, u_fine_local);
          offset += ndof_per_el;
@@ -315,16 +315,16 @@ void ParVoxelProlongation::MultTranspose(
    const MPI_Comm comm = coarse_fes.GetComm();
    const int nsend = mapping.fine_to_coarse.size();
    std::vector<MPI_Request> send_req(nsend);
-   mult_transp_send_buffers.resize(nsend);
+   f2c_buffers.resize(nsend);
 
    const int nrecv = mapping.coarse_to_fine.size();
    std::vector<MPI_Request> recv_req(nrecv);
-   mult_transp_recv_buffers.resize(nrecv);
+   c2f_buffers.resize(nrecv);
 
    // Fill send buffers, start non-blocking send
    for (int i = 0; i < nsend; ++i)
    {
-      mult_transp_send_buffers[i].resize(
+      f2c_buffers[i].resize(
          mapping.fine_to_coarse[i].fine_to_coarse.size() * ndof_per_el * vdim);
 
       int offset = 0;
@@ -341,7 +341,7 @@ void ParVoxelProlongation::MultTranspose(
             processed[k_dof] = true;
          }
 
-         u_coarse_local.NewDataAndSize(&mult_transp_send_buffers[i][offset],
+         u_coarse_local.NewDataAndSize(&f2c_buffers[i][offset],
                                        ndof_per_el);
 
          const DenseMatrix &P = local_P(f2c.pmat_index);
@@ -350,18 +350,18 @@ void ParVoxelProlongation::MultTranspose(
          offset += ndof_per_el;
       }
 
-      MPI_Isend(mult_transp_send_buffers[i].data(),
-                mult_transp_send_buffers[i].size(),
+      MPI_Isend(f2c_buffers[i].data(),
+                f2c_buffers[i].size(),
                 MPI_DOUBLE, mapping.fine_to_coarse[i].rank, 0, comm, &send_req[i]);
    }
 
    // Allocate the receive buffers, start non-blocking receive
    for (int i = 0; i < nrecv; ++i)
    {
-      mult_transp_recv_buffers[i].resize(
+      c2f_buffers[i].resize(
          mapping.coarse_to_fine[i].coarse_to_fine.size() * ndof_per_el * vdim);
-      MPI_Irecv(mult_transp_recv_buffers[i].data(),
-                mult_transp_recv_buffers[i].size(),
+      MPI_Irecv(c2f_buffers[i].data(),
+                c2f_buffers[i].size(),
                 MPI_DOUBLE, mapping.coarse_to_fine[i].rank, 0, comm, &recv_req[i]);
    }
 
@@ -405,7 +405,7 @@ void ParVoxelProlongation::MultTranspose(
       int offset = 0;
       for (const auto &c2f : mapping.coarse_to_fine[i].coarse_to_fine)
       {
-         u_coarse_local.NewDataAndSize(&mult_transp_recv_buffers[i][offset],
+         u_coarse_local.NewDataAndSize(&c2f_buffers[i][offset],
                                        ndof_per_el);
          coarse_fes.GetElementVDofs(c2f.coarse_element_index, coarse_vdofs);
          u_coarse_lvec.AddElementVector(coarse_vdofs, u_coarse_local);
@@ -442,16 +442,16 @@ void ParVoxelProlongation::Coarsen(const Vector &u_fine, Vector &u_coarse) const
    const MPI_Comm comm = coarse_fes.GetComm();
    const int nsend = mapping.fine_to_coarse.size();
    std::vector<MPI_Request> send_req(nsend);
-   mult_transp_send_buffers.resize(nsend);
+   f2c_buffers.resize(nsend);
 
    const int nrecv = mapping.coarse_to_fine.size();
    std::vector<MPI_Request> recv_req(nrecv);
-   mult_transp_recv_buffers.resize(nrecv);
+   c2f_buffers.resize(nrecv);
 
    // Fill send buffers, start non-blocking send
    for (int i = 0; i < nsend; ++i)
    {
-      mult_transp_send_buffers[i].resize(
+      f2c_buffers[i].resize(
          mapping.fine_to_coarse[i].fine_to_coarse.size() * ndof_per_el * vdim);
 
       int offset = 0;
@@ -461,7 +461,7 @@ void ParVoxelProlongation::Coarsen(const Vector &u_fine, Vector &u_coarse) const
          fine_fes.DofsToVDofs(vd, fine_vdofs);
          u_fine_lvec.GetSubVector(fine_vdofs, u_fine_local);
 
-         u_coarse_local.NewDataAndSize(&mult_transp_send_buffers[i][offset],
+         u_coarse_local.NewDataAndSize(&f2c_buffers[i][offset],
                                        ndof_per_el);
 
          const DenseMatrix &R = local_R(f2c.pmat_index);
@@ -483,18 +483,18 @@ void ParVoxelProlongation::Coarsen(const Vector &u_fine, Vector &u_coarse) const
          offset += ndof_per_el;
       }
 
-      MPI_Isend(mult_transp_send_buffers[i].data(),
-                mult_transp_send_buffers[i].size(),
+      MPI_Isend(f2c_buffers[i].data(),
+                f2c_buffers[i].size(),
                 MPI_DOUBLE, mapping.fine_to_coarse[i].rank, 0, comm, &send_req[i]);
    }
 
    // Allocate the receive buffers, start non-blocking receive
    for (int i = 0; i < nrecv; ++i)
    {
-      mult_transp_recv_buffers[i].resize(
+      c2f_buffers[i].resize(
          mapping.coarse_to_fine[i].coarse_to_fine.size() * ndof_per_el * vdim);
-      MPI_Irecv(mult_transp_recv_buffers[i].data(),
-                mult_transp_recv_buffers[i].size(),
+      MPI_Irecv(c2f_buffers[i].data(),
+                c2f_buffers[i].size(),
                 MPI_DOUBLE, mapping.coarse_to_fine[i].rank, 0, comm, &recv_req[i]);
    }
 
@@ -535,7 +535,7 @@ void ParVoxelProlongation::Coarsen(const Vector &u_fine, Vector &u_coarse) const
       int offset = 0;
       for (const auto &c2f : mapping.coarse_to_fine[i].coarse_to_fine)
       {
-         u_coarse_local.NewDataAndSize(&mult_transp_recv_buffers[i][offset],
+         u_coarse_local.NewDataAndSize(&c2f_buffers[i][offset],
                                        ndof_per_el);
          coarse_fes.GetElementVDofs(c2f.coarse_element_index, coarse_vdofs);
          for (int k = 0; k < coarse_vdofs.Size(); ++k)
