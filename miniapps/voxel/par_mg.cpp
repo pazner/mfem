@@ -209,7 +209,7 @@ void ParVoxelProlongation::Mult(const Vector &u_coarse, Vector &u_fine) const
    std::vector<MPI_Request> recv_req(nrecv);
    mult_recv_buffers.resize(nrecv);
 
-   // Fill some send buffers, start non-blocking send
+   // Fill send buffers, start non-blocking send
    for (int i = 0; i < nsend; ++i)
    {
       mult_send_buffers[i].resize(mapping.coarse_to_fine[i].coarse_to_fine.size() *
@@ -285,10 +285,8 @@ void ParVoxelProlongation::Mult(const Vector &u_coarse, Vector &u_fine) const
    if (R) { R->Mult(u_fine_lvec, u_fine); }
    else { u_fine = u_fine_lvec; }
 
-   for (int i : fine_ess_dofs)
-   {
-      u_fine[i] = 0.0;
-   }
+   // Essential DOFs
+   for (int i : fine_ess_dofs) { u_fine[i] = 0.0; }
 
    // Wait for all sends to complete
    MPI_Waitall(nsend, send_req.data(), MPI_STATUSES_IGNORE);
