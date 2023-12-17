@@ -121,5 +121,11 @@ int main(int argc, char *argv[])
       ++level;
    }
 
+   {
+      std::ofstream f(dir + "/info.txt");
+      f << np << '\n';
+      f << level + 1 << '\n';
+   }
+
    return 0;
 }
