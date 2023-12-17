@@ -80,33 +80,46 @@ int main(int argc, char *argv[])
    args.ParseCheck();
 
    // Read the (fine) mesh from a file
-   VoxelMesh mesh(mesh_file, h);
+   std::unique_ptr<VoxelMesh> mesh(new VoxelMesh(mesh_file, h));
+   const int dim = mesh->Dimension();
+   // Partition the fine mesh
+   Array<int> partitioning(mesh->GeneratePartitioning(np), mesh->GetNE(), true);
 
-   // Create a partitioning
-   Array<int> partitioning(mesh.GeneratePartitioning(np), mesh.GetNE(), true);
-
-   // Coarsen once
-   VoxelMesh coarse_mesh = mesh.Coarsen();
-   // Coarsen the partitioning
-   Array<ParentIndex> parents;
-   Array<int> parent_offsets;
-
-   GetVoxelParents(coarse_mesh, mesh, parents, parent_offsets);
-   Array<int> coarse_partitioning(coarse_mesh.GetNE());
-   for (int i = 0; i < coarse_mesh.GetNE(); ++i)
+   int level = 0;
+   while (true)
    {
-      const int parent_index = parents[parent_offsets[i]].element_index;
-      coarse_partitioning[i] = partitioning[parent_index];
+      const string level_str = dir + "/level_" + std::to_string(level);
+      SavePartitionedMesh(level_str, *mesh, np, partitioning);
+
+      const std::vector<int> &bounds = mesh->GetVoxelBounds();
+      if (!std::all_of(bounds.begin(), bounds.end(), [](int x) { return x >= 4; }))
+      {
+         break;
+      }
+
+      std::unique_ptr<VoxelMesh> new_mesh(new VoxelMesh(mesh->Coarsen()));
+      // Get hierarchy information for the new level
+      Array<ParentIndex> parents;
+      Array<int> parent_offsets;
+      GetVoxelParents(*new_mesh, *mesh, parents, parent_offsets);
+      // Coarsen the partitioning
+      Array<int> new_partitioning(new_mesh->GetNE());
+      for (int i = 0; i < new_mesh->GetNE(); ++i)
+      {
+         const int parent_index = parents[parent_offsets[i]].element_index;
+         new_partitioning[i] = partitioning[parent_index];
+      }
+      // Create and save the parallel mappings
+      auto mappings = CreateParVoxelMappings(
+                         np, dim, parents, parent_offsets, partitioning,
+                         new_partitioning);
+      SaveParVoxelMappings(level_str, mappings);
+
+      std::swap(new_mesh, mesh);
+      Swap(new_partitioning, partitioning);
+
+      ++level;
    }
-
-   SavePartitionedMesh(dir + "/fine", mesh, np, partitioning);
-   SavePartitionedMesh(dir + "/coarse", coarse_mesh, np, coarse_partitioning);
-
-   auto mappings = CreateParVoxelMappings(
-                      np, mesh.Dimension(), parents, parent_offsets, partitioning,
-                      coarse_partitioning);
-
-   SaveParVoxelMappings(dir + "/transfer", mappings);
 
    return 0;
 }
