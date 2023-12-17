@@ -45,7 +45,7 @@ int main(int argc, char *argv[])
 
    mg.GetFineForm().RecoverFEMSolution(X, b, x);
 
-   ParaViewDataCollection pv("VoxelMG", &mesh);
+   ParaViewDataCollection pv("ParVoxelMG", &mesh);
    pv.SetPrefixPath("ParaView");
    pv.SetHighOrderOutput(true);
    pv.SetLevelsOfDetail(order + 1);
