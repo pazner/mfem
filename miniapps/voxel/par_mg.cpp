@@ -166,7 +166,7 @@ ParVoxelProlongation::ParVoxelProlongation(
 
    double *ref_pmat = (dim == 2) ? quad_children : hex_children;
 
-   const FiniteElement &fe = *coarse_fes.GetFE(0);
+   const FiniteElement &fe = *fine_fes.GetFE(0);
    const int n_loc_dof = fe.GetDof();
 
    IsoparametricTransformation isotr;
@@ -188,6 +188,8 @@ ParVoxelProlongation::ParVoxelProlongation(
 
 void ParVoxelProlongation::Mult(const Vector &u_coarse, Vector &u_fine) const
 {
+   if (fine_fes.GetNE() == 0 && coarse_fes.GetNE() == 0) { return; }
+
    const int vdim = coarse_fes.GetVDim();
    Array<int> coarse_vdofs, fine_vdofs;
    Vector u_coarse_local, u_fine_local;
@@ -196,7 +198,7 @@ void ParVoxelProlongation::Mult(const Vector &u_coarse, Vector &u_fine) const
    if (P) { P->Mult(u_coarse, u_coarse_lvec); }
    else { u_coarse_lvec = u_coarse; }
 
-   const int ndof_per_el = coarse_fes.GetFE(0)->GetDof();
+   const int ndof_per_el = fine_fes.GetFE(0)->GetDof();
 
    // Communication
    const MPI_Comm comm = coarse_fes.GetComm();
@@ -306,6 +308,8 @@ void ParVoxelProlongation::Mult(const Vector &u_coarse, Vector &u_fine) const
 void ParVoxelProlongation::MultTranspose(
    const Vector &u_fine, Vector &u_coarse) const
 {
+   if (fine_fes.GetNE() == 0 && coarse_fes.GetNE() == 0) { return; }
+
    const int vdim = coarse_fes.GetVDim();
    Array<int> coarse_vdofs, fine_vdofs;
    Vector u_coarse_local, u_fine_local;
@@ -314,7 +318,7 @@ void ParVoxelProlongation::MultTranspose(
    if (R) { R->MultTranspose(u_fine, u_fine_lvec); }
    else { u_fine_lvec = u_fine; }
 
-   const int ndof_per_el = coarse_fes.GetFE(0)->GetDof();
+   const int ndof_per_el = fine_fes.GetFE(0)->GetDof();
 
    Array<bool> processed(u_fine_lvec.Size());
    processed = false;
@@ -446,6 +450,8 @@ void ParVoxelProlongation::MultTranspose(
 
 void ParVoxelProlongation::Coarsen(const Vector &u_fine, Vector &u_coarse) const
 {
+   if (fine_fes.GetNE() == 0 && coarse_fes.GetNE() == 0) { return; }
+
    const int vdim = coarse_fes.GetVDim();
    Array<int> coarse_vdofs, fine_vdofs;
    Vector u_coarse_local, u_fine_local;
@@ -454,7 +460,7 @@ void ParVoxelProlongation::Coarsen(const Vector &u_fine, Vector &u_coarse) const
    if (P) { P->Mult(u_fine, u_fine_lvec); }
    else { u_fine_lvec = u_fine; }
 
-   const int ndof_per_el = coarse_fes.GetFE(0)->GetDof();
+   const int ndof_per_el = fine_fes.GetFE(0)->GetDof();
 
    // Communication
    const MPI_Comm comm = coarse_fes.GetComm();
