@@ -133,7 +133,9 @@ ParVoxelProlongation::ParVoxelProlongation(
      fine_fes(fine_fes_),
      coarse_ess_dofs(coarse_ess_dofs_),
      fine_ess_dofs(fine_ess_dofs_),
-     mapping(mapping_)
+     mapping(mapping_),
+     u_coarse_lvec(coarse_fes.GetVSize()),
+     u_fine_lvec(fine_fes.GetVSize())
 {
    const int dim = coarse_fes.GetMesh()->Dimension();
    const int ngrid = pow(2, dim); // number of fine elements per coarse elements
@@ -166,14 +168,16 @@ ParVoxelProlongation::ParVoxelProlongation(
 
    double *ref_pmat = (dim == 2) ? quad_children : hex_children;
 
-   const FiniteElement &fe = *fine_fes.GetFE(0);
-   const int n_loc_dof = fe.GetDof();
+   const FiniteElementCollection &fec = *fine_fes.FEColl();
+   const Geometry::Type geom = Geometry::TensorProductGeometry(dim);
+   const FiniteElement &fe = *fec.FiniteElementForGeometry(geom);
+   ndof_per_el = fe.GetDof();
 
    IsoparametricTransformation isotr;
    isotr.SetIdentityTransformation(fe.GetGeomType());
 
-   local_P.SetSize(n_loc_dof, n_loc_dof, ngrid);
-   local_R.SetSize(n_loc_dof, n_loc_dof, ngrid);
+   local_P.SetSize(ndof_per_el, ndof_per_el, ngrid);
+   local_R.SetSize(ndof_per_el, ndof_per_el, ngrid);
    for (int i = 0; i < ngrid; ++i)
    {
       DenseMatrix pmat(ref_pmat + i*dim*ngrid, dim, ngrid);
@@ -181,9 +185,6 @@ ParVoxelProlongation::ParVoxelProlongation(
       fe.GetLocalInterpolation(isotr, local_P(i));
       fe.GetLocalRestriction(isotr, local_R(i));
    }
-
-   u_coarse_lvec.SetSize(coarse_fes.GetVSize());
-   u_fine_lvec.SetSize(fine_fes.GetVSize());
 }
 
 void ParVoxelProlongation::Mult(const Vector &u_coarse, Vector &u_fine) const
@@ -197,8 +198,6 @@ void ParVoxelProlongation::Mult(const Vector &u_coarse, Vector &u_fine) const
    const Operator *P = coarse_fes.GetProlongationMatrix();
    if (P) { P->Mult(u_coarse, u_coarse_lvec); }
    else { u_coarse_lvec = u_coarse; }
-
-   const int ndof_per_el = fine_fes.GetFE(0)->GetDof();
 
    // Communication
    const MPI_Comm comm = coarse_fes.GetComm();
@@ -317,8 +316,6 @@ void ParVoxelProlongation::MultTranspose(
    const Operator *R = fine_fes.GetRestrictionOperator();
    if (R) { R->MultTranspose(u_fine, u_fine_lvec); }
    else { u_fine_lvec = u_fine; }
-
-   const int ndof_per_el = fine_fes.GetFE(0)->GetDof();
 
    Array<bool> processed(u_fine_lvec.Size());
    processed = false;
@@ -459,8 +456,6 @@ void ParVoxelProlongation::Coarsen(const Vector &u_fine, Vector &u_coarse) const
    const Operator *P = fine_fes.GetProlongationMatrix();
    if (P) { P->Mult(u_fine, u_fine_lvec); }
    else { u_fine_lvec = u_fine; }
-
-   const int ndof_per_el = fine_fes.GetFE(0)->GetDof();
 
    // Communication
    const MPI_Comm comm = coarse_fes.GetComm();
