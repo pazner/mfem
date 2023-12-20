@@ -80,17 +80,38 @@ int main(int argc, char *argv[])
    args.AddOption(&dir, "-d", "--dir", "Data directory.");
    args.ParseCheck();
 
+   cout << "\n";
+   tic_toc.Restart();
+   cout << "Reading fine mesh... " << flush;
    // Read the (fine) mesh from a file
    std::unique_ptr<VoxelMesh> mesh(new VoxelMesh(mesh_file, h));
+   cout << "Done. " << tic_toc.RealTime() << endl;
    const int dim = mesh->Dimension();
+
    // Partition the fine mesh
+   tic_toc.Restart();
+   cout << "Partitioning... " << flush;
    Array<int> partitioning(mesh->GeneratePartitioning(np), mesh->GetNE(), true);
+   cout << "Done. " << tic_toc.RealTime() << endl;
+
+   cout << "\n";
+   cout << "Level      Elements     Save Mesh      Coarsening      Hierarchy      Mapping"
+        << '\n'
+        << string(77, '=')
+        << endl;
+
+   cout << left << setprecision(5) << fixed;
 
    int level = 0;
    while (true)
    {
+      cout << setw(11) << level << flush;
+      cout << setw(13) << mesh->GetNE() << flush;
+
+      tic_toc.Restart();
       const string level_str = dir + "/level_" + std::to_string(level);
       SavePartitionedMesh(level_str, *mesh, np, partitioning);
+      cout << setw(15) << tic_toc.RealTime() << flush;
 
       const std::vector<int> &bounds = mesh->GetVoxelBounds();
       if (!std::all_of(bounds.begin(), bounds.end(), [](int x) { return x >= 4; }))
@@ -98,8 +119,12 @@ int main(int argc, char *argv[])
          break;
       }
 
+      tic_toc.Restart();
       std::unique_ptr<VoxelMesh> new_mesh(new VoxelMesh(mesh->Coarsen()));
+      cout << setw(16) << tic_toc.RealTime() << flush;
+
       // Get hierarchy information for the new level
+      tic_toc.Restart();
       Array<ParentIndex> parents;
       Array<int> parent_offsets;
       GetVoxelParents(*new_mesh, *mesh, parents, parent_offsets);
@@ -110,17 +135,23 @@ int main(int argc, char *argv[])
          const int parent_index = parents[parent_offsets[i]].element_index;
          new_partitioning[i] = partitioning[parent_index];
       }
+      cout << setw(15) << tic_toc.RealTime() << flush;
+
       // Create and save the parallel mappings
+      tic_toc.Restart();
       auto mappings = CreateParVoxelMappings(
                          np, dim, parents, parent_offsets, partitioning,
                          new_partitioning);
       SaveParVoxelMappings(level_str, mappings);
+      cout << setw(16) << tic_toc.RealTime() << endl;
 
       std::swap(new_mesh, mesh);
       Swap(new_partitioning, partitioning);
 
       ++level;
    }
+
+   cout << endl;
 
    {
       picojson::object info;

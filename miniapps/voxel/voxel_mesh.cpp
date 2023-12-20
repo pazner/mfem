@@ -14,12 +14,6 @@ VoxelMesh::VoxelMesh(const std::string &filename, double h_) : Mesh(filename),
    n.resize(Dim);
    for (int i = 0; i < Dim; ++i) { n[i] = (mmax[i] - mmin[i])/h; }
 
-   int prod = 1;
-   for (int i = 0; i < Dim; ++i) { prod *= n[i]; }
-   std::cout << "Elements: " << GetNE() << '\n';
-   std::cout << "Bounding: " << prod << '\n';
-   std::cout << "Fraction: " << 100.0*GetNE()/prod << "%\n";
-
    auto translate = [mmin](const Vector &x_old, Vector &x_new)
    {
       subtract(x_old, mmin, x_new);
