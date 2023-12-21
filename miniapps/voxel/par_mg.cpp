@@ -660,9 +660,11 @@ ParVoxelMapping LoadVoxelMapping(const std::string &prefix)
 
 ParVoxelMultigrid::ParVoxelMultigrid(const std::string &dir, int order)
 {
+   using namespace std;
+
    const int nlevels = [&dir]()
    {
-      std::ifstream f(dir + "/info.json");
+      ifstream f(dir + "/info.json");
       picojson::value json;
       f >> json;
       const int np = json.get("np").get<double>();
@@ -671,29 +673,44 @@ ParVoxelMultigrid::ParVoxelMultigrid(const std::string &dir, int order)
       return nlevels;
    }();
 
+   if (Mpi::Root())
+   {
+      cout << "\nLoading hierarchy with " << nlevels << " levels.\n";
+      cout << "Levels are numbered such that level 0 is the coarsest.\n";
+      cout << endl;
+   }
+
    // Load data from files. We start with the coarsest mesh, and load
    // increasingly fine meshes in sequence. (On disk, the level_0 files
    // correspond to the finest mesh).
    for (int i = nlevels - 1; i >= 0; --i)
    {
-      const std::string level_str = dir + "/level_" + std::to_string(i);
+      if (Mpi::Root()) { cout << "Loading mesh level " << meshes.size() << "... " << flush; }
+      const string level_str = dir + "/level_" + to_string(i);
       meshes.emplace_back(new ParMesh(LoadParMesh(level_str)));
       if (i < nlevels - 1)
       {
          mappings.emplace_back(new ParVoxelMapping(LoadVoxelMapping(level_str)));
       }
+      if (Mpi::Root()) { cout << "Done." << endl; }
    }
+
+   if (Mpi::Root()) { cout << endl; }
 
    const int dim = meshes[0]->Dimension();
    fec.reset(new H1_FECollection(order, dim));
 
    for (int i = 0; i < nlevels; ++i)
    {
+      if (Mpi::Root()) { cout << "Level " << i << ":" << endl; }
+
+      if (Mpi::Root()) { cout << "  Creating space..." << flush; }
       spaces.emplace_back(new ParFiniteElementSpace(meshes[i].get(), fec.get(), dim));
 
       ess_dofs.emplace_back(new Array<int>);
       spaces[i]->GetBoundaryTrueDofs(*ess_dofs[i]);
 
+      if (Mpi::Root()) { cout << "\n  Assembling form..." << flush; }
       forms.emplace_back(new ParBilinearForm(spaces[i].get()));
       // forms[i]->AddDomainIntegrator(new DiffusionIntegrator);
       // forms[i]->AddDomainIntegrator(new MassIntegrator);
@@ -705,20 +722,24 @@ ParVoxelMultigrid::ParVoxelMultigrid(const std::string &dir, int order)
       forms[i]->FormSystemMatrix(*ess_dofs[i], opr);
       opr.SetOperatorOwner(false);
 
-      Vector diag(spaces[i]->GetTrueVSize());
-      forms[i]->AssembleDiagonal(diag);
-
+      if (Mpi::Root()) { cout << "\n  Assembling diagonal..." << endl; }
       // l1-Jacobi smoother
       Solver *smoother = new HypreSmoother(*opr.As<HypreParMatrix>(), 1);
       AddLevel(opr.Ptr(), smoother, false, true);
    }
 
+   if (Mpi::Root()) { cout << endl; }
+
    for (int i = 0; i < nlevels - 1; ++i)
    {
+      if (Mpi::Root()) { cout << "Prolongation level " << i << "... " << flush; }
       prolongations.emplace_back(
          new ParVoxelProlongation(*spaces[i], *ess_dofs[i], *spaces[i+1], *ess_dofs[i+1],
                                   *mappings[i]));
+      if (Mpi::Root()) { cout << "Done." << endl; }
    }
+
+   if (Mpi::Root()) { cout << endl; }
 }
 
 void ParVoxelMultigrid::FormFineLinearSystem(
