@@ -164,6 +164,7 @@ VoxelMesh VoxelMesh::Coarsen() const
       const int lin_idx = lex.LinearIndex(new_n);
       if (coarsened_mesh.lex2idx.find(lin_idx) == coarsened_mesh.lex2idx.end())
       {
+         const int attr = GetAttribute(ie);
          coarsened_mesh.lex2idx[lin_idx] = coarsened_mesh.NumOfElements;
          coarsened_mesh.idx2lex.push_back(lex);
 
@@ -180,8 +181,8 @@ VoxelMesh VoxelMesh::Coarsen() const
          }
 
          if (Dim == 1) { MFEM_ABORT("To be implemented"); }
-         else if (Dim == 2) { coarsened_mesh.AddQuad(el_vert.data()); }
-         else if (Dim == 3) { coarsened_mesh.AddHex(el_vert.data()); }
+         else if (Dim == 2) { coarsened_mesh.AddQuad(el_vert.data(), attr); }
+         else if (Dim == 3) { coarsened_mesh.AddHex(el_vert.data(), attr); }
          else { MFEM_ABORT("Unsupported dimension."); }
       }
    }
