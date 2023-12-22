@@ -37,7 +37,8 @@ int main(int argc, char *argv[])
       }
       else
       {
-         MFEM_ABORT("Invalid problem type.");
+         if (Mpi::Root()) { cerr << "Invalid problem type.\n"; }
+         std::exit(1);
       }
    }();
 
@@ -53,7 +54,7 @@ int main(int argc, char *argv[])
    b.AddDomainIntegrator(new VectorDomainLFIntegrator(f));
    b.Assemble();
 
-   GridFunction x(&fespace);
+   ParGridFunction x(&fespace);
    x = 0.0;
 
    OperatorHandle A;
