@@ -84,7 +84,7 @@ int main(int argc, char *argv[])
    tic_toc.Restart();
    cout << "Reading fine mesh... " << flush;
    // Read the (fine) mesh from a file
-   std::unique_ptr<VoxelMesh> mesh(new VoxelMesh(mesh_file, h));
+   unique_ptr<VoxelMesh> mesh(new VoxelMesh(mesh_file, h));
    cout << "Done. " << tic_toc.RealTime() << endl;
    const int dim = mesh->Dimension();
 
@@ -109,18 +109,19 @@ int main(int argc, char *argv[])
       cout << setw(13) << mesh->GetNE() << flush;
 
       tic_toc.Restart();
-      const string level_str = dir + "/level_" + std::to_string(level);
+      const string level_str = dir + "/level_" + to_string(level);
       SavePartitionedMesh(level_str, *mesh, np, partitioning);
+      mesh->PrintBdrVTU(dir + "/bdr_level_" + to_string(level));
       cout << setw(15) << tic_toc.RealTime() << flush;
 
-      const std::vector<int> &bounds = mesh->GetVoxelBounds();
-      if (!std::all_of(bounds.begin(), bounds.end(), [](int x) { return x >= 4; }))
+      const vector<int> &bounds = mesh->GetVoxelBounds();
+      if (!all_of(bounds.begin(), bounds.end(), [](int x) { return x >= 4; }))
       {
          break;
       }
 
       tic_toc.Restart();
-      std::unique_ptr<VoxelMesh> new_mesh(new VoxelMesh(mesh->Coarsen()));
+      unique_ptr<VoxelMesh> new_mesh(new VoxelMesh(mesh->Coarsen()));
       cout << setw(16) << tic_toc.RealTime() << flush;
 
       // Get hierarchy information for the new level
@@ -145,7 +146,7 @@ int main(int argc, char *argv[])
       SaveParVoxelMappings(level_str, mappings);
       cout << setw(16) << tic_toc.RealTime() << endl;
 
-      std::swap(new_mesh, mesh);
+      swap(new_mesh, mesh);
       Swap(new_partitioning, partitioning);
 
       ++level;
@@ -157,7 +158,7 @@ int main(int argc, char *argv[])
       picojson::object info;
       info["np"] = picojson::value(double(np));
       info["nlevels"] = picojson::value(double(level + 1));
-      std::ofstream f(dir + "/info.json");
+      ofstream f(dir + "/info.json");
       f << picojson::value(info) << '\n';
    }
 
