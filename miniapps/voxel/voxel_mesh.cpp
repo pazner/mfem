@@ -189,6 +189,61 @@ VoxelMesh VoxelMesh::Coarsen() const
 
    coarsened_mesh.RemoveUnusedVertices();
    coarsened_mesh.FinalizeMesh();
+
+   const int ngrid = pow(2, Dim); // number of fine elements per coarse elements
+   // Inherit boundary attributes from parents
+   std::unordered_map<int,std::unordered_map<int,int>> el_to_bdr_attr;
+   for (int ib = 0; ib < GetNBE(); ++ib)
+   {
+      const int attr = GetBdrAttribute(ib);
+      int ie, info;
+      GetBdrElementAdjacentElement(ib, ie, info);
+      const int local_side = info/64; // decode info
+      el_to_bdr_attr[ie][local_side] = attr;
+   }
+
+   for (int ib = 0; ib < coarsened_mesh.GetNBE(); ++ib)
+   {
+      int attr = -1;
+      int ie, info;
+      coarsened_mesh.GetBdrElementAdjacentElement(ib, ie, info);
+      const int local_side = info/64;
+      LexIndex lex = coarsened_mesh.GetLexicographicIndex(ie);
+      LexIndex shifted_lex = lex;
+      // Convert from coarse lexicographic index to fine index
+      for (int d = 0; d < Dim; ++d)
+      {
+         lex.coords[d] *= 2;
+      }
+      for (int i = 0; i < ngrid; ++i)
+      {
+         int j = i;
+         std::array<int,3> shift;
+         for (int d = 0; d < Dim; ++d)
+         {
+            shift[d] = j % 2;
+            j /= 2;
+
+            shifted_lex.coords[d] = lex.coords[d] + shift[d];
+         }
+         const int fine_idx = GetElementIndex(shifted_lex);
+         const auto result_1 = el_to_bdr_attr.find(fine_idx);
+
+         if (result_1 != el_to_bdr_attr.end())
+         {
+            const auto &local_attr_map = result_1->second;
+            const auto result_2 = local_attr_map.find(local_side);
+            if (result_2 != local_attr_map.end())
+            {
+               attr = result_2->second;
+               break;
+            }
+         }
+      }
+      MFEM_VERIFY(attr >= 0, "");
+      coarsened_mesh.SetBdrAttribute(ib, attr);
+   }
+
    return coarsened_mesh;
 }
 
