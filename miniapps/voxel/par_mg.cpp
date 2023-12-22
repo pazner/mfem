@@ -658,7 +658,8 @@ ParVoxelMapping LoadVoxelMapping(const std::string &prefix)
    return mapping;
 }
 
-ParVoxelMultigrid::ParVoxelMultigrid(const std::string &dir, int order)
+ParVoxelMultigrid::ParVoxelMultigrid(const std::string &dir, int order,
+                                     ProblemType pt)
 {
    using namespace std;
 
@@ -705,27 +706,47 @@ ParVoxelMultigrid::ParVoxelMultigrid(const std::string &dir, int order)
       if (Mpi::Root()) { cout << "Level " << i << ":" << endl; }
 
       if (Mpi::Root()) { cout << "  Creating space..." << flush; }
-      spaces.emplace_back(new ParFiniteElementSpace(meshes[i].get(), fec.get(), dim));
+      spaces.emplace_back(new ParFiniteElementSpace(
+                             meshes[i].get(), fec.get(), vdim));
 
       ess_dofs.emplace_back(new Array<int>);
       spaces[i]->GetBoundaryTrueDofs(*ess_dofs[i]);
 
       if (Mpi::Root()) { cout << "\n  Assembling form..." << flush; }
       forms.emplace_back(new ParBilinearForm(spaces[i].get()));
-      // forms[i]->AddDomainIntegrator(new DiffusionIntegrator);
-      // forms[i]->AddDomainIntegrator(new MassIntegrator);
-      forms[i]->AddDomainIntegrator(new ElasticityIntegrator(lambda, mu));
-      // forms[i]->SetAssemblyLevel(AssemblyLevel::PARTIAL);
+      if (pt == ProblemType::Poisson)
+      {
+         forms[i]->AddDomainIntegrator(new DiffusionIntegrator);
+         forms[i]->AddDomainIntegrator(new MassIntegrator);
+         forms[i]->SetAssemblyLevel(AssemblyLevel::PARTIAL);
+      }
+      else
+      {
+         forms[i]->AddDomainIntegrator(new ElasticityIntegrator(lambda, mu));
+         forms[i]->AddDomainIntegrator(new VectorMassIntegrator);
+      }
       forms[i]->Assemble();
 
-      OperatorPtr opr(Operator::ANY_TYPE);
-      forms[i]->FormSystemMatrix(*ess_dofs[i], opr);
-      opr.SetOperatorOwner(false);
+      OperatorPtr op(Operator::ANY_TYPE);
+      forms[i]->FormSystemMatrix(*ess_dofs[i], op);
+      op.SetOperatorOwner(false);
 
       if (Mpi::Root()) { cout << "\n  Assembling diagonal..." << endl; }
-      // l1-Jacobi smoother
-      Solver *smoother = new HypreSmoother(*opr.As<HypreParMatrix>(), 1);
-      AddLevel(opr.Ptr(), smoother, false, true);
+
+      Solver *smoother;
+      if (pt == ProblemType::Poisson)
+      {
+         Vector diag(spaces[i]->GetTrueVSize());
+         forms[i]->AssembleDiagonal(diag);
+         smoother = new OperatorChebyshevSmoother(
+            *op, diag, *ess_dofs[i], 2, meshes[i]->GetComm());
+      }
+      else
+      {
+         // l1-Jacobi smoother
+         smoother = new HypreSmoother(*op.As<HypreParMatrix>(), 1);
+      }
+      AddLevel(op.Ptr(), smoother, false, true);
    }
 
    if (Mpi::Root()) { cout << endl; }

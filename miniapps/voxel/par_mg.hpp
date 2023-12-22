@@ -96,6 +96,12 @@ public:
 
 template <typename T> using vec_unique_ptr = std::vector<std::unique_ptr<T>>;
 
+enum class ProblemType
+{
+   Poisson,
+   Elasticity
+};
+
 class ParVoxelMultigrid : public MultigridBase
 {
 private:
@@ -116,7 +122,8 @@ private:
    }
 
 public:
-   ParVoxelMultigrid(const std::string &dir, int order = 1);
+   ParVoxelMultigrid(const std::string &dir, int order = 1,
+                     ProblemType pt = ProblemType::Poisson);
 
    ParFiniteElementSpace &GetFineSpace() { return *spaces.back(); }
    Operator &GetFineOperator() { return *operators.Last(); }

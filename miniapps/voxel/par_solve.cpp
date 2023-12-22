@@ -12,18 +12,40 @@ int main(int argc, char *argv[])
 
    string dir = "Voxel";
    int order = 1;
+   string prob_str = "poisson";
+   bool visualization = false;
 
    OptionsParser args(argc, argv);
    args.AddOption(&dir, "-d", "--dir", "Data directory.");
-   args.AddOption(&order, "-o", "--order", "Finite element polynomial degree");
+   args.AddOption(&order, "-o", "--order", "Finite element polynomial degree.");
+   args.AddOption(&prob_str, "-p", "--problem",
+                  "Problem type {p,poisson} or {e,elasticity}.");
+   args.AddOption(&visualization, "-vis", "--visualization", "-no-vis",
+                  "--no-visualization",
+                  "Enable or disable ParaView output.");
    args.ParseCheck();
 
-   ParVoxelMultigrid mg(dir, order);
+   ProblemType pt = [prob_str]()
+   {
+      if (prob_str == "p" || prob_str == "poisson")
+      {
+         return ProblemType::Poisson;
+      }
+      else if (prob_str == "e" || prob_str == "elasticity")
+      {
+         return ProblemType::Elasticity;
+      }
+      else
+      {
+         MFEM_ABORT("Invalid problem type.");
+      }
+   }();
+
+   ParVoxelMultigrid mg(dir, order, pt);
    ParFiniteElementSpace &fespace = mg.GetFineSpace();
    ParMesh &mesh = *fespace.GetParMesh();
-   const int dim = mesh.Dimension();
 
-   Vector f_vec(dim);
+   Vector f_vec(fespace.GetVDim());
    f_vec = 1.0;
    VectorConstantCoefficient f(f_vec);
 
@@ -49,14 +71,17 @@ int main(int argc, char *argv[])
 
    mg.GetFineForm().RecoverFEMSolution(X, b, x);
 
-   ParaViewDataCollection pv("ParVoxelMG", &mesh);
-   pv.SetPrefixPath("ParaView");
-   pv.SetHighOrderOutput(true);
-   pv.SetLevelsOfDetail(order + 1);
-   pv.RegisterField("u", &x);
-   pv.SetCycle(0);
-   pv.SetTime(0);
-   pv.Save();
+   if (visualization)
+   {
+      ParaViewDataCollection pv("ParVoxelMG", &mesh);
+      pv.SetPrefixPath("ParaView");
+      pv.SetHighOrderOutput(true);
+      pv.SetLevelsOfDetail(order + 1);
+      pv.RegisterField("u", &x);
+      pv.SetCycle(0);
+      pv.SetTime(0);
+      pv.Save();
+   }
 
    return 0;
 }
