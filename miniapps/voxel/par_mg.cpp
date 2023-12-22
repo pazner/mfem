@@ -205,10 +205,6 @@ void ParVoxelProlongation::Mult(const Vector &u_coarse, Vector &u_fine) const
    std::vector<MPI_Request> send_req(nsend);
    c2f_buffers.resize(nsend);
 
-   const int nrecv = mapping.fine_to_coarse.size();
-   std::vector<MPI_Request> recv_req(nrecv);
-   f2c_buffers.resize(nrecv);
-
    // Fill send buffers, start non-blocking send
    for (int i = 0; i < nsend; ++i)
    {
@@ -239,16 +235,22 @@ void ParVoxelProlongation::Mult(const Vector &u_coarse, Vector &u_fine) const
    }
 
    // Allocate the receive buffers, start non-blocking receive
+   const int nrecv = mapping.fine_to_coarse.size();
+   std::vector<MPI_Request> recv_req(nrecv);
+   f2c_buffers.resize(nrecv);
    for (int i = 0; i < nrecv; ++i)
    {
-      f2c_buffers[i].resize(mapping.fine_to_coarse[i].fine_to_coarse.size() *
-                            ndof_per_el * vdim);
+      f2c_buffers[i].resize(
+         mapping.fine_to_coarse[i].fine_to_coarse.size() * ndof_per_el * vdim);
       MPI_Irecv(f2c_buffers[i].data(), f2c_buffers[i].size(),
                 MPI_DOUBLE, mapping.fine_to_coarse[i].rank, 0, comm, &recv_req[i]);
    }
 
    // Local computations
    const int coarse_ne = coarse_fes.GetNE();
+   // IMPORTANT: The next call to Vector::Destroy() makes sure we're not
+   // pointing to the MPI send buffers anymore!
+   u_fine_local.Destroy();
 
    for (int vd = 0; vd < vdim; ++vd)
    {
@@ -326,10 +328,6 @@ void ParVoxelProlongation::MultTranspose(
    std::vector<MPI_Request> send_req(nsend);
    f2c_buffers.resize(nsend);
 
-   const int nrecv = mapping.coarse_to_fine.size();
-   std::vector<MPI_Request> recv_req(nrecv);
-   c2f_buffers.resize(nrecv);
-
    // Fill send buffers, start non-blocking send
    for (int i = 0; i < nsend; ++i)
    {
@@ -362,25 +360,28 @@ void ParVoxelProlongation::MultTranspose(
          }
       }
 
-      MPI_Isend(f2c_buffers[i].data(),
-                f2c_buffers[i].size(),
+      MPI_Isend(f2c_buffers[i].data(), f2c_buffers[i].size(),
                 MPI_DOUBLE, mapping.fine_to_coarse[i].rank, 0, comm, &send_req[i]);
    }
 
    // Allocate the receive buffers, start non-blocking receive
+   const int nrecv = mapping.coarse_to_fine.size();
+   std::vector<MPI_Request> recv_req(nrecv);
+   c2f_buffers.resize(nrecv);
    for (int i = 0; i < nrecv; ++i)
    {
       c2f_buffers[i].resize(
          mapping.coarse_to_fine[i].coarse_to_fine.size() * ndof_per_el * vdim);
-      MPI_Irecv(c2f_buffers[i].data(),
-                c2f_buffers[i].size(),
+      MPI_Irecv(c2f_buffers[i].data(), c2f_buffers[i].size(),
                 MPI_DOUBLE, mapping.coarse_to_fine[i].rank, 0, comm, &recv_req[i]);
    }
 
    // Local computations
    u_coarse_lvec = 0.0;
-
    const int coarse_ne = coarse_fes.GetNE();
+   // IMPORTANT: The next call to Vector::Destroy() makes sure we're not
+   // pointing to the MPI send buffers anymore!
+   u_coarse_local.Destroy();
 
    for (int vd = 0; vd < vdim; ++vd)
    {
@@ -523,8 +524,10 @@ void ParVoxelProlongation::Coarsen(const Vector &u_fine, Vector &u_coarse) const
 
    // Local computations
    u_coarse_lvec = 0.0;
-
    const int coarse_ne = coarse_fes.GetNE();
+   // IMPORTANT: The next call to Vector::Destroy() makes sure we're not
+   // pointing to the MPI send buffers anymore!
+   u_coarse_local.Destroy();
 
    for (int vd = 0; vd < vdim; ++vd)
    {
@@ -701,6 +704,12 @@ ParVoxelMultigrid::ParVoxelMultigrid(const std::string &dir, int order,
    const int dim = meshes[0]->Dimension();
    fec.reset(new H1_FECollection(order, dim));
 
+   const int vdim = (pt == ProblemType::Poisson) ? 1 : dim;
+
+   Array<int> bdr_is_ess(20);
+   bdr_is_ess = 0;
+   bdr_is_ess[0] = 1;
+
    for (int i = 0; i < nlevels; ++i)
    {
       if (Mpi::Root()) { cout << "Level " << i << ":" << endl; }
@@ -710,7 +719,8 @@ ParVoxelMultigrid::ParVoxelMultigrid(const std::string &dir, int order,
                              meshes[i].get(), fec.get(), vdim));
 
       ess_dofs.emplace_back(new Array<int>);
-      spaces[i]->GetBoundaryTrueDofs(*ess_dofs[i]);
+      spaces[i]->GetEssentialTrueDofs(bdr_is_ess, *ess_dofs[i]);
+
 
       if (Mpi::Root()) { cout << "\n  Assembling form..." << flush; }
       forms.emplace_back(new ParBilinearForm(spaces[i].get()));
@@ -718,12 +728,11 @@ ParVoxelMultigrid::ParVoxelMultigrid(const std::string &dir, int order,
       {
          forms[i]->AddDomainIntegrator(new DiffusionIntegrator);
          forms[i]->AddDomainIntegrator(new MassIntegrator);
-         forms[i]->SetAssemblyLevel(AssemblyLevel::PARTIAL);
+         // forms[i]->SetAssemblyLevel(AssemblyLevel::PARTIAL);
       }
       else
       {
          forms[i]->AddDomainIntegrator(new ElasticityIntegrator(lambda, mu));
-         forms[i]->AddDomainIntegrator(new VectorMassIntegrator);
       }
       forms[i]->Assemble();
 
@@ -743,8 +752,9 @@ ParVoxelMultigrid::ParVoxelMultigrid(const std::string &dir, int order,
       }
       else
       {
-         // l1-Jacobi smoother
-         smoother = new HypreSmoother(*op.As<HypreParMatrix>(), 1);
+         Vector diag(spaces[i]->GetTrueVSize());
+         forms[i]->AssembleDiagonal(diag);
+         smoother = new OperatorJacobiSmoother(diag, *ess_dofs[i], 0.6);
       }
       AddLevel(op.Ptr(), smoother, false, true);
    }
