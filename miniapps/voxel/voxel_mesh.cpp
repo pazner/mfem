@@ -3,6 +3,51 @@
 namespace mfem
 {
 
+int FindComponents(const Table &elem_elem, Array<int> &component)
+{
+   const int num_elem = elem_elem.Size();
+   const int *i_elem_elem = elem_elem.GetI();
+   const int *j_elem_elem = elem_elem.GetJ();
+
+   component.SetSize(num_elem);
+   component = -1;
+
+   Array<int> elem_stack(num_elem);
+
+   int num_comp = 0;
+
+   int stack_p = 0;
+   int stack_top_p = 0; // points to the first unused element in the stack
+   for (int elem = 0; elem < num_elem; elem++)
+   {
+      if (component[elem] >= 0) { continue; }
+
+      component[elem] = num_comp;
+      ++num_comp;
+
+      elem_stack[stack_top_p++] = elem;
+
+      for ( ; stack_p < stack_top_p; stack_p++)
+      {
+         const int i = elem_stack[stack_p];
+         for (int j = i_elem_elem[i]; j < i_elem_elem[i+1]; j++)
+         {
+            const int k = j_elem_elem[j];
+            if (component[k] < 0)
+            {
+               component[k] = component[i];
+               elem_stack[stack_top_p++] = k;
+            }
+            else if (component[k] != component[i])
+            {
+               MFEM_ABORT("");
+            }
+         }
+      }
+   }
+   return num_comp;
+}
+
 VoxelMesh::VoxelMesh(const std::string &filename, double h_) : Mesh(filename),
    h(h_)
 {
@@ -40,6 +85,11 @@ VoxelMesh::VoxelMesh(const std::string &filename, double h_) : Mesh(filename),
       MFEM_VERIFY(lex2idx.find(lin_idx) == lex2idx.end(), "");
       lex2idx[lin_idx] = i;
    }
+
+   Array<int> components;
+   const int n_components = FindComponents(ElementToElementTable(), components);
+
+   std::cout << "Found " << n_components << " connected components.\n";
 }
 
 VoxelMesh::VoxelMesh(double h_, const std::vector<int> &n_)
