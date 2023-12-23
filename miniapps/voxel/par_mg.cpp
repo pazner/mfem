@@ -721,13 +721,14 @@ ParVoxelMultigrid::ParVoxelMultigrid(const std::string &dir, int order,
       ess_dofs.emplace_back(new Array<int>);
       spaces[i]->GetEssentialTrueDofs(bdr_is_ess, *ess_dofs[i]);
 
+      const int total_ess_dofs = meshes[i]->ReduceInt(ess_dofs[i]->Size());
+      if (Mpi::Root()) { cout << "\n  Number of essential DOFs: " << total_ess_dofs; }
 
       if (Mpi::Root()) { cout << "\n  Assembling form..." << flush; }
       forms.emplace_back(new ParBilinearForm(spaces[i].get()));
       if (pt == ProblemType::Poisson)
       {
          forms[i]->AddDomainIntegrator(new DiffusionIntegrator);
-         forms[i]->AddDomainIntegrator(new MassIntegrator);
          // forms[i]->SetAssemblyLevel(AssemblyLevel::PARTIAL);
       }
       else
@@ -743,19 +744,25 @@ ParVoxelMultigrid::ParVoxelMultigrid(const std::string &dir, int order,
       if (Mpi::Root()) { cout << "\n  Assembling diagonal..." << endl; }
 
       Solver *smoother;
-      if (pt == ProblemType::Poisson)
+
+      if (i == 0)
       {
-         Vector diag(spaces[i]->GetTrueVSize());
-         forms[i]->AssembleDiagonal(diag);
-         smoother = new OperatorChebyshevSmoother(
-            *op, diag, *ess_dofs[i], 2, meshes[i]->GetComm());
+         HypreBoomerAMG *amg = new HypreBoomerAMG(*op.As<HypreParMatrix>());
+         amg->SetSystemsOptions(vdim, true);
+         smoother = amg;
       }
       else
       {
-         Vector diag(spaces[i]->GetTrueVSize());
-         forms[i]->AssembleDiagonal(diag);
-         smoother = new OperatorJacobiSmoother(diag, *ess_dofs[i], 0.6);
+         HypreSmoother *hypre_smoother = new HypreSmoother(*op.As<HypreParMatrix>(),
+                                                           HypreSmoother::l1GS);
+         hypre_smoother->SetOperatorSymmetry(true);
+         smoother = hypre_smoother;
+         // Vector diag(spaces[i]->GetTrueVSize());
+         // forms[i]->AssembleDiagonal(diag);
+         // smoother = new OperatorChebyshevSmoother(
+         //    *op, diag, *ess_dofs[i], 2, meshes[i]->GetComm());
       }
+
       AddLevel(op.Ptr(), smoother, false, true);
    }
 

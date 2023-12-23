@@ -116,6 +116,9 @@ private:
    ConstantCoefficient lambda{100.0};
    ConstantCoefficient mu{50.0};
 
+   // ConstantCoefficient lambda{0.0};
+   // ConstantCoefficient mu{10000.0};
+
    virtual const Operator* GetProlongationAtLevel(int level) const override
    {
       return prolongations[level].get();
