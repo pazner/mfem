@@ -235,8 +235,14 @@ VoxelMesh VoxelMesh::Coarsen() const
             const auto result_2 = local_attr_map.find(local_side);
             if (result_2 != local_attr_map.end())
             {
-               attr = result_2->second;
-               break;
+               if (attr >= 0)
+               {
+                  attr = std::min(attr, result_2->second);
+               }
+               else
+               {
+                  attr = result_2->second;
+               }
             }
          }
       }
