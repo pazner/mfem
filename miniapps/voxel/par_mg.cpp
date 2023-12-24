@@ -278,9 +278,11 @@ void ParVoxelProlongation::Mult(const Vector &u_coarse, Vector &u_fine) const
    }
 
    // Wait for receive to complete, then place received DOFs in the fine lvec
-   for (int i = 0; i < nrecv; ++i)
+   while (true)
    {
-      MPI_Wait(&recv_req[i], MPI_STATUS_IGNORE);
+      int i;
+      MPI_Waitany(nrecv, recv_req.data(), &i, MPI_STATUS_IGNORE);
+      if (i == MPI_UNDEFINED) { break; }
       int offset = 0;
       for (int vd = 0; vd < vdim; ++vd)
       {
@@ -416,9 +418,12 @@ void ParVoxelProlongation::MultTranspose(
    }
 
    // Wait for receive to complete, then add received DOFs to the coarse lvec
-   for (int i = 0; i < nrecv; ++i)
+   while (true)
    {
-      MPI_Wait(&recv_req[i], MPI_STATUS_IGNORE);
+      int i;
+      MPI_Waitany(nrecv, recv_req.data(), &i, MPI_STATUS_IGNORE);
+      if (i == MPI_UNDEFINED) { break; }
+
       int offset = 0;
 
       for (int vd = 0; vd < vdim; ++vd)
@@ -559,9 +564,12 @@ void ParVoxelProlongation::Coarsen(const Vector &u_fine, Vector &u_coarse) const
    }
 
    // Wait for receive to complete, then add received DOFs to the coarse lvec
-   for (int i = 0; i < nrecv; ++i)
+   while (true)
    {
-      MPI_Wait(&recv_req[i], MPI_STATUS_IGNORE);
+      int i;
+      MPI_Waitany(nrecv, recv_req.data(), &i, MPI_STATUS_IGNORE);
+      if (i == MPI_UNDEFINED) { break; }
+
       int offset = 0;
 
       for (int vd = 0; vd < vdim; ++vd)
