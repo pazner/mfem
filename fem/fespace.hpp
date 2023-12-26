@@ -1338,14 +1338,7 @@ public:
 };
 
 /// @brief Return true if the mesh contains only one topology and the elements are tensor elements.
-inline bool UsesTensorBasis(const FiniteElementSpace& fes)
-{
-   Mesh & mesh = *fes.GetMesh();
-   const bool mixed = mesh.GetNumGeometries(mesh.Dimension()) > 1;
-   // Potential issue: empty local mesh --> no element 0.
-   return !mixed &&
-          dynamic_cast<const mfem::TensorBasisElement *>(fes.GetFE(0))!=nullptr;
-}
+bool UsesTensorBasis(const FiniteElementSpace& fes);
 
 }
 

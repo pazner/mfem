@@ -3678,4 +3678,19 @@ FiniteElementCollection *FiniteElementSpace::Load(Mesh *m, std::istream &input)
    return r_fec;
 }
 
+bool UsesTensorBasis(const FiniteElementSpace& fes)
+{
+   Mesh &mesh = *fes.GetMesh();
+   if (fes.GetNE() > 0)
+   {
+      const bool mixed = mesh.GetNumGeometries(mesh.Dimension()) > 1;
+      const bool tensor = dynamic_cast<const TensorBasisElement *>(fes.GetFE(0));
+      return !mixed && tensor;
+   }
+   else
+   {
+      return true;
+   }
+}
+
 } // namespace mfem

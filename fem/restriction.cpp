@@ -608,7 +608,7 @@ ConformingFaceRestriction::ConformingFaceRestriction(
      vdim(fes.GetVDim()),
      byvdim(fes.GetOrdering() == Ordering::byVDIM),
      face_dofs(nf > 0 ? fes.GetFaceElement(0)->GetDof() : 0),
-     elem_dofs(fes.GetFE(0)->GetDof()),
+     elem_dofs(fes.GetNE() > 0 ? fes.GetFE(0)->GetDof() : 0),
      nfdofs(nf*face_dofs),
      ndofs(fes.GetNDofs()),
      scatter_indices(nf*face_dofs),

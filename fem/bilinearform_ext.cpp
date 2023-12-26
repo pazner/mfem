@@ -63,6 +63,8 @@ void MFBilinearFormExtension::Assemble()
 
 void MFBilinearFormExtension::AssembleDiagonal(Vector &y) const
 {
+   if (y.Size() == 0) { return; }
+
    Array<BilinearFormIntegrator*> &integrators = *a->GetDBFI();
 
    const int iSz = integrators.Size();
@@ -128,6 +130,8 @@ void MFBilinearFormExtension::FormLinearSystem(const Array<int> &ess_tdof_list,
 
 void MFBilinearFormExtension::Mult(const Vector &x, Vector &y) const
 {
+   if (x.Size() == 0) { return; }
+
    Array<BilinearFormIntegrator*> &integrators = *a->GetDBFI();
 
    const int iSz = integrators.Size();
@@ -186,6 +190,8 @@ void MFBilinearFormExtension::Mult(const Vector &x, Vector &y) const
 
 void MFBilinearFormExtension::MultTranspose(const Vector &x, Vector &y) const
 {
+   if (x.Size() == 0) { return; }
+
    Array<BilinearFormIntegrator*> &integrators = *a->GetDBFI();
    const int iSz = integrators.Size();
    if (elem_restrict)
@@ -342,6 +348,10 @@ void PABilinearFormExtension::SetupRestrictionOperators(const L2FaceValues m)
 
 void PABilinearFormExtension::Assemble()
 {
+   // PA requires that the mesh has a nodal grid function (for computation of
+   // geometric factors, etc.)
+   a->FESpace()->GetMesh()->EnsureNodes();
+
    SetupRestrictionOperators(L2FaceValues::DoubleValued);
 
    Array<BilinearFormIntegrator*> &integrators = *a->GetDBFI();
@@ -380,6 +390,8 @@ void PABilinearFormExtension::Assemble()
 
 void PABilinearFormExtension::AssembleDiagonal(Vector &y) const
 {
+   if (y.Size() == 0) { return; }
+
    Array<BilinearFormIntegrator*> &integrators = *a->GetDBFI();
 
    const int iSz = integrators.Size();
@@ -464,6 +476,8 @@ void PABilinearFormExtension::FormLinearSystem(const Array<int> &ess_tdof_list,
 
 void PABilinearFormExtension::Mult(const Vector &x, Vector &y) const
 {
+   if (x.Size() == 0) { return; }
+
    Array<BilinearFormIntegrator*> &integrators = *a->GetDBFI();
 
    const int iSz = integrators.Size();
@@ -568,6 +582,8 @@ void PABilinearFormExtension::Mult(const Vector &x, Vector &y) const
 
 void PABilinearFormExtension::MultTranspose(const Vector &x, Vector &y) const
 {
+   if (x.Size() == 0) { return; }
+
    Array<BilinearFormIntegrator*> &integrators = *a->GetDBFI();
    const int iSz = integrators.Size();
    if (elem_restrict)
@@ -769,6 +785,8 @@ void EABilinearFormExtension::Assemble()
 
 void EABilinearFormExtension::Mult(const Vector &x, Vector &y) const
 {
+   if (x.Size() == 0) { return; }
+
    // Apply the Element Restriction
    const bool useRestrict = !DeviceCanUseCeed() && elem_restrict;
    if (!useRestrict)
@@ -897,6 +915,8 @@ void EABilinearFormExtension::Mult(const Vector &x, Vector &y) const
 
 void EABilinearFormExtension::MultTranspose(const Vector &x, Vector &y) const
 {
+   if (x.Size() == 0) { return; }
+
    // Apply the Element Restriction
    const bool useRestrict = !DeviceCanUseCeed() && elem_restrict;
    if (!useRestrict)
@@ -1257,6 +1277,8 @@ void FABilinearFormExtension::DGMult(const Vector &x, Vector &y) const
 
 void FABilinearFormExtension::Mult(const Vector &x, Vector &y) const
 {
+   if (x.Size() == 0) { return; }
+
    if ( a->GetFBFI()->Size()>0 )
    {
       DGMult(x, y);
@@ -1318,6 +1340,8 @@ void FABilinearFormExtension::DGMultTranspose(const Vector &x, Vector &y) const
 
 void FABilinearFormExtension::MultTranspose(const Vector &x, Vector &y) const
 {
+   if (x.Size() == 0) { return; }
+
    if ( a->GetFBFI()->Size()>0 )
    {
       DGMultTranspose(x, y);
@@ -1473,6 +1497,8 @@ void PAMixedBilinearFormExtension::SetupMultInputs(
 
 void PAMixedBilinearFormExtension::Mult(const Vector &x, Vector &y) const
 {
+   if (x.Size() == 0) { return; }
+
    y = 0.0;
    AddMult(x, y);
 }
@@ -1505,6 +1531,8 @@ void PAMixedBilinearFormExtension::AddMult(const Vector &x, Vector &y,
 void PAMixedBilinearFormExtension::MultTranspose(const Vector &x,
                                                  Vector &y) const
 {
+   if (x.Size() == 0) { return; }
+
    y = 0.0;
    AddMultTranspose(x, y);
 }
@@ -1537,6 +1565,8 @@ void PAMixedBilinearFormExtension::AddMultTranspose(const Vector &x, Vector &y,
 void PAMixedBilinearFormExtension::AssembleDiagonal_ADAt(const Vector &D,
                                                          Vector &diag) const
 {
+   if (D.Size() == 0) { return; }
+
    Array<BilinearFormIntegrator*> &integrators = *a->GetDBFI();
 
    const int iSz = integrators.Size();
