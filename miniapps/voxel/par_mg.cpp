@@ -10,6 +10,7 @@
 // CONTRIBUTING.md for details.
 
 #include "par_mg.hpp"
+#include "voxel_integ.hpp"
 #include "../../fem/picojson.h"
 
 namespace mfem
@@ -734,14 +735,17 @@ ParVoxelMultigrid::ParVoxelMultigrid(const std::string &dir, int order,
 
       if (Mpi::Root()) { cout << "\n  Assembling form..." << flush; }
       forms.emplace_back(new ParBilinearForm(spaces[i].get()));
-      if (pt == ProblemType::Poisson)
+      BilinearFormIntegrator *integ = nullptr;
+      if (pt == ProblemType::Poisson) { integ = new DiffusionIntegrator; }
+      else { integ = new ElasticityIntegrator(lambda, mu); }
+      if (i > 0)
       {
-         forms[i]->AddDomainIntegrator(new DiffusionIntegrator);
-         // forms[i]->SetAssemblyLevel(AssemblyLevel::PARTIAL);
+         forms[i]->AddDomainIntegrator(new VoxelIntegrator(integ));
+         forms[i]->SetAssemblyLevel(AssemblyLevel::PARTIAL);
       }
       else
       {
-         forms[i]->AddDomainIntegrator(new ElasticityIntegrator(lambda, mu));
+         forms[i]->AddDomainIntegrator(integ);
       }
       forms[i]->Assemble();
 
@@ -752,7 +756,6 @@ ParVoxelMultigrid::ParVoxelMultigrid(const std::string &dir, int order,
       if (Mpi::Root()) { cout << "\n  Assembling diagonal..." << endl; }
 
       Solver *smoother;
-
       if (i == 0)
       {
          HypreBoomerAMG *amg = new HypreBoomerAMG(*op.As<HypreParMatrix>());
@@ -761,14 +764,14 @@ ParVoxelMultigrid::ParVoxelMultigrid(const std::string &dir, int order,
       }
       else
       {
-         HypreSmoother *hypre_smoother = new HypreSmoother(*op.As<HypreParMatrix>(),
-                                                           HypreSmoother::l1GS);
-         hypre_smoother->SetOperatorSymmetry(true);
-         smoother = hypre_smoother;
-         // Vector diag(spaces[i]->GetTrueVSize());
-         // forms[i]->AssembleDiagonal(diag);
-         // smoother = new OperatorChebyshevSmoother(
-         //    *op, diag, *ess_dofs[i], 2, meshes[i]->GetComm());
+         // HypreSmoother *hypre_smoother = new HypreSmoother(*op.As<HypreParMatrix>(),
+         //   HypreSmoother::l1GS);
+         // hypre_smoother->SetOperatorSymmetry(true);
+         // smoother = hypre_smoother;
+         Vector diag(spaces[i]->GetTrueVSize());
+         forms[i]->AssembleDiagonal(diag);
+         smoother = new OperatorChebyshevSmoother(
+            *op, diag, *ess_dofs[i], 2, meshes[i]->GetComm());
       }
 
       AddLevel(op.Ptr(), smoother, false, true);

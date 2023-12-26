@@ -21,8 +21,8 @@ CONFIG_MK = $(MFEM_BUILD_DIR)/config/config.mk
 MFEM_LIB_FILE = mfem_is_not_built
 -include $(CONFIG_MK)
 
-VOXEL_HEADERS = ppm.hpp image_mesh.hpp mg.hpp mg_elasticity.hpp voxel_mesh.hpp lex.hpp par_mg.hpp
-VOXEL_SRC = ppm.cpp image_mesh.cpp mg.cpp mg_elasticity.cpp voxel_mesh.cpp par_mg.cpp
+VOXEL_HEADERS = ppm.hpp image_mesh.hpp mg.hpp mg_elasticity.hpp voxel_mesh.hpp lex.hpp par_mg.hpp voxel_integ.hpp
+VOXEL_SRC = ppm.cpp image_mesh.cpp mg.cpp mg_elasticity.cpp voxel_mesh.cpp par_mg.cpp voxel_integ.cpp
 VOXEL_OBJ = $(VOXEL_SRC:.cpp=.o)
 
 SEQ_MINIAPPS =
