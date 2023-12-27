@@ -70,12 +70,10 @@ int main(int argc, char *argv[])
    string mesh_file =
       "/Users/pazner/Documents/portland_state/10_research/13_meshes/bone_72k.mesh";
    string dir = "Voxel";
-   double h = 0.32;
    int np = 1;
 
    OptionsParser args(argc, argv);
    args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use.");
-   args.AddOption(&h, "-hx", "--hx", "Mesh cell size.");
    args.AddOption(&np, "-np", "--n-partitions", "Number of mesh partitions.");
    args.AddOption(&dir, "-d", "--dir", "Data directory.");
    args.ParseCheck();
@@ -84,7 +82,7 @@ int main(int argc, char *argv[])
    tic_toc.Restart();
    cout << "Reading fine mesh... " << flush;
    // Read the (fine) mesh from a file
-   unique_ptr<VoxelMesh> mesh(new VoxelMesh(mesh_file, h));
+   unique_ptr<VoxelMesh> mesh(new VoxelMesh(mesh_file));
    cout << "Done. " << tic_toc.RealTime() << endl;
    const int dim = mesh->Dimension();
 

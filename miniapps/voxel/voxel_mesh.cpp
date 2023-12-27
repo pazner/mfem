@@ -48,16 +48,18 @@ int FindComponents(const Table &elem_elem, Array<int> &component)
    return num_comp;
 }
 
-VoxelMesh::VoxelMesh(const std::string &filename, double h_) : Mesh(filename),
-   h(h_)
+VoxelMesh::VoxelMesh(const std::string &filename) : Mesh(filename)
 {
+   MFEM_VERIFY(GetNE() > 0, "Empty mesh not supported.");
+
+   h = GetElementSize(0);
    SetCurvature(0);
 
    Vector mmin, mmax;
    GetBoundingBox(mmin, mmax, 0);
 
    n.resize(Dim);
-   for (int i = 0; i < Dim; ++i) { n[i] = (mmax[i] - mmin[i])/h; }
+   for (int i = 0; i < Dim; ++i) { n[i] = std::ceil((mmax[i] - mmin[i])/h); }
 
    auto translate = [mmin](const Vector &x_old, Vector &x_new)
    {
@@ -85,11 +87,6 @@ VoxelMesh::VoxelMesh(const std::string &filename, double h_) : Mesh(filename),
       MFEM_VERIFY(lex2idx.find(lin_idx) == lex2idx.end(), "");
       lex2idx[lin_idx] = i;
    }
-
-   Array<int> components;
-   const int n_components = FindComponents(ElementToElementTable(), components);
-
-   std::cout << "Found " << n_components << " connected components.\n";
 }
 
 VoxelMesh::VoxelMesh(double h_, const std::vector<int> &n_)

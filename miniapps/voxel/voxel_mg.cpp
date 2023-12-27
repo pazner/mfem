@@ -20,7 +20,7 @@ int main(int argc, char *argv[])
 
    H1_FECollection fec(order, 3);
 
-   VoxelMultigrid mg(VoxelMesh(mesh_file, h), fec);
+   VoxelMultigrid mg(VoxelMesh(mesh_file), fec);
    FiniteElementSpace &fespace = mg.GetFineSpace();
    const int nl = mg.nlevels;
 
