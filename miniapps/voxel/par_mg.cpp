@@ -675,7 +675,7 @@ ParVoxelMultigrid::ParVoxelMultigrid(const std::string &dir, int order,
 {
    using namespace std;
 
-   const int nlevels = [&dir]()
+   const int nlevels_full = [&dir]()
    {
       ifstream f(dir + "/info.json");
       picojson::value json;
@@ -685,6 +685,13 @@ ParVoxelMultigrid::ParVoxelMultigrid(const std::string &dir, int order,
       MFEM_VERIFY(np == Mpi::WorldSize(), "Must run with " << np << " ranks.");
       return nlevels;
    }();
+
+   const int coarsest_level = nlevels_full - 1;
+   const int finest_level = 0;
+   const int nlevels = coarsest_level - finest_level + 1;
+
+   MFEM_VERIFY(coarsest_level < nlevels_full, "");
+   MFEM_VERIFY(finest_level <= coarsest_level, "");
 
    if (Mpi::Root())
    {
@@ -696,13 +703,14 @@ ParVoxelMultigrid::ParVoxelMultigrid(const std::string &dir, int order,
    // Load data from files. We start with the coarsest mesh, and load
    // increasingly fine meshes in sequence. (On disk, the level_0 files
    // correspond to the finest mesh).
-   for (int i = nlevels - 1; i >= 0; --i)
+   for (int i = coarsest_level; i >= finest_level; --i)
    {
-      if (Mpi::Root()) { cout << "Loading mesh level " << meshes.size() << "... " << flush; }
+      if (Mpi::Root()) { cout << "Loading mesh level " << meshes.size() << " (mesh " << i << ")... " << flush; }
       const string level_str = dir + "/level_" + to_string(i);
       meshes.emplace_back(new ParMesh(LoadParMesh(level_str)));
-      if (i < nlevels - 1)
+      if (i < coarsest_level)
       {
+         if (Mpi::Root()) { cout << "Loading maping " << i << "... " << flush; }
          mappings.emplace_back(new ParVoxelMapping(LoadVoxelMapping(level_str)));
       }
       if (Mpi::Root()) { cout << "Done." << endl; }
@@ -725,7 +733,7 @@ ParVoxelMultigrid::ParVoxelMultigrid(const std::string &dir, int order,
 
       if (Mpi::Root()) { cout << "  Creating space..." << flush; }
       spaces.emplace_back(new ParFiniteElementSpace(
-                             meshes[i].get(), fec.get(), vdim));
+                             meshes[i].get(), fec.get(), vdim, Ordering::byNODES));
 
       HYPRE_BigInt global_ndofs = spaces[i]->GlobalTrueVSize();
       if (Mpi::Root()) { cout << "\n  Number of DOFs: " << global_ndofs; }
@@ -741,10 +749,14 @@ ParVoxelMultigrid::ParVoxelMultigrid(const std::string &dir, int order,
       BilinearFormIntegrator *integ = nullptr;
       if (pt == ProblemType::Poisson) { integ = new DiffusionIntegrator; }
       else { integ = new ElasticityIntegrator(lambda, mu); }
+      VoxelIntegrator *voxel_integ = nullptr;
+
       if (i > 0)
       {
-         forms[i]->AddDomainIntegrator(new VoxelIntegrator(integ));
+         voxel_integ = new VoxelIntegrator(integ);
+         forms[i]->AddDomainIntegrator(voxel_integ);
          forms[i]->SetAssemblyLevel(AssemblyLevel::PARTIAL);
+         // forms[i]->AddDomainIntegrator(integ);
       }
       else
       {
@@ -762,7 +774,7 @@ ParVoxelMultigrid::ParVoxelMultigrid(const std::string &dir, int order,
       if (i == 0)
       {
          HypreBoomerAMG *amg = new HypreBoomerAMG(*op.As<HypreParMatrix>());
-         amg->SetSystemsOptions(vdim, true);
+         amg->SetSystemsOptions(vdim, spaces[i]->GetOrdering() == Ordering::byNODES);
          smoother = amg;
       }
       else
