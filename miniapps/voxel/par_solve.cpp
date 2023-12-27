@@ -63,8 +63,8 @@ int main(int argc, char *argv[])
 
    CGSolver cg(MPI_COMM_WORLD);
    cg.SetAbsTol(0.0);
-   cg.SetRelTol(1e-12);
-   cg.SetMaxIter(500);
+   cg.SetRelTol(1e-6);
+   cg.SetMaxIter(1000);
    cg.SetPrintLevel(1);
    cg.SetOperator(mg.GetFineOperator());
    cg.SetPreconditioner(mg);
