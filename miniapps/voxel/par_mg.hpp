@@ -113,11 +113,10 @@ private:
    vec_unique_ptr<ParVoxelMapping> mappings;
    std::unique_ptr<H1_FECollection> fec;
 
-   ConstantCoefficient lambda{100.0};
-   ConstantCoefficient mu{50.0};
+   ConstantCoefficient lambda{3846.0};
+   ConstantCoefficient mu{5769.0};
 
-   // ConstantCoefficient lambda{0.0};
-   // ConstantCoefficient mu{10000.0};
+   IntegrationRules irs{0, Quadrature1D::GaussLobatto};
 
    virtual const Operator* GetProlongationAtLevel(int level) const override
    {
