@@ -55,6 +55,45 @@ VoxelMesh::VoxelMesh(const std::string &filename) : Mesh(filename)
    h = GetElementSize(0);
    SetCurvature(0);
 
+   Array<int> components;
+   const int n_components = FindComponents(ElementToElementTable(), components);
+   std::cout << "Found " << n_components << " connected components.\n";
+   if (n_components > 1)
+   {
+      Array<int> component_count(n_components);
+      component_count = 0;
+      for (int c : components) { ++component_count[c]; }
+
+      const auto max_it = std::max_element(component_count.begin(),
+                                           component_count.end());
+      const int c = std::distance(component_count.begin(), max_it);
+
+      Array<Element*> new_elements(component_count[c]);
+      int j = 0;
+      for (int i = 0; i < GetNE(); ++i)
+      {
+         if (components[i] == c)
+         {
+            new_elements[j] = elements[i];
+            ++j;
+         }
+         else
+         {
+            FreeElement(elements[i]);
+         }
+      }
+      mfem::Swap(elements, new_elements);
+      NumOfElements = j;
+
+      // TODO: retain boundary attributes
+      boundary.DeleteAll();
+      NumOfBdrElements = 0;
+
+      DeleteTables();
+      RemoveUnusedVertices();
+      FinalizeMesh();
+   }
+
    Vector mmin, mmax;
    GetBoundingBox(mmin, mmax, 0);
 
