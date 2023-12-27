@@ -727,6 +727,9 @@ ParVoxelMultigrid::ParVoxelMultigrid(const std::string &dir, int order,
       spaces.emplace_back(new ParFiniteElementSpace(
                              meshes[i].get(), fec.get(), vdim));
 
+      HYPRE_BigInt global_ndofs = spaces[i]->GlobalTrueVSize();
+      if (Mpi::Root()) { cout << "\n  Number of DOFs: " << global_ndofs; }
+
       ess_dofs.emplace_back(new Array<int>);
       spaces[i]->GetEssentialTrueDofs(bdr_is_ess, *ess_dofs[i]);
 
