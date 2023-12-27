@@ -3,6 +3,8 @@
 #include "par_mg.hpp"
 #include "../../fem/picojson.h"
 
+#include <sys/stat.h>  // mkdir
+
 using namespace std;
 using namespace mfem;
 
@@ -77,6 +79,10 @@ int main(int argc, char *argv[])
    args.AddOption(&np, "-np", "--n-partitions", "Number of mesh partitions.");
    args.AddOption(&dir, "-d", "--dir", "Data directory.");
    args.ParseCheck();
+
+   int err_flag = mkdir(dir.c_str(), 0777);
+   err_flag = (err_flag && (errno != EEXIST)) ? 1 : 0;
+   MFEM_VERIFY(err_flag == 0, "Could not create directory " << dir)
 
    cout << "\n";
    tic_toc.Restart();
