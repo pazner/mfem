@@ -779,14 +779,13 @@ ParVoxelMultigrid::ParVoxelMultigrid(const std::string &dir, int order,
       }
       else
       {
-         // HypreSmoother *hypre_smoother = new HypreSmoother(*op.As<HypreParMatrix>(),
-         //   HypreSmoother::l1GS);
-         // hypre_smoother->SetOperatorSymmetry(true);
-         // smoother = hypre_smoother;
-         Vector diag(spaces[i]->GetTrueVSize());
-         forms[i]->AssembleDiagonal(diag);
-         smoother = new OperatorChebyshevSmoother(
-            *op, diag, *ess_dofs[i], 2, meshes[i]->GetComm());
+         // Vector diag(spaces[i]->GetTrueVSize());
+         // forms[i]->AssembleDiagonal(diag);
+         // smoother = new OperatorChebyshevSmoother(
+         //    *op, diag, *ess_dofs[i], 2, meshes[i]->GetComm(), 30, 1e-10);
+         // smoother = new OperatorJacobiSmoother(diag, *ess_dofs[i], 0.7);
+
+         smoother = new VoxelChebyshev(*op, *spaces[i], *voxel_integ, *ess_dofs[i], 4);
       }
 
       AddLevel(op.Ptr(), smoother, false, true);
