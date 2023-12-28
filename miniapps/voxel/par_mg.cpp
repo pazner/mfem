@@ -671,7 +671,8 @@ ParVoxelMapping LoadVoxelMapping(const std::string &prefix)
 }
 
 ParVoxelMultigrid::ParVoxelMultigrid(const std::string &dir, int order,
-                                     ProblemType pt)
+                                     ProblemType pt,
+                                     const std::vector<int> &ess_bdr_attrs)
 {
    using namespace std;
 
@@ -723,9 +724,17 @@ ParVoxelMultigrid::ParVoxelMultigrid(const std::string &dir, int order,
 
    const int vdim = (pt == ProblemType::Poisson) ? 1 : dim;
 
-   Array<int> bdr_is_ess(20);
-   bdr_is_ess = 0;
-   bdr_is_ess[0] = 1;
+
+   Array<int> bdr_is_ess;
+   if (meshes[0]->bdr_attributes.Size() > 0)
+   {
+      bdr_is_ess.SetSize(meshes[0]->bdr_attributes.Max());
+      bdr_is_ess = 0;
+      for (int i : ess_bdr_attrs)
+      {
+         bdr_is_ess[i - 1] = 1;
+      }
+   }
 
    for (int i = 0; i < nlevels; ++i)
    {

@@ -125,7 +125,8 @@ private:
 
 public:
    ParVoxelMultigrid(const std::string &dir, int order = 1,
-                     ProblemType pt = ProblemType::Poisson);
+                     ProblemType pt = ProblemType::Poisson,
+                     const std::vector<int> &ess_bdr_attrs = {});
 
    ParFiniteElementSpace &GetFineSpace() { return *spaces.back(); }
    Operator &GetFineOperator() { return *operators.Last(); }

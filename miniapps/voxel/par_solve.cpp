@@ -42,17 +42,43 @@ int main(int argc, char *argv[])
       }
    }();
 
-   ParVoxelMultigrid mg(dir, order, pt);
+   // List of boundary attributes that should be treated as essential (e.g.
+   // Dirichlet or displacement boundary conditions.)
+   std::vector<int> ess_bdr_attrs = {1};
+
+   ParVoxelMultigrid mg(dir, order, pt, ess_bdr_attrs);
    ParFiniteElementSpace &fespace = mg.GetFineSpace();
    ParMesh &mesh = *fespace.GetParMesh();
 
-   Vector f_vec(fespace.GetVDim());
-   f_vec = 1.0;
-   VectorConstantCoefficient f(f_vec);
-
    ParLinearForm b(&fespace);
-   b.AddDomainIntegrator(new VectorDomainLFIntegrator(f));
-   b.Assemble();
+   if (pt == ProblemType::Poisson)
+   {
+      ConstantCoefficient coeff(1.0);
+      b.AddDomainIntegrator(new DomainLFIntegrator(coeff));
+      b.Assemble();
+   }
+   else
+   {
+      const int dim = mesh.Dimension();
+      VectorArrayCoefficient force_coeff(dim);
+
+      // force_coeff is a coefficient representing the vector field F = (F0, F1,
+      // F2). On the entire domain, F0 = F1 = 0. On boundary attribute 2, we set
+      // F2 = -235, representing a pull-down force. On the rest of the
+      // boundaries, F2 = 0, representing traction-free boundary conditions.
+      for (int i = 0; i < dim-1; i++)
+      {
+         force_coeff.Set(i, new ConstantCoefficient(0.0));
+      }
+      const int top_bdr_attr = 2;
+      Vector pull_force(mesh.bdr_attributes.Max());
+      pull_force = 0.0;
+      pull_force(top_bdr_attr - 1) = -235.0;
+      force_coeff.Set(dim-1, new PWConstCoefficient(pull_force));
+
+      b.AddBoundaryIntegrator(new VectorBoundaryLFIntegrator(force_coeff));
+      b.Assemble();
+   }
 
    ParGridFunction x(&fespace);
    x = 0.0;
