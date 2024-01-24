@@ -2071,8 +2071,7 @@ void Mesh::GenerateBoundaryElements()
    be_to_face.SetSize(NumOfBdrElements);
    for (int i = 0, j = 0; i < faces_info.Size(); i++)
    {
-      // In 1D, the "faces" are just the mesh vertices
-      for (int i = 0, j = 0; i < faces_info.Size(); i++)
+      if (faces_info[i].Elem2No < 0)
       {
          boundary[j] = faces[i]->Duplicate(this);
          be_to_face[j++] = i;
