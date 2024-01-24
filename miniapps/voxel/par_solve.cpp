@@ -103,7 +103,7 @@ int main(int argc, char *argv[])
       ParaViewDataCollection pv("ParVoxelMG", &mesh);
       pv.SetPrefixPath("ParaView");
       pv.SetHighOrderOutput(true);
-      pv.SetLevelsOfDetail(order + 1);
+      pv.SetLevelsOfDetail(order);
       pv.RegisterField("u", &x);
       pv.SetCycle(0);
       pv.SetTime(0);
