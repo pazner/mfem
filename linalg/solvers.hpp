@@ -451,8 +451,6 @@ private:
    const Vector &diag;
    Array<double> coeffs;
    const Array<int>& ess_tdof_list;
-   mutable Vector residual;
-   mutable Vector helperVector;
    const Operator* oper;
 };
 

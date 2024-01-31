@@ -15,6 +15,7 @@
 
 #include "fem.hpp"
 #include "../general/sort_pairs.hpp"
+#include "../general/workspace.hpp"
 
 namespace mfem
 {
@@ -348,9 +349,13 @@ void ParBilinearForm::TrueAddMult(const Vector &x, Vector &y, const double a)
 const
 {
    const Operator *P = pfes->GetProlongationMatrix();
-   Xaux.SetSize(P->Height());
-   Yaux.SetSize(P->Height());
-   Ytmp.SetSize(P->Width());
+   // Xaux.SetSize(P->Height());
+   // Yaux.SetSize(P->Height());
+   // Ytmp.SetSize(P->Width());
+
+   auto Xaux = Workspace::NewVector(P->Height());
+   auto Yaux = Workspace::NewVector(P->Height());
+   auto Ytmp = Workspace::NewVector(P->Width());
 
    P->Mult(x, Xaux);
    if (ext)

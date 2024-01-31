@@ -13,6 +13,7 @@
 #include "../general/annotation.hpp"
 #include "../general/forall.hpp"
 #include "../general/globals.hpp"
+#include "../general/workspace.hpp"
 #include "../fem/bilinearform.hpp"
 #include <iostream>
 #include <iomanip>
@@ -341,7 +342,6 @@ OperatorChebyshevSmoother::OperatorChebyshevSmoother(const Operator &oper_,
    diag(d),
    coeffs(order),
    ess_tdof_list(ess_tdofs),
-   residual(N),
    oper(&oper_) { Setup(); }
 
 #ifdef MFEM_USE_MPI
@@ -362,7 +362,6 @@ OperatorChebyshevSmoother::OperatorChebyshevSmoother(const Operator &oper_,
      diag(d),
      coeffs(order),
      ess_tdof_list(ess_tdofs),
-     residual(N),
      oper(&oper_)
 {
    OperatorJacobiSmoother invDiagOperator(diag, ess_tdofs, 1.0);
@@ -405,7 +404,6 @@ OperatorChebyshevSmoother::OperatorChebyshevSmoother(const Operator* oper_,
 void OperatorChebyshevSmoother::Setup()
 {
    // Invert diagonal
-   residual.UseDevice(true);
    auto D = diag.Read();
    auto X = dinv.Write();
    mfem::forall(N, [=] MFEM_HOST_DEVICE (int i) { X[i] = 1.0 / D[i]; });
@@ -494,8 +492,10 @@ void OperatorChebyshevSmoother::Mult(const Vector& x, Vector &y) const
       MFEM_ABORT("Chebyshev smoother requires operator");
    }
 
+   auto residual = Workspace::NewVector(x.Size());
+   auto helperVector = Workspace::NewVector(x.Size());
+
    residual = x;
-   helperVector.SetSize(x.Size());
 
    y.UseDevice(true);
    y = 0.0;

@@ -10,6 +10,7 @@
 // CONTRIBUTING.md for details.
 
 #include "multigrid.hpp"
+#include "../general/workspace.hpp"
 
 namespace mfem
 {
@@ -55,8 +56,6 @@ void MultigridBase::InitVectors() const
    const int M = NumLevels();
    X.SetSize(M, nrhs);
    Y.SetSize(M, nrhs);
-   R.SetSize(M, nrhs);
-   Z.SetSize(M, nrhs);
    for (int i = 0; i < X.NumRows(); ++i)
    {
       const int n = operators[i]->Height();
@@ -64,8 +63,6 @@ void MultigridBase::InitVectors() const
       {
          X(i, j) = new Vector(n);
          Y(i, j) = new Vector(n);
-         R(i, j) = new Vector(n);
-         Z(i, j) = new Vector(n);
       }
    }
 }
@@ -78,8 +75,6 @@ void MultigridBase::EraseVectors() const
       {
          delete X(i, j);
          delete Y(i, j);
-         delete R(i, j);
-         delete Z(i, j);
       }
    }
 }
@@ -144,7 +139,10 @@ void MultigridBase::ArrayMult(const Array<const Vector*>& X_,
    }
 }
 
-void MultigridBase::SmoothingStep(int level, bool zero, bool transpose) const
+void MultigridBase::SmoothingStep(
+   int level,
+   bool zero,
+   bool transpose) const
 {
    // y = y + S (x - A y) or y = y + S^T (x - A y)
    if (zero)
@@ -154,8 +152,17 @@ void MultigridBase::SmoothingStep(int level, bool zero, bool transpose) const
    }
    else
    {
-      Array<Vector *> Y_(Y[level], nrhs), R_(R[level], nrhs),
-            Z_(Z[level], nrhs);
+      Array<Vector *> Y_(Y[level], nrhs);
+
+      Array<Vector *> Z_(nrhs), R_(nrhs);
+      for (int i = 0; i < nrhs; ++i)
+      {
+         const int n = operators[level]->Height();
+         R_[i] = new WorkspaceVector(Workspace::NewVector(n));
+         Z_[i] = new WorkspaceVector(Workspace::NewVector(n));
+      }
+
+
       for (int j = 0; j < nrhs; ++j)
       {
          *R_[j] = *X(level, j);
@@ -172,6 +179,12 @@ void MultigridBase::SmoothingStep(int level, bool zero, bool transpose) const
       for (int j = 0; j < nrhs; ++j)
       {
          *Y_[j] += *Z_[j];
+      }
+
+      for (int i = 0; i < nrhs; ++i)
+      {
+         delete R_[i];
+         delete Z_[i];
       }
    }
 }
@@ -193,8 +206,15 @@ void MultigridBase::Cycle(int level) const
 
    // Compute residual and restrict
    {
-      Array<Vector *> Y_(Y[level], nrhs), R_(R[level], nrhs),
-            X_(X[level - 1], nrhs);
+      Array<Vector *> Y_(Y[level], nrhs), X_(X[level - 1], nrhs);
+
+      Array<Vector *> R_(nrhs);
+      for (int i = 0; i < nrhs; ++i)
+      {
+         const int n = operators[level]->Height();
+         R_[i] = new WorkspaceVector(Workspace::NewVector(n));
+      }
+
       for (int j = 0; j < nrhs; ++j)
       {
          *R_[j] = *X(level, j);
@@ -204,6 +224,11 @@ void MultigridBase::Cycle(int level) const
       for (int j = 0; j < nrhs; ++j)
       {
          *Y(level - 1, j) = 0.0;
+      }
+
+      for (int i = 0; i < nrhs; ++i)
+      {
+         delete R_[i];
       }
    }
 
@@ -216,11 +241,24 @@ void MultigridBase::Cycle(int level) const
 
    // Prolongate and add
    {
-      Array<Vector *> Y_(Y[level - 1], nrhs), Z_(Z[level], nrhs);
+      Array<Vector *> Y_(Y[level - 1], nrhs);
+
+      Array<Vector *> Z_(nrhs);
+      for (int i = 0; i < nrhs; ++i)
+      {
+         const int n = operators[level]->Height();
+         Z_[i] = new WorkspaceVector(Workspace::NewVector(n));
+      }
+
       GetProlongationAtLevel(level - 1)->ArrayMult(Y_, Z_);
       for (int j = 0; j < nrhs; ++j)
       {
          *Y(level, j) += *Z_[j];
+      }
+
+      for (int i = 0; i < nrhs; ++i)
+      {
+         delete Z_[i];
       }
    }
 
