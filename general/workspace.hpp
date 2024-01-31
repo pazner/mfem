@@ -33,7 +33,6 @@ namespace internal { class WorkspaceChunk; }
 /// example, they are not intended to be stored as member data in other classes.
 class WorkspaceVector : public Vector
 {
-   // using internal::WorkspaceChunk;
    friend class internal::WorkspaceChunk;
 
    /// The WorkspaceChunk containing the data for this vector.
@@ -117,6 +116,8 @@ public:
 
    /// Returns true if this chunk can fit a new vector of size @a n.
    bool HasCapacityFor(int n) const { return n <= GetAvailableCapacity(); }
+
+   int GetVectorCount() const { return vector_count; }
 
    /// Returns true if this chunk is empty.
    bool IsEmpty() const { return vector_count == 0; }

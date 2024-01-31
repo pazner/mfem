@@ -109,7 +109,26 @@ WorkspaceVector Workspace::NewVector(int n)
 {
    Workspace &ws = Instance();
    ws.ConsolidateAndEnsureAvailable(n);
-   return ws.chunks.front().NewVector(n);
+   auto vec = ws.chunks.front().NewVector(n);
+
+   size_t nchunks = std::distance(std::begin(ws.chunks), std::end(ws.chunks));
+   mfem::out << "===========================================================\n";
+   mfem::out << nchunks << " chunks\n";
+   int i = 0;
+   for (auto it = ws.chunks.begin(); it != ws.chunks.end(); )
+   {
+      auto &c = *it;
+      mfem::out << "   Chunk " << i << '\n';
+      mfem::out << "   Size:      " << c.GetData().Size() << '\n';
+      mfem::out << "   Vectors:   " << c.GetVectorCount() << '\n';
+      mfem::out << "   Available: " << c.GetAvailableCapacity() << '\n';
+      ++it;
+      if (it != ws.chunks.end())
+      {
+         mfem::out << "   --------------------------------------------------\n";
+      }
+   }
+   return vec;
 }
 
 void Workspace::Reserve(int n)
