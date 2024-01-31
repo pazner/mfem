@@ -55,7 +55,11 @@ public:
    WorkspaceVector(WorkspaceVector &other) = delete;
 
    /// Cannot copy from one WorkspaceVector to another.
-   WorkspaceVector& operator=(WorkspaceVector &other) = delete;
+   WorkspaceVector& operator=(WorkspaceVector &other)
+   {
+      Vector::operator=(other);
+      return *this;
+   }
 
    /// Cannot move to an existing WorkspaceVector.
    WorkspaceVector& operator=(WorkspaceVector &&other) = delete;
