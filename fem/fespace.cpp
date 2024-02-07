@@ -3714,4 +3714,16 @@ FiniteElementCollection *FiniteElementSpace::Load(Mesh *m, std::istream &input)
    return r_fec;
 }
 
+ElementDofOrdering FiniteElementSpace::GetElementDofOrdering() const
+{
+   if (UsesTensorBasis(*this))
+   {
+      return ElementDofOrdering::LEXICOGRAPHIC;
+   }
+   else
+   {
+      return ElementDofOrdering::NATIVE;
+   }
+}
+
 } // namespace mfem

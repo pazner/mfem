@@ -649,6 +649,8 @@ public:
       ElementDofOrdering f_ordering, FaceType,
       L2FaceValues mul = L2FaceValues::DoubleValued) const;
 
+   ElementDofOrdering GetElementDofOrdering() const;
+
    /** @brief Return a QuadratureInterpolator that interpolates E-vectors to
        quadrature point values and/or derivatives (Q-vectors). */
    /** An E-vector represents the element-wise discontinuous version of the FE
