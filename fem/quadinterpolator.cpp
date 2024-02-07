@@ -164,8 +164,8 @@ static void Eval2D(const int NE,
    const int NQ = T_NQ ? T_NQ : nq;
    const int NMAX = NQ > ND ? NQ : ND;
    const int VDIM = T_VDIM ? T_VDIM : vdim;
+   const int SDIM = geom ? geom->mesh->SpaceDimension() : 2;
    MFEM_ASSERT(maps.mode == DofToQuad::FULL, "internal error");
-   MFEM_ASSERT(!geom || geom->mesh->SpaceDimension() == 2, "");
    MFEM_VERIFY(ND <= QI::MAX_ND2D, "");
    MFEM_VERIFY(NQ <= QI::MAX_NQ2D, "");
    MFEM_VERIFY(VDIM == 2 || !(eval_flags & QI::DETERMINANTS), "");
@@ -174,14 +174,14 @@ static void Eval2D(const int NE,
                " derivatives");
    const auto B = Reshape(maps.B.Read(), NQ, ND);
    const auto G = Reshape(maps.G.Read(), NQ, 2, ND);
-   const auto J = Reshape(geom ? geom->J.Read() : nullptr, NQ, 2, 2, NE);
+   const auto J = Reshape(geom ? geom->J.Read() : nullptr, NQ, SDIM, 2, NE);
    const auto E = Reshape(e_vec.Read(), ND, VDIM, NE);
    auto val = q_layout == QVectorLayout::byNODES ?
               Reshape(q_val.Write(), NQ, VDIM, NE):
               Reshape(q_val.Write(), VDIM, NQ, NE);
    auto der = q_layout == QVectorLayout::byNODES ?
-              Reshape(q_der.Write(), NQ, VDIM, 2, NE):
-              Reshape(q_der.Write(), VDIM, 2, NQ, NE);
+              Reshape(q_der.Write(), NQ, VDIM, SDIM, NE):
+              Reshape(q_der.Write(), VDIM, SDIM, NQ, NE);
    auto det = Reshape(q_det.Write(), NQ, NE);
    mfem::forall_2D(NE, NMAX, 1, [=] MFEM_HOST_DEVICE (int e)
    {
@@ -253,27 +253,61 @@ static void Eval2D(const int NE,
             }
             if (eval_flags & QI::PHYSICAL_DERIVATIVES)
             {
-               double Jloc[4], Jinv[4];
-               Jloc[0] = J(q,0,0,e);
-               Jloc[1] = J(q,1,0,e);
-               Jloc[2] = J(q,0,1,e);
-               Jloc[3] = J(q,1,1,e);
-               kernels::CalcInverse<2>(Jloc, Jinv);
-               for (int c = 0; c < VDIM; c++)
+               if (SDIM == 2)
                {
-                  const double u = D[c+VDIM*0];
-                  const double v = D[c+VDIM*1];
-                  const double JiU = Jinv[0]*u + Jinv[1]*v;
-                  const double JiV = Jinv[2]*u + Jinv[3]*v;
-                  if (q_layout == QVectorLayout::byVDIM)
+                  double Jloc[4], Jinv[4];
+                  Jloc[0] = J(q,0,0,e);
+                  Jloc[1] = J(q,1,0,e);
+                  Jloc[2] = J(q,0,1,e);
+                  Jloc[3] = J(q,1,1,e);
+                  kernels::CalcInverse<2>(Jloc, Jinv);
+                  for (int c = 0; c < VDIM; c++)
                   {
-                     der(c,0,q,e) = JiU;
-                     der(c,1,q,e) = JiV;
+                     const double u = D[c+VDIM*0];
+                     const double v = D[c+VDIM*1];
+                     const double JiU = Jinv[0]*u + Jinv[1]*v;
+                     const double JiV = Jinv[2]*u + Jinv[3]*v;
+                     if (q_layout == QVectorLayout::byVDIM)
+                     {
+                        der(c,0,q,e) = JiU;
+                        der(c,1,q,e) = JiV;
+                     }
+                     if (q_layout == QVectorLayout::byNODES)
+                     {
+                        der(q,c,0,e) = JiU;
+                        der(q,c,1,e) = JiV;
+                     }
                   }
-                  if (q_layout == QVectorLayout::byNODES)
+               }
+               else if (SDIM == 3)
+               {
+                  double Jloc[6], Jinv[6];
+                  Jloc[0] = J(q,0,0,e);
+                  Jloc[1] = J(q,1,0,e);
+                  Jloc[2] = J(q,2,0,e);
+                  Jloc[3] = J(q,0,1,e);
+                  Jloc[4] = J(q,1,1,e);
+                  Jloc[5] = J(q,2,1,e);
+                  kernels::CalcLeftInverse<3,2>(Jloc, Jinv);
+                  for (int c = 0; c < VDIM; c++)
                   {
-                     der(q,c,0,e) = JiU;
-                     der(q,c,1,e) = JiV;
+                     const double u = D[c+VDIM*0];
+                     const double v = D[c+VDIM*1];
+                     const double JiU = Jinv[0]*u + Jinv[1]*v;
+                     const double JiV = Jinv[2]*u + Jinv[3]*v;
+                     const double JiW = Jinv[4]*u + Jinv[5]*v;
+                     if (q_layout == QVectorLayout::byVDIM)
+                     {
+                        der(c,0,q,e) = JiU;
+                        der(c,1,q,e) = JiV;
+                        der(c,2,q,e) = JiW;
+                     }
+                     if (q_layout == QVectorLayout::byNODES)
+                     {
+                        der(q,c,0,e) = JiU;
+                        der(q,c,1,e) = JiV;
+                        der(q,c,2,e) = JiW;
+                     }
                   }
                }
             }

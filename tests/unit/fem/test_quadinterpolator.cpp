@@ -258,92 +258,103 @@ TEST_CASE("QuadratureInterpolator", "[QuadratureInterpolator][CUDA]")
       const auto nz = 3; // number of element in z
       testQuadratureInterpolator(dim, p, q, l, nx, ny, nz);
    }
+}
 
-   SECTION("Values and physical derivatives")
+TEST_CASE("QuadratureInterpolator values and physical derivatives",
+          "[QuadratureInterpolator][CUDA]")
+{
+   const auto mesh_fname = GENERATE(
+                              "../../data/inline-segment.mesh",
+                              "../../data/star.mesh",
+                              "../../data/star-q3.mesh",
+                              "../../data/fichera.mesh",
+                              "../../data/fichera-q3.mesh",
+                              "../../data/diag-segment-2d.mesh", // 1D mesh in 2D
+                              "../../data/diag-segment-3d.mesh", // 1D mesh in 3D
+                              "../../data/star-surf.mesh" // surface mesh
+                           );
+   const int order = GENERATE(1, 2, 3);
+   const bool simplicial = GENERATE(false, true);
+
+   CAPTURE(mesh_fname, order, simplicial);
+
+   Mesh mesh = [&]()
    {
-      const auto mesh_fname = GENERATE(
-                                 "../../data/inline-segment.mesh",
-                                 "../../data/star.mesh",
-                                 "../../data/star-q3.mesh",
-                                 "../../data/fichera.mesh",
-                                 "../../data/fichera-q3.mesh",
-                                 "../../data/diag-segment-2d.mesh", // 1D mesh in 2D
-                                 "../../data/diag-segment-3d.mesh", // 1D mesh in 3D
-                                 "../../data/star-surf.mesh" // surface mesh
-                              );
-      const int order = GENERATE(1, 2, 3);
-
       Mesh mesh = Mesh::LoadFromFile(mesh_fname);
-      H1_FECollection fec(order);
-      FiniteElementSpace fes(&mesh, &fec);
-      QuadratureSpace qs(&mesh, 2*order);
+      if (simplicial) { return Mesh::MakeSimplicial(mesh); }
+      else { return mesh; }
+   }();
+   H1_FECollection fec(order);
+   FiniteElementSpace fes(&mesh, &fec);
+   QuadratureSpace qs(&mesh, 2*order);
 
-      GridFunction gf(&fes);
-      gf.Randomize(1);
+   GridFunction gf(&fes);
+   gf.Randomize(1);
 
-      const ElementDofOrdering ordering = ElementDofOrdering::LEXICOGRAPHIC;
-      // Use element restriction to go from L-vector to E-vector
-      const Operator *R = fes.GetElementRestriction(ordering);
-      Vector e_vec(R->Height());
-      R->Mult(gf, e_vec);
+   const ElementDofOrdering ordering = UsesTensorBasis(fes) ?
+                                       ElementDofOrdering::LEXICOGRAPHIC :
+                                       ElementDofOrdering::NATIVE;
+   // Use element restriction to go from L-vector to E-vector
+   const Operator *R = fes.GetElementRestriction(ordering);
+   Vector e_vec(R->Height());
+   R->Mult(gf, e_vec);
 
-      // Use quadrature interpolator to go from E-vector to Q-vector
-      const QuadratureInterpolator *qi =
-         fes.GetQuadratureInterpolator(qs);
-      qi->SetOutputLayout(QVectorLayout::byVDIM);
+   // Use quadrature interpolator to go from E-vector to Q-vector
+   const QuadratureInterpolator *qi =
+      fes.GetQuadratureInterpolator(qs);
+   qi->SetOutputLayout(QVectorLayout::byVDIM);
 
+   {
+      QuadratureFunction qf1(qs), qf2(qs);
+
+      const int ne = qs.GetNE();
+      Vector values;
+      for (int iel = 0; iel < ne; ++iel)
       {
-         QuadratureFunction qf1(qs), qf2(qs);
-
-         const int ne = qs.GetNE();
-         Vector values;
-         for (int iel = 0; iel < ne; ++iel)
+         qf1.GetValues(iel, values);
+         const IntegrationRule &ir = qs.GetIntRule(iel);
+         ElementTransformation &T = *qs.GetTransformation(iel);
+         for (int iq = 0; iq < ir.Size(); ++iq)
          {
-            qf1.GetValues(iel, values);
-            const IntegrationRule &ir = qs.GetIntRule(iel);
-            ElementTransformation &T = *qs.GetTransformation(iel);
-            for (int iq = 0; iq < ir.Size(); ++iq)
-            {
-               const IntegrationPoint &ip = ir[iq];
-               T.SetIntPoint(&ip);
-               const int iq_p = qs.GetPermutedIndex(iel, iq);
-               values[iq_p] = gf.GetValue(T, ip);
-            }
+            const IntegrationPoint &ip = ir[iq];
+            T.SetIntPoint(&ip);
+            const int iq_p = qs.GetPermutedIndex(iel, iq);
+            values[iq_p] = gf.GetValue(T, ip);
          }
-
-         qi->Values(e_vec, qf2);
-
-         qf1 -= qf2;
-         REQUIRE(qf1.Normlinf() == MFEM_Approx(0.0));
       }
 
+      qi->Values(e_vec, qf2);
+
+      qf1 -= qf2;
+      REQUIRE(qf1.Normlinf() == MFEM_Approx(0.0));
+   }
+
+   {
+      const int sdim = mesh.SpaceDimension();
+      QuadratureFunction qf1(qs, sdim), qf2(qs, sdim);
+
+      const int ne = qs.GetNE();
+      DenseMatrix values;
+      Vector col;
+      for (int iel = 0; iel < ne; ++iel)
       {
-         const int sdim = mesh.SpaceDimension();
-         QuadratureFunction qf1(qs, sdim), qf2(qs, sdim);
-
-         const int ne = qs.GetNE();
-         DenseMatrix values;
-         Vector col;
-         for (int iel = 0; iel < ne; ++iel)
+         qf1.GetValues(iel, values);
+         const IntegrationRule &ir = qs.GetIntRule(iel);
+         ElementTransformation &T = *qs.GetTransformation(iel);
+         for (int iq = 0; iq < ir.Size(); ++iq)
          {
-            qf1.GetValues(iel, values);
-            const IntegrationRule &ir = qs.GetIntRule(iel);
-            ElementTransformation &T = *qs.GetTransformation(iel);
-            for (int iq = 0; iq < ir.Size(); ++iq)
-            {
-               const IntegrationPoint &ip = ir[iq];
-               T.SetIntPoint(&ip);
-               const int iq_p = qs.GetPermutedIndex(iel, iq);
-               values.GetColumnReference(iq_p, col);
-               gf.GetGradient(T, col);
-            }
+            const IntegrationPoint &ip = ir[iq];
+            T.SetIntPoint(&ip);
+            const int iq_p = qs.GetPermutedIndex(iel, iq);
+            values.GetColumnReference(iq_p, col);
+            gf.GetGradient(T, col);
          }
-
-         qi->PhysDerivatives(e_vec, qf2);
-
-         qf1 -= qf2;
-         REQUIRE(qf1.Normlinf() == MFEM_Approx(0.0));
       }
+
+      qi->PhysDerivatives(e_vec, qf2);
+
+      qf1 -= qf2;
+      REQUIRE(qf1.Normlinf() == MFEM_Approx(0.0));
    }
 }
 
