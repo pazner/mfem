@@ -487,11 +487,14 @@ int main(int argc, char *argv[])
       if (it == pref) { break; }
 
       elements_to_refine.SetSize(0);
-      for (int iel = 0; iel<pmesh.GetNE(); iel++)
+      if (it < 2)
       {
-         if (residuals[iel] >= theta * maxresidual)
+         for (int iel = 0; iel<pmesh.GetNE(); iel++)
          {
-            elements_to_refine.Append(iel);
+            if (residuals[iel] >= theta * maxresidual)
+            {
+               elements_to_refine.Append(iel);
+            }
          }
       }
 
