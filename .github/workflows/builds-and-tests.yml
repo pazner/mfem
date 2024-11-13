@@ -54,9 +54,6 @@ jobs:
         build-system: [cmake]
         hypre-target: [int32]
         precision: [fp64]
-        exclude:
-          - os: windows-latest
-            build-system: make
         # 'include' allows us to:
         # - Add a variable to all jobs without creating a new matrix dimension.
         #   Codecov is defined that way.
@@ -66,10 +63,6 @@ jobs:
         # Note: we will gather coverage info for any non-debug run except the
         # CMake build.
         include:
-          - target: dbg
-            codecov: NO
-          - target: opt
-            codecov: YES
           - os: windows-latest
             codecov: NO
           - os: windows-latest
