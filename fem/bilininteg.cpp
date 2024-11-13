@@ -859,7 +859,7 @@ DiffusionIntegrator::DiffusionIntegrator(const IntegrationRule *ir)
    : BilinearFormIntegrator(ir),
      Q(nullptr), VQ(nullptr), MQ(nullptr), maps(nullptr), geom(nullptr)
 {
-   static Kernels kernels;
+   // static Kernels kernels;
 }
 
 void DiffusionIntegrator::AssembleElementMatrix
@@ -1321,7 +1321,7 @@ const IntegrationRule &DiffusionIntegrator::GetRule(
 MassIntegrator::MassIntegrator(const IntegrationRule *ir)
    : BilinearFormIntegrator(ir), Q(nullptr), maps(nullptr), geom(nullptr)
 {
-   static Kernels kernels;
+   // static Kernels kernels;
 }
 
 void MassIntegrator::AssembleElementMatrix
