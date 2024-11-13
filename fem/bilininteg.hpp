@@ -2357,12 +2357,12 @@ public:
    MFEM_REGISTER_KERNELS(DiagonalPAKernels, DiagonalKernelType, (int, int, int));
 
 public:
-   MassIntegrator(const IntegrationRule *ir = NULL)
-      : BilinearFormIntegrator(ir), Q(NULL), maps(NULL), geom(NULL) { }
+   MassIntegrator(const IntegrationRule *ir = nullptr)
+      : BilinearFormIntegrator(ir), Q(nullptr), maps(nullptr), geom(nullptr) { }
 
    /// Construct a mass integrator with coefficient q
    MassIntegrator(Coefficient &q, const IntegrationRule *ir = NULL)
-      : BilinearFormIntegrator(ir), Q(&q), maps(NULL), geom(NULL) { }
+      : MassIntegrator(ir) { Q = &q; }
 
    /** Given a particular Finite Element computes the element mass matrix
        elmat. */
