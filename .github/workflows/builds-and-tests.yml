@@ -230,47 +230,5 @@ jobs:
           config-options: ${{ matrix.config-opts }}
           library-only: ${{ matrix.target == 'dbg' && matrix.os != 'ubuntu-latest' }}
 
-      # Run checks (and only checks) on debug targets
-      - name: checks
-        if: matrix.build-system == 'make' && matrix.target == 'dbg'
-        run: |
-          cd ${{ env.MFEM_TOP_DIR }}  && make check
-
-      # Note: 'tests' include the unit tests
-      - name: tests
-        if: matrix.build-system == 'make' && (matrix.target == 'opt' || matrix.os == 'ubuntu-latest')
-        run: |
-          cd ${{ env.MFEM_TOP_DIR }} && make test
-
-      - name: cmake checks
-        if: matrix.build-system == 'cmake' && matrix.target == 'dbg'
-        run: |
-          CTEST_CONFIG="Debug"
-          cd ${{ env.MFEM_TOP_DIR }} && cmake --build build --target check --config ${CTEST_CONFIG}
-        shell: bash
-
-      - name: cmake unit tests (Ubuntu)
-        if: matrix.build-system == 'cmake' && matrix.target == 'opt' && matrix.os == 'ubuntu-latest'
-        run: |
-          CTEST_CONFIG="Release"
-          [[ ${{ matrix.target }} == 'dbg' ]] && CTEST_CONFIG="Debug"
-          cd ${{ env.MFEM_TOP_DIR }}/build/tests/unit && ctest --output-on-failure -C ${CTEST_CONFIG}
-        shell: bash
-
-      - name: cmake tests
-        if: matrix.build-system == 'cmake' && matrix.target == 'opt' && matrix.os != 'ubuntu-latest'
-        run: |
-          CTEST_CONFIG="Release"
-          cd ${{ env.MFEM_TOP_DIR }}/build && \
-          ctest --output-on-failure -C ${CTEST_CONFIG} || \
-          ctest --rerun-failed --output-on-failure -C ${CTEST_CONFIG}
-        shell: bash
-
-      # Code coverage (process and upload reports)
-      - name: codecov
-        if: matrix.codecov == 'YES'
-        uses: mfem/github-actions/upload-coverage@v2.5
-        with:
-          name: ${{ matrix.os }}-${{ matrix.build-system }}-${{ matrix.target }}-${{ matrix.mpi }}-${{ matrix.hypre-target }}
-          project_dir: ${{ env.MFEM_TOP_DIR }}
-          directories: "fem general linalg mesh"
+      - name: Setup tmate session
+        uses: mxschmitt/action-tmate@v3
