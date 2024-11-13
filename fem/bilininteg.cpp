@@ -855,6 +855,11 @@ const IntegrationRule &GradientIntegrator::GetRule(const FiniteElement
 }
 
 
+DiffusionIntegrator::DiffusionIntegrator(const IntegrationRule *ir)
+   : BilinearFormIntegrator(ir),
+     Q(nullptr), VQ(nullptr), MQ(nullptr), maps(nullptr), geom(nullptr)
+{ }
+
 void DiffusionIntegrator::AssembleElementMatrix
 ( const FiniteElement &el, ElementTransformation &Trans,
   DenseMatrix &elmat )
@@ -1310,6 +1315,10 @@ const IntegrationRule &DiffusionIntegrator::GetRule(
    return IntRules.Get(trial_fe.GetGeomType(), order);
 }
 
+
+MassIntegrator::MassIntegrator(const IntegrationRule *ir)
+   : BilinearFormIntegrator(ir), Q(nullptr), maps(nullptr), geom(nullptr)
+{ }
 
 void MassIntegrator::AssembleElementMatrix
 ( const FiniteElement &el, ElementTransformation &Trans,
