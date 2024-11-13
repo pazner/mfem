@@ -51,7 +51,7 @@ jobs:
         os: [windows-latest]
         target: [opt]
         mpi: [par]
-        build-system: [make, cmake]
+        build-system: [cmake]
         hypre-target: [int32]
         precision: [fp64]
         exclude:
