@@ -2156,7 +2156,7 @@ public:
 
    MFEM_REGISTER_KERNELS(ApplyPAKernels, ApplyKernelType, (int, int, int));
    MFEM_REGISTER_KERNELS(DiagonalPAKernels, DiagonalKernelType, (int, int, int));
-   // struct Kernels { Kernels(); };
+   static struct Kernels { Kernels(); } kernels;
 
 protected:
    Coefficient *Q;
@@ -2234,21 +2234,26 @@ private:
 
 public:
    /// Construct a diffusion integrator with coefficient Q = 1
-   DiffusionIntegrator(const IntegrationRule *ir = nullptr);
+   DiffusionIntegrator(const IntegrationRule *ir = nullptr)
+      : BilinearFormIntegrator(ir),
+        Q(NULL), VQ(NULL), MQ(NULL), maps(NULL), geom(NULL) { }
 
    /// Construct a diffusion integrator with a scalar coefficient q
    DiffusionIntegrator(Coefficient &q, const IntegrationRule *ir = nullptr)
-      : DiffusionIntegrator(ir) { Q = &q; }
+      : BilinearFormIntegrator(ir),
+        Q(&q), VQ(NULL), MQ(NULL), maps(NULL), geom(NULL) { }
 
    /// Construct a diffusion integrator with a vector coefficient q
    DiffusionIntegrator(VectorCoefficient &q,
                        const IntegrationRule *ir = nullptr)
-      : DiffusionIntegrator(ir) { VQ = &q; }
+      : BilinearFormIntegrator(ir),
+        Q(NULL), VQ(&q), MQ(NULL), maps(NULL), geom(NULL) { }
 
    /// Construct a diffusion integrator with a matrix coefficient q
    DiffusionIntegrator(MatrixCoefficient &q,
                        const IntegrationRule *ir = nullptr)
-      : DiffusionIntegrator(ir) { MQ = &q; }
+      : BilinearFormIntegrator(ir),
+        Q(NULL), VQ(NULL), MQ(&q), maps(NULL), geom(NULL) { }
 
    /** Given a particular Finite Element computes the element stiffness matrix
        elmat. */
@@ -2351,14 +2356,15 @@ public:
 
    MFEM_REGISTER_KERNELS(ApplyPAKernels, ApplyKernelType, (int, int, int));
    MFEM_REGISTER_KERNELS(DiagonalPAKernels, DiagonalKernelType, (int, int, int));
-   // struct Kernels { Kernels(); };
+   static struct Kernels { Kernels(); } kernels;
 
 public:
-   MassIntegrator(const IntegrationRule *ir = NULL);
+   MassIntegrator(const IntegrationRule *ir = NULL)
+      : BilinearFormIntegrator(ir), Q(NULL), maps(NULL), geom(NULL) { }
 
    /// Construct a mass integrator with coefficient q
    MassIntegrator(Coefficient &q, const IntegrationRule *ir = NULL)
-      : MassIntegrator(ir) { Q = &q; }
+      : BilinearFormIntegrator(ir), Q(&q), maps(NULL), geom(NULL) { }
 
    /** Given a particular Finite Element computes the element mass matrix
        elmat. */

@@ -14,29 +14,30 @@
 namespace mfem
 {
 
-// MassIntegrator::Kernels::Kernels()
-// {
-//    // 2D
-//    MassIntegrator::AddSpecialization<2,2,2>();
-//    MassIntegrator::AddSpecialization<2,3,3>();
-//    MassIntegrator::AddSpecialization<2,4,4>();
-//    MassIntegrator::AddSpecialization<2,5,5>();
-//    MassIntegrator::AddSpecialization<2,6,6>();
-//    MassIntegrator::AddSpecialization<2,7,7>();
-//    MassIntegrator::AddSpecialization<2,8,8>();
-//    MassIntegrator::AddSpecialization<2,9,9>();
-//    // 3D
-//    MassIntegrator::AddSpecialization<3,2,2>();
-//    MassIntegrator::AddSpecialization<3,2,3>();
-//    MassIntegrator::AddSpecialization<3,3,4>();
-//    MassIntegrator::AddSpecialization<3,4,5>();
-//    MassIntegrator::AddSpecialization<3,4,6>();
-//    MassIntegrator::AddSpecialization<3,5,6>();
-//    MassIntegrator::AddSpecialization<3,5,8>();
-//    MassIntegrator::AddSpecialization<3,6,7>();
-//    MassIntegrator::AddSpecialization<3,7,8>();
-//    MassIntegrator::AddSpecialization<3,8,9>();
-// }
+MassIntegrator::Kernels MassIntegrator::kernels;
+MassIntegrator::Kernels::Kernels()
+{
+   // 2D
+   MassIntegrator::AddSpecialization<2,2,2>();
+   MassIntegrator::AddSpecialization<2,3,3>();
+   MassIntegrator::AddSpecialization<2,4,4>();
+   MassIntegrator::AddSpecialization<2,5,5>();
+   MassIntegrator::AddSpecialization<2,6,6>();
+   MassIntegrator::AddSpecialization<2,7,7>();
+   MassIntegrator::AddSpecialization<2,8,8>();
+   MassIntegrator::AddSpecialization<2,9,9>();
+   // 3D
+   MassIntegrator::AddSpecialization<3,2,2>();
+   MassIntegrator::AddSpecialization<3,2,3>();
+   MassIntegrator::AddSpecialization<3,3,4>();
+   MassIntegrator::AddSpecialization<3,4,5>();
+   MassIntegrator::AddSpecialization<3,4,6>();
+   MassIntegrator::AddSpecialization<3,5,6>();
+   MassIntegrator::AddSpecialization<3,5,8>();
+   MassIntegrator::AddSpecialization<3,6,7>();
+   MassIntegrator::AddSpecialization<3,7,8>();
+   MassIntegrator::AddSpecialization<3,8,9>();
+}
 
 namespace internal
 {

@@ -127,10 +127,8 @@ class KernelDispatchTable<Kernels,
          internal::KernelTypeList<OptParams...>>
 {
    std::unordered_map<std::tuple<Params...>,
-       Signature, KernelDispatchKeyHash<Params...>> table;
-   // using TableType = std::unordered_map<std::tuple<Params...>,
-   //       Signature, KernelDispatchKeyHash<Params...>>;
-   // TableType table;
+       Signature,
+       KernelDispatchKeyHash<Params...>> table;
 
 public:
    /// @brief Run the kernel with the given dispatch parameters and arguments.
@@ -178,12 +176,6 @@ public:
          }
       };
    };
-
-   /// Return the dispatch map table
-   // static const TableType &GetDispatchTable()
-   // {
-   //    return Kernels::Get().table;
-   // }
 };
 
 }
