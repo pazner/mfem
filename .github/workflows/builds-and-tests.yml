@@ -55,10 +55,6 @@ jobs:
         hypre-target: [int32]
         precision: [fp64]
         exclude:
-          - os: ubuntu-latest
-            build-system: cmake
-          - os: macos-latest
-            build-system: cmake
           - os: windows-latest
             build-system: make
         # 'include' allows us to:
