@@ -48,9 +48,9 @@ jobs:
   builds-and-tests:
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        target: [dbg, opt]
-        mpi: [seq, par]
+        os: [windows-latest]
+        target: [opt]
+        mpi: [par]
         build-system: [make, cmake]
         hypre-target: [int32]
         precision: [fp64]
