@@ -103,11 +103,6 @@ jobs:
         run: |
           sudo apt-get install mpich libmpich-dev
 
-      - name: get lcov (Linux)
-        if: matrix.codecov == 'YES' && matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get install lcov
-
       # Keep the following section in case we need it again in the future,
       # see: https://github.com/mfem/mfem/pull/3385#discussion_r1058013032
       # - name: Set up Homebrew
@@ -119,12 +114,6 @@ jobs:
         run: |
           export HOMEBREW_NO_INSTALL_CLEANUP=1
           brew install openmpi
-
-      - name: get lcov (MacOS)
-        if: matrix.codecov == 'YES' && matrix.os == 'macos-latest'
-        run: |
-          export HOMEBREW_NO_INSTALL_CLEANUP=1
-          brew install lcov
 
       - name: get MPI (Windows)
         if: matrix.mpi == 'par' && matrix.os == 'windows-latest'
@@ -205,7 +194,6 @@ jobs:
         with:
           os: ${{ matrix.os }}
           target: ${{ matrix.target }}
-          codecov: ${{ matrix.codecov }}
           mpi: ${{ matrix.mpi }}
           build-system: ${{ matrix.build-system }}
           hypre-dir: ${{ env.HYPRE_TOP_DIR }}
@@ -250,12 +238,3 @@ jobs:
           ctest --output-on-failure -C ${CTEST_CONFIG} || \
           ctest --rerun-failed --output-on-failure -C ${CTEST_CONFIG}
         shell: bash
-
-      # Code coverage (process and upload reports)
-      - name: codecov
-        if: matrix.codecov == 'YES'
-        uses: mfem/github-actions/upload-coverage@v2.5
-        with:
-          name: ${{ matrix.os }}-${{ matrix.build-system }}-${{ matrix.target }}-${{ matrix.mpi }}-${{ matrix.hypre-target }}
-          project_dir: ${{ env.MFEM_TOP_DIR }}
-          directories: "fem general linalg mesh"
