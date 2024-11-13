@@ -84,6 +84,17 @@ jobs:
           # Fetch the complete history for codecov to access commits ID
           fetch-depth: 0
 
+      - name: Xcode version setup (MacOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          XCODE_PATH="/Applications/Xcode_15.3.app"
+          echo "> sudo xcode-select -s ${XCODE_PATH}"
+          sudo xcode-select -s ${XCODE_PATH}
+          echo "> g++ -v"
+          g++ -v
+          echo "> clang++ -v"
+          clang++ -v
+
       # Only get MPI if defined for the job.
       # TODO: It would be nice to have only one step, e.g. with a dedicated
       # action, but I (@adrienbernede) don't see how at the moment.
@@ -91,6 +102,29 @@ jobs:
         if: matrix.mpi == 'par' && matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get install mpich libmpich-dev
+
+      - name: get lcov (Linux)
+        if: matrix.codecov == 'YES' && matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get install lcov
+
+      # Keep the following section in case we need it again in the future,
+      # see: https://github.com/mfem/mfem/pull/3385#discussion_r1058013032
+      # - name: Set up Homebrew
+      #   if: ( matrix.mpi == 'par' || matrix.codecov == 'YES' ) && matrix.os == 'macos-latest'
+      #   uses: Homebrew/actions/setup-homebrew@master
+
+      - name: get MPI (MacOS)
+        if: matrix.mpi == 'par' && matrix.os == 'macos-latest'
+        run: |
+          export HOMEBREW_NO_INSTALL_CLEANUP=1
+          brew install openmpi
+
+      - name: get lcov (MacOS)
+        if: matrix.codecov == 'YES' && matrix.os == 'macos-latest'
+        run: |
+          export HOMEBREW_NO_INSTALL_CLEANUP=1
+          brew install lcov
 
       - name: get MPI (Windows)
         if: matrix.mpi == 'par' && matrix.os == 'windows-latest'
@@ -171,6 +205,7 @@ jobs:
         with:
           os: ${{ matrix.os }}
           target: ${{ matrix.target }}
+          codecov: ${{ matrix.codecov }}
           mpi: ${{ matrix.mpi }}
           build-system: ${{ matrix.build-system }}
           hypre-dir: ${{ env.HYPRE_TOP_DIR }}
@@ -178,7 +213,49 @@ jobs:
           mfem-dir: ${{ env.MFEM_TOP_DIR }}
           precision: ${{ matrix.precision }}
           config-options: ${{ matrix.config-opts }}
-          library-only: ${{ matrix.target == 'dbg' }}
+          library-only: ${{ matrix.target == 'dbg' && matrix.os != 'ubuntu-latest' }}
 
-      - name: Setup tmate session
-        uses: mxschmitt/action-tmate@v3
+      # Run checks (and only checks) on debug targets
+      - name: checks
+        if: matrix.build-system == 'make' && matrix.target == 'dbg'
+        run: |
+          cd ${{ env.MFEM_TOP_DIR }}  && make check
+
+      # Note: 'tests' include the unit tests
+      - name: tests
+        if: matrix.build-system == 'make' && (matrix.target == 'opt' || matrix.os == 'ubuntu-latest')
+        run: |
+          cd ${{ env.MFEM_TOP_DIR }} && make test
+
+      - name: cmake checks
+        if: matrix.build-system == 'cmake' && matrix.target == 'dbg'
+        run: |
+          CTEST_CONFIG="Debug"
+          cd ${{ env.MFEM_TOP_DIR }} && cmake --build build --target check --config ${CTEST_CONFIG}
+        shell: bash
+
+      - name: cmake unit tests (Ubuntu)
+        if: matrix.build-system == 'cmake' && matrix.target == 'opt' && matrix.os == 'ubuntu-latest'
+        run: |
+          CTEST_CONFIG="Release"
+          [[ ${{ matrix.target }} == 'dbg' ]] && CTEST_CONFIG="Debug"
+          cd ${{ env.MFEM_TOP_DIR }}/build/tests/unit && ctest --output-on-failure -C ${CTEST_CONFIG}
+        shell: bash
+
+      - name: cmake tests
+        if: matrix.build-system == 'cmake' && matrix.target == 'opt' && matrix.os != 'ubuntu-latest'
+        run: |
+          CTEST_CONFIG="Release"
+          cd ${{ env.MFEM_TOP_DIR }}/build && \
+          ctest --output-on-failure -C ${CTEST_CONFIG} || \
+          ctest --rerun-failed --output-on-failure -C ${CTEST_CONFIG}
+        shell: bash
+
+      # Code coverage (process and upload reports)
+      - name: codecov
+        if: matrix.codecov == 'YES'
+        uses: mfem/github-actions/upload-coverage@v2.5
+        with:
+          name: ${{ matrix.os }}-${{ matrix.build-system }}-${{ matrix.target }}-${{ matrix.mpi }}-${{ matrix.hypre-target }}
+          project_dir: ${{ env.MFEM_TOP_DIR }}
+          directories: "fem general linalg mesh"
