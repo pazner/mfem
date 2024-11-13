@@ -33,25 +33,6 @@ template <bool P> void InitGradByVDimKernels();
 }
 }
 
-QuadratureInterpolator::Kernels QuadratureInterpolator::kernels;
-QuadratureInterpolator::Kernels::Kernels()
-{
-   using namespace internal::quadrature_interpolator;
-
-   InitEvalByNodesKernels();
-   InitEvalByVDimKernels();
-   // Non-phys grad kernels
-   InitGradByNodesKernels<false>();
-   InitGradByVDimKernels<false>();
-   // Phys grad kernels
-   InitGradByNodesKernels<true>();
-   InitGradByVDimKernels<true>();
-   // Determinants
-   InitDetKernels();
-   // Non-tensor
-   InitEvalKernels();
-}
-
 QuadratureInterpolator::QuadratureInterpolator(const FiniteElementSpace &fes,
                                                const IntegrationRule &ir):
 
