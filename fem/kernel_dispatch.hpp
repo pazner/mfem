@@ -137,7 +137,7 @@ public:
    /// parameters has been registered, it will be called. Otherwise, the
    /// fallback kernel will be called.
    template<typename... Args>
-   static MFEM_EXPORT void Run(Params... params, Args&&... args)
+   static void Run(Params... params, Args&&... args)
    {
       const auto &table = Kernels::Get().table;
       const std::tuple<Params...> key = std::make_tuple(params...);
@@ -168,7 +168,7 @@ public:
       template <OptParams... OPT_PARAMS>
       struct Opt
       {
-         static MFEM_EXPORT void Add()
+         static void Add()
          {
             std::tuple<Params...> param_tuple(PARAMS...);
             Kernels::Get().table[param_tuple] =
@@ -178,7 +178,7 @@ public:
    };
 
    /// Return the dispatch map table
-   static MFEM_EXPORT const TableType &GetDispatchTable()
+   static const TableType &GetDispatchTable()
    {
       return Kernels::Get().table;
    }
