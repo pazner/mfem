@@ -2233,26 +2233,21 @@ private:
 
 public:
    /// Construct a diffusion integrator with coefficient Q = 1
-   DiffusionIntegrator(const IntegrationRule *ir = nullptr)
-      : BilinearFormIntegrator(ir),
-        Q(NULL), VQ(NULL), MQ(NULL), maps(NULL), geom(NULL) { }
+   DiffusionIntegrator(const IntegrationRule *ir = nullptr);
 
    /// Construct a diffusion integrator with a scalar coefficient q
    DiffusionIntegrator(Coefficient &q, const IntegrationRule *ir = nullptr)
-      : BilinearFormIntegrator(ir),
-        Q(&q), VQ(NULL), MQ(NULL), maps(NULL), geom(NULL) { }
+      : DiffusionIntegrator(ir) { Q = &q; }
 
    /// Construct a diffusion integrator with a vector coefficient q
    DiffusionIntegrator(VectorCoefficient &q,
                        const IntegrationRule *ir = nullptr)
-      : BilinearFormIntegrator(ir),
-        Q(NULL), VQ(&q), MQ(NULL), maps(NULL), geom(NULL) { }
+      : DiffusionIntegrator(ir) { VQ = &q; }
 
    /// Construct a diffusion integrator with a matrix coefficient q
    DiffusionIntegrator(MatrixCoefficient &q,
                        const IntegrationRule *ir = nullptr)
-      : BilinearFormIntegrator(ir),
-        Q(NULL), VQ(NULL), MQ(&q), maps(NULL), geom(NULL) { }
+      : DiffusionIntegrator(ir) { MQ = &q; }
 
    /** Given a particular Finite Element computes the element stiffness matrix
        elmat. */
@@ -2357,7 +2352,7 @@ public:
    MFEM_REGISTER_KERNELS(DiagonalPAKernels, DiagonalKernelType, (int, int, int));
 
 public:
-   MassIntegrator(const IntegrationRule *ir = nullptr);
+   MassIntegrator(const IntegrationRule *ir = NULL);
 
    /// Construct a mass integrator with coefficient q
    MassIntegrator(Coefficient &q, const IntegrationRule *ir = NULL)
