@@ -69,7 +69,7 @@ namespace mfem
 // is the concatenation of P1 and P2. We need to pass it as a separate argument
 // to avoid a trailing comma in the case that P2 is empty.
 #define MFEM_REGISTER_KERNELS_(KernelName, KernelType, P1, P2, P3)             \
-   class MFEM_EXPORT KernelName : public                                       \
+   class KernelName : public                                                   \
    KernelDispatchTable<KernelName, KernelType,                                 \
       internal::KernelTypeList<MFEM_PARAM_LIST P1>,                            \
       internal::KernelTypeList<MFEM_PARAM_LIST P2>>                            \
@@ -78,9 +78,9 @@ namespace mfem
       const char *kernel_name = MFEM_KERNEL_NAME(KernelName);                  \
       using KernelSignature = KernelType;                                      \
       template <MFEM_PARAM_LIST P3>                                            \
-      static KernelSignature Kernel();                                         \
-      static KernelSignature Fallback(MFEM_PARAM_LIST P1);                     \
-      static KernelName &Get()                                                 \
+      static MFEM_EXPORT KernelSignature Kernel();                             \
+      static MFEM_EXPORT KernelSignature Fallback(MFEM_PARAM_LIST P1);         \
+      static MFEM_EXPORT KernelName &Get()                                     \
       { static KernelName table; return table;}                                \
    }
 
@@ -137,7 +137,7 @@ public:
    /// parameters has been registered, it will be called. Otherwise, the
    /// fallback kernel will be called.
    template<typename... Args>
-   static void Run(Params... params, Args&&... args)
+   static MFEM_EXPORT void Run(Params... params, Args&&... args)
    {
       const auto &table = Kernels::Get().table;
       const std::tuple<Params...> key = std::make_tuple(params...);
@@ -168,7 +168,7 @@ public:
       template <OptParams... OPT_PARAMS>
       struct Opt
       {
-         static void Add()
+         static MFEM_EXPORT void Add()
          {
             std::tuple<Params...> param_tuple(PARAMS...);
             Kernels::Get().table[param_tuple] =
@@ -178,7 +178,7 @@ public:
    };
 
    /// Return the dispatch map table
-   static const TableType &GetDispatchTable()
+   static MFEM_EXPORT const TableType &GetDispatchTable()
    {
       return Kernels::Get().table;
    }
