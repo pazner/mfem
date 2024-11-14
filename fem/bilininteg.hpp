@@ -2233,7 +2233,7 @@ private:
 
 public:
    /// Construct a diffusion integrator with coefficient Q = 1
-   DiffusionIntegrator(const IntegrationRule *ir)
+   DiffusionIntegrator(const IntegrationRule *ir = nullptr)
       : BilinearFormIntegrator(ir),
         Q(nullptr), VQ(nullptr), MQ(nullptr), maps(nullptr), geom(nullptr)
    { }
