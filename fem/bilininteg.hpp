@@ -2156,6 +2156,7 @@ public:
 
    MFEM_REGISTER_KERNELS(ApplyPAKernels, ApplyKernelType, (int, int, int));
    MFEM_REGISTER_KERNELS(DiagonalPAKernels, DiagonalKernelType, (int, int, int));
+   struct Kernels { Kernels(); };
 
 protected:
    Coefficient *Q;
@@ -2236,7 +2237,9 @@ public:
    DiffusionIntegrator(const IntegrationRule *ir = nullptr)
       : BilinearFormIntegrator(ir),
         Q(nullptr), VQ(nullptr), MQ(nullptr), maps(nullptr), geom(nullptr)
-   { }
+   {
+      static Kernels kernels;
+   }
 
    /// Construct a diffusion integrator with a scalar coefficient q
    DiffusionIntegrator(Coefficient &q, const IntegrationRule *ir = nullptr)
@@ -2353,9 +2356,14 @@ public:
 
    MFEM_REGISTER_KERNELS(ApplyPAKernels, ApplyKernelType, (int, int, int));
    MFEM_REGISTER_KERNELS(DiagonalPAKernels, DiagonalKernelType, (int, int, int));
+   struct Kernels { Kernels(); };
 
 public:
-   MassIntegrator(const IntegrationRule *ir = NULL);
+   MassIntegrator(const IntegrationRule *ir = nullptr)
+      : BilinearFormIntegrator(ir), Q(nullptr), maps(nullptr), geom(nullptr)
+   {
+      static Kernels kernels;
+   }
 
    /// Construct a mass integrator with coefficient q
    MassIntegrator(Coefficient &q, const IntegrationRule *ir = NULL)
