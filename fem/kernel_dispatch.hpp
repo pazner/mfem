@@ -69,7 +69,7 @@ namespace mfem
 // is the concatenation of P1 and P2. We need to pass it as a separate argument
 // to avoid a trailing comma in the case that P2 is empty.
 #define MFEM_REGISTER_KERNELS_(KernelName, KernelType, P1, P2, P3)             \
-   class KernelName : public                                                   \
+   class MFEM_EXPORT KernelName : public                                       \
    KernelDispatchTable<KernelName, KernelType,                                 \
       internal::KernelTypeList<MFEM_PARAM_LIST P1>,                            \
       internal::KernelTypeList<MFEM_PARAM_LIST P2>>                            \
