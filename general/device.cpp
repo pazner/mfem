@@ -72,9 +72,9 @@ bool Device::mem_types_set = false;
 
 Device::Device()
 {
-   if (std::getenv("MFEM_MEMORY") && !mem_host_env && !mem_device_env)
+   if (getenv("MFEM_MEMORY") && !mem_host_env && !mem_device_env)
    {
-      std::string mem_backend(std::getenv("MFEM_MEMORY"));
+      std::string mem_backend(getenv("MFEM_MEMORY"));
       if (mem_backend == "host")
       {
          mem_host_env = true;
@@ -139,9 +139,9 @@ Device::Device()
       mm.Configure(host_mem_type, device_mem_type);
    }
 
-   if (std::getenv("MFEM_DEVICE"))
+   if (getenv("MFEM_DEVICE"))
    {
-      std::string device(std::getenv("MFEM_DEVICE"));
+      std::string device(getenv("MFEM_DEVICE"));
       Configure(device);
       device_env = true;
    }
