@@ -3621,19 +3621,18 @@ void FiniteElementSpace::GetTrueTransferOperator(
    {
       const int RP_case = bool(GetConformingRestriction()) + 2*bool(coarse_P);
       if (RP_case == 0) { return; }
-      const bool owner = T.OwnsOperator();
+      Handle<const Operator> T_handle(T.Ptr(), T.OwnsOperator());
       T.SetOperatorOwner(false);
       switch (RP_case)
       {
          case 1:
-            T.Reset(new ProductOperator(cR.get(), T.Ptr(), false, owner));
+            T.Reset(new ProductOperator(cR.get(), T_handle));
             break;
          case 2:
-            T.Reset(new ProductOperator(T.Ptr(), coarse_P, owner, false));
+            T.Reset(new ProductOperator(T_handle, coarse_P));
             break;
          case 3:
-            T.Reset(new TripleProductOperator(
-                       cR.get(), T.Ptr(), coarse_P, false, owner, false));
+            T.Reset(new TripleProductOperator(cR.get(), T_handle, coarse_P));
             break;
       }
    }
@@ -3767,8 +3766,8 @@ void FiniteElementSpace::Update(bool want_transform)
                if (cP && cR_hp)
                {
                   Th.SetOperatorOwner(false);
-                  Th.Reset(new TripleProductOperator(cP.get(), cR_hp.get(), Th.Ptr(),
-                                                     false, false, true));
+                  Th.Reset(new TripleProductOperator(
+                              cP.get(), cR_hp.get(), Handle<const Operator>::Owning(Th.Ptr())));
                }
             }
             else
@@ -3776,8 +3775,8 @@ void FiniteElementSpace::Update(bool want_transform)
                if (cP && cR)
                {
                   Th.SetOperatorOwner(false);
-                  Th.Reset(new TripleProductOperator(cP.get(), cR.get(), Th.Ptr(),
-                                                     false, false, true));
+                  Th.Reset(new TripleProductOperator(
+                              cP.get(), cR.get(), Handle<const Operator>::Owning(Th.Ptr())));
                }
             }
             break;

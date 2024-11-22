@@ -71,17 +71,14 @@ const Operator &GridTransfer::MakeTrueOperator(
                t_oper.Reset(const_cast<Operator*>(&oper), false);
                break;
             case 1:
-               t_oper.Reset(
-                  new ProductOperator(out_cR, &oper, false, false));
+               t_oper.Reset(new ProductOperator(out_cR, &oper));
                break;
             case 2:
-               t_oper.Reset(
-                  new ProductOperator(&oper, in_cP, false, false));
+               t_oper.Reset(new ProductOperator(&oper, in_cP));
                break;
             case 3:
                t_oper.Reset(
-                  new TripleProductOperator(
-                     out_cR, &oper, in_cP, false, false, false));
+                  new TripleProductOperator(out_cR, &oper, in_cP));
                break;
          }
       }
@@ -1229,14 +1226,13 @@ void L2ProjectionGridTransfer::L2ProjectionH1Space::EAL2ProjectionH1Space()
 
    ML_inv_vea.reset(new H1SpaceLumpedMassOperator(&fes_ho, &fes_lor, ML_inv_ea));
    M_LH.reset(M_LH_local_op);
-   R.reset(new ProductOperator(ML_inv_vea.get(), M_LH.get(), false,
-                               false));
+   R.reset(new ProductOperator(ML_inv_vea.get(), M_LH.get()));
 
    Array<int> ess_tdof_list;  // leave empty
    precon.reset(new OperatorJacobiSmoother(M_H, ess_tdof_list));
 
    TransposeOperator* RT = new TransposeOperator(R.get());
-   RTxM_LH.reset(new ProductOperator(RT, M_LH.get(), false, false));
+   RTxM_LH.reset(new ProductOperator(RT, M_LH.get()));
 
    SetupPCG();
 }

@@ -367,7 +367,7 @@ OperatorChebyshevSmoother::OperatorChebyshevSmoother(const Operator &oper_,
      oper(&oper_)
 {
    OperatorJacobiSmoother invDiagOperator(diag, ess_tdofs, 1.0);
-   ProductOperator diagPrecond(&invDiagOperator, oper, false, false);
+   ProductOperator diagPrecond(&invDiagOperator, oper);
 
 #ifdef MFEM_USE_MPI
    PowerMethod powerMethod(comm);
