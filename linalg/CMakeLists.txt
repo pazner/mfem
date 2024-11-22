@@ -51,7 +51,7 @@ list(APPEND HDRS
   dinvariants.hpp
   symmat.hpp
   dtensor.hpp
-  handle.hpp
+  op_handle.hpp
   invariants.hpp
   kernels.hpp
   lapack.hpp
