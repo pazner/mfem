@@ -18,37 +18,76 @@
 namespace mfem
 {
 
+namespace internal
+{
+
+/// @brief An internal class used in the implementation of Handle.
+///
+/// MaybeOwningPtr is a smart pointer class that can represent either an owned
+/// or not-owned pointed; this is configurable at runtime. The type of the
+/// pointer is erased.
+class MaybeOwningPtr
+{
+protected:
+   void *ptr;
+   bool owns_ptr;
+   void(*deleter)(void *);
+   template <typename T>
+   static void Delete(void *ptr)
+   {
+      T *t = static_cast<T*>(ptr);
+      delete t;
+   }
+public:
+   template <typename T>
+   MaybeOwningPtr(T *ptr_, bool owns_ptr_)
+      : ptr(ptr_), owns_ptr(owns_ptr_), deleter(&Delete<T>) { }
+   template <typename T>
+   MaybeOwningPtr(const T *ptr_, bool owns_ptr_)
+      : MaybeOwningPtr(const_cast<T*>(ptr_), owns_ptr_) { }
+   MaybeOwningPtr(const MaybeOwningPtr &) = delete;
+   MaybeOwningPtr(MaybeOwningPtr &&) = delete;
+   MaybeOwningPtr &operator=(const MaybeOwningPtr &) = delete;
+   MaybeOwningPtr &operator=(MaybeOwningPtr &&other) = delete;
+   void SetOwner(bool owns) { owns_ptr = owns; }
+   template <typename T> T *Get() const { return static_cast<T*>(ptr); }
+   bool IsOwner() const { return owns_ptr; }
+   ~MaybeOwningPtr() { if (owns_ptr) { deleter(ptr); } }
+};
+
+}
+
 /// @brief A smart pointer class that may represent either shared ownership, or
 /// a non-owning borrow.
 ///
 /// A Handle may either be owning or non-owning. Non-owning Handle%s point to
 /// externally owned data; it is the responsibility of the user to ensure that
-/// the data remains valid as long as the Handle is alive. Owning Handle%s use
-/// <a href="https://en.cppreference.com/w/cpp/memory/shared_ptr">
-/// std::shared_ptr</a> to implement reference counting. The underlying data
-/// will be valid as long as there is at least one live copy.
+/// the data remains valid as long as the Handle is alive. The underlying data
+/// will be valid as long as there is at least one live copy of the Handle.
 ///
 /// Both types of Handle%s can be copied, moved, stored in standard containers,
-/// etc.
+/// etc. Handle uses MaybeOwningPtr to implement owning and non-owning semantics
+/// and <a href="https://en.cppreference.com/w/cpp/memory/shared_ptr">
+/// std::shared_ptr</a> for reference counting.
 ///
-/// A non-owning Handle may assume ownership over its data, but an owning Handle
-/// cannot release ownership over its data.
-///
-/// It is an invariant of this class that **at most** one of the data members
-/// @ref not_owned and @ref owned will be non-null.
+/// A non-owning Handle may assume ownership over the pointed-to object, and an
+/// owning Handle maybe release ownership. Note that both of these operations
+/// apply to all existing copies of the Handle. If there are multiple live
+/// non-owning copies of a Handle, and one of them assumes ownership of the
+/// pointer, then they all become owning Handle%s, and vice-versa.
 template <typename T>
 class Handle
 {
-   /// If this is a non-owning handle, not_owned will point to the data.
-   T *not_owned = nullptr;
-   /// If this is an owning handle, owned will point to the data.
-   std::shared_ptr<T> owned = nullptr;
+   using MaybeOwningPtr = internal::MaybeOwningPtr;
+
+   /// Pointer to the object.
+   std::shared_ptr<MaybeOwningPtr> ptr;
 
    /// @brief Types @a Handle<T> and @a %Handle\<U\> are friends to allow
-   /// construction of one from another when @a T and @a U are convertible
-   /// types.
+   /// construction of one from another when @a T and @a U are convertible types
+   /// (i.e. creation of a Handle to a base class from a Handle to a derived
+   /// class).
    template <typename U> friend class Handle;
-
 public:
    /// Create an empty (null) Handle.
    Handle() = default;
@@ -61,27 +100,18 @@ public:
    /// correct lifetime of @a t.
    Handle(T *t, bool take_ownership = false)
    {
-      if (take_ownership) { owned.reset(t); }
-      else { not_owned = t; }
+      ptr = std::make_shared<MaybeOwningPtr>(t, take_ownership);
    }
-
-   /// Create a Handle from a std::shared_ptr (sharing ownership with @a t).
-   Handle(const std::shared_ptr<T> &t) : owned(t) { }
 
    /// @brief Constructs a copy of @a u, where type @a U is convertible to @a T.
    ///
    /// This allows the construction of Handle<Base> from Handle<Derived>.
-   template <typename U>
-   Handle(const Handle<U> &u) : not_owned(u.not_owned), owned(u.owned) { }
+   template <typename U> Handle(const Handle<U> &u) : ptr(u.ptr) { }
 
    /// @brief Move-constructs from @a u, where type @a U is convertible to @a T.
    ///
    /// See @ref Handle(const Handle<U>&).
-   template <typename U>
-   Handle(Handle<U> &&u) : not_owned(u.not_owned), owned(u.owned) { }
-
-   /// Destructor. If the Handle is owning, decrement the reference count.
-   ~Handle() = default;
+   template <typename U> Handle(Handle<U> &&u) : ptr(std::move(u.ptr)) { }
 
    /// @brief Copy constructor.
    ///
@@ -98,12 +128,11 @@ public:
    /// Move assignment (see Handle(const Handle&)).
    Handle &operator=(Handle &&other) = default;
 
+   /// Destructor. If the Handle is owning, decrement the reference count.
+   ~Handle() = default;
+
    /// Returns the contained pointer (may be null).
-   T *Get() const
-   {
-      if (not_owned) { return not_owned; }
-      else { return owned.get(); }
-   }
+   T *Get() const { return ptr ? ptr->Get<T>() : nullptr; }
 
    /// Dereference operator. The Handle must be non-null.
    T &operator*() const { return *Get(); }
@@ -114,31 +143,18 @@ public:
    /// @brief Returns true if the Handle is owning, false if it is non-owning.
    ///
    /// Returns false if the Handle is null (empty).
-   bool IsOwner() const { return owned; }
+   bool IsOwner() const { return ptr ? ptr->IsOwner() : false; }
 
    /// Returns true if the Handle is non-null.
-   explicit operator bool() const { return not_owned || owned; }
+   explicit operator bool() const { return Get() != nullptr; }
 
-   /// @brief Assume owernship of the data.
-   ///
-   /// If the Handle is already owning, this does nothing.
-   void MakeOwner()
-   {
-      // if (owned) { /* already owned... */ }
-      if (owned) { return; }
-      // check not_owned is non-null
-      owned.reset(not_owned);
-      not_owned = nullptr;
-   }
+   /// Assumes or releases ownership of the data.
+   void SetOwner(bool owns) { if (ptr) { ptr->SetOwner(owns); } }
 
    /// @brief Reset the Handle to be empty.
    ///
    /// If the Handle is owning, this will decrement the reference count.
-   void Reset()
-   {
-      owned.reset();
-      not_owned = nullptr;
-   }
+   void Reset() { ptr.reset(); }
 
    /// @brief Reset the Handle to point to @a t.
    ///
@@ -146,31 +162,7 @@ public:
    /// Handle(T*, bool)).
    void Reset(T *t, bool take_ownership = false)
    {
-      if (take_ownership)
-      {
-         owned.reset(t);
-         not_owned = nullptr;
-      }
-      else
-      {
-         owned.reset();
-         not_owned = t;
-      }
-   }
-
-   /// Reset the Handle to share ownership with @a t.
-   void Reset(std::shared_ptr<T> t)
-   {
-      owned = t;
-      not_owned = nullptr;
-   }
-
-   /// Return a @ref Handle<U> pointing to the same data (using static_cast).
-   template <typename U>
-   Handle<U> Cast() const
-   {
-      if (owned) { return Handle<U>(std::static_pointer_cast<U>(owned)); }
-      else { return Handle<U>(not_owned); }
+      ptr = std::make_shared<MaybeOwningPtr>(t, take_ownership);
    }
 
    /// Return a new owning Handle pointing to @a t.
