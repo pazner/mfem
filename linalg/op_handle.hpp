@@ -35,30 +35,26 @@ class OperatorHandle
 protected:
    static const char not_supported_msg[];
 
-   Operator      *oper;
-   Operator::Type type_id;
-   bool           own_oper;
+   Handle<Operator> oper;
+   Operator::Type type_id = Operator::MFEM_SPARSEMAT;
 
    Operator::Type CheckType(Operator::Type tid);
 
    template <typename OpType>
    void pSet(OpType *A, bool own_A = true)
    {
-      oper = A;
+      oper.Reset(A, own_A);
       type_id = A->GetType();
-      own_oper = own_A;
    }
 
 public:
    /** @brief Create an OperatorHandle with type id = Operator::MFEM_SPARSEMAT
        without allocating the actual matrix. */
-   OperatorHandle()
-      : oper(NULL), type_id(Operator::MFEM_SPARSEMAT), own_oper(false) { }
+   OperatorHandle() = default;
 
    /** @brief Create a OperatorHandle with a specified type id, @a tid, without
        allocating the actual matrix. */
-   explicit OperatorHandle(Operator::Type tid)
-      : oper(NULL), type_id(CheckType(tid)), own_oper(false) { }
+   explicit OperatorHandle(Operator::Type tid) : type_id(CheckType(tid)) { }
 
    /// Create an OperatorHandle for the given OpType pointer, @a A.
    /** Presently, OpType can be SparseMatrix, HypreParMatrix, or PetscParMatrix.
@@ -69,31 +65,19 @@ public:
    template <typename OpType>
    explicit OperatorHandle(OpType *A, bool own_A = true) { pSet(A, own_A); }
 
-   /// Shallow copy. The ownership flag of the target is set to false.
-   OperatorHandle(const OperatorHandle &other) :
-      oper(other.oper), type_id(other.type_id), own_oper(false)
-   {  }
-
-   ~OperatorHandle() { if (own_oper) { delete oper; } }
-
-   /// Shallow copy. The ownership flag of the target is set to false.
-   OperatorHandle &operator=(const OperatorHandle &master)
-   {
-      Clear(); oper = master.oper; type_id = master.type_id; own_oper = false;
-      return *this;
-   }
-
    /// Access the underlying Operator pointer.
-   Operator *Ptr() const { return oper; }
+   Operator *Ptr() const { return oper.Get(); }
+
+   const Handle<Operator> &GetHandle() const { return oper; }
 
    /// Support the use of -> to call methods of the underlying Operator.
-   Operator *operator->() const { return oper; }
+   Operator *operator->() const { return oper.Get(); }
 
    /// Access the underlying Operator.
-   Operator &operator*() { return *oper; }
+   Operator &operator*() { return *oper.Get(); }
 
    /// Access the underlying Operator.
-   const Operator &operator*() const { return *oper; }
+   const Operator &operator*() const { return *oper.Get(); }
 
    /// Get the currently set operator type id.
    Operator::Type Type() const { return type_id; }
@@ -101,31 +85,29 @@ public:
    /** @brief Return the Operator pointer statically cast to a specified OpType.
        Similar to the method Get(). */
    template <typename OpType>
-   OpType *As() const { return static_cast<OpType*>(oper); }
+   OpType *As() const { return static_cast<OpType*>(oper.Get()); }
 
    /// Return the Operator pointer dynamically cast to a specified OpType.
    template <typename OpType>
-   OpType *Is() const { return dynamic_cast<OpType*>(oper); }
+   OpType *Is() const { return dynamic_cast<OpType*>(oper.Get()); }
 
    /// Return the Operator pointer statically cast to a given OpType.
    /** Similar to the method As(), however the template type OpType can be
        derived automatically from the argument @a A. */
    template <typename OpType>
-   void Get(OpType *&A) const { A = static_cast<OpType*>(oper); }
+   void Get(OpType *&A) const { A = static_cast<OpType*>(oper.Get()); }
 
    /// Return true if the OperatorHandle owns the held Operator.
-   bool OwnsOperator() const { return own_oper; }
+   bool OwnsOperator() const { return oper.IsOwner(); }
 
    /// Set the ownership flag for the held Operator.
-   void SetOperatorOwner(bool own = true) { own_oper = own; }
+   void SetOperatorOwner(bool own = true) { oper.SetOwner(own); }
 
    /** @brief Clear the OperatorHandle, deleting the held Operator (if owned),
        while leaving the type id unchanged. */
    void Clear()
    {
-      if (own_oper) { delete oper; }
-      oper = NULL;
-      own_oper = false;
+      oper.Reset();
    }
 
    /// Invoke Clear() and set a new type id.
@@ -144,7 +126,6 @@ public:
    template <typename OpType>
    void Reset(OpType *A, bool own_A = true)
    {
-      if (own_oper) { delete oper; }
       pSet(A, own_A);
    }
 
