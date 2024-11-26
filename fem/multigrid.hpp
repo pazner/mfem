@@ -17,6 +17,7 @@
 
 #include "../linalg/operator.hpp"
 #include "../linalg/op_handle.hpp"
+#include "../general/handle.hpp"
 
 namespace mfem
 {
@@ -32,10 +33,8 @@ public:
    };
 
 protected:
-   Array<Operator*> operators;
-   Array<Solver*> smoothers;
-   Array<bool> ownedOperators;
-   Array<bool> ownedSmoothers;
+   std::vector<Handle<Operator>> operators;
+   std::vector<Handle<Solver>> smoothers;
 
    CycleType cycleType;
    int preSmoothingSteps;
@@ -49,8 +48,14 @@ public:
    MultigridBase();
 
    /// Constructs a multigrid hierarchy from the given inputs
+   /** Inputs include operators and smoothers on all levels. */
+   MultigridBase(const std::vector<Handle<Operator>> &operators_,
+                 const std::vector<Handle<Solver>> &smoothers);
+
+   /// Constructs a multigrid hierarchy from the given inputs
    /** Inputs include operators and smoothers on all levels, and ownership of
        the given operators and smoothers */
+   MFEM_DEPRECATED
    MultigridBase(const Array<Operator*>& operators_,
                  const Array<Solver*>& smoothers_,
                  const Array<bool>& ownedOperators_,
@@ -60,13 +65,17 @@ public:
    virtual ~MultigridBase();
 
    /// Adds a level to the multigrid operator hierarchy
+   void AddLevel(Handle<Operator> op, Handle<Solver> smoother);
+
+   /// Adds a level to the multigrid operator hierarchy
    /** The ownership of the operators and solvers/smoothers may be transferred
        to the Multigrid by setting the according boolean variables */
+   MFEM_DEPRECATED
    void AddLevel(Operator* op, Solver* smoother, bool ownOperator,
                  bool ownSmoother);
 
    /// Returns the number of levels
-   int NumLevels() const { return operators.Size(); }
+   int NumLevels() const { return operators.size(); }
 
    /// Returns the index of the finest level
    int GetFinestLevelIndex() const { return NumLevels() - 1; }
@@ -74,11 +83,11 @@ public:
    /// Returns operator at given level
    const Operator* GetOperatorAtLevel(int level) const
    {
-      return operators[level];
+      return operators[level].Get();
    }
    Operator* GetOperatorAtLevel(int level)
    {
-      return operators[level];
+      return operators[level].Get();
    }
 
    /// Returns operator at finest level
@@ -91,14 +100,16 @@ public:
       return GetOperatorAtLevel(GetFinestLevelIndex());
    }
 
-   /// Returns smoother at given level
+   /// Return smoother at given level (const version)
    const Solver* GetSmootherAtLevel(int level) const
    {
-      return smoothers[level];
+      return smoothers[level].Get();
    }
+
+   /// Return smoother at given level (non-const version)
    Solver* GetSmootherAtLevel(int level)
    {
-      return smoothers[level];
+      return smoothers[level].Get();
    }
 
    /// Set cycle type and number of pre- and post-smoothing steps used by Mult
@@ -135,8 +146,7 @@ private:
 class Multigrid : public MultigridBase
 {
 protected:
-   Array<Operator*> prolongations;
-   Array<bool> ownedProlongations;
+   std::vector<Handle<Operator>> prolongations;
 
 public:
    /// Constructs an empty multigrid hierarchy
@@ -144,20 +154,25 @@ public:
 
    /// Constructs a multigrid hierarchy from the given inputs
    /** Inputs include operators and smoothers on all levels, prolongation
+       operators that go from coarser to finer levels. */
+   Multigrid(const std::vector<Handle<Operator>> &operators_,
+             const std::vector<Handle<Solver>> &smoothers_,
+             const std::vector<Handle<Operator>> &prolongations_);
+
+   /// Constructs a multigrid hierarchy from the given inputs
+   /** Inputs include operators and smoothers on all levels, prolongation
        operators that go from coarser to finer levels, and ownership of the
        given operators, smoothers, and prolongations */
+   MFEM_DEPRECATED
    Multigrid(const Array<Operator*>& operators_, const Array<Solver*>& smoothers_,
              const Array<Operator*>& prolongations_, const Array<bool>& ownedOperators_,
              const Array<bool>& ownedSmoothers_, const Array<bool>& ownedProlongations_);
-
-   /// Destructor
-   virtual ~Multigrid();
 
 private:
    /// Returns prolongation operator at given level
    const Operator* GetProlongationAtLevel(int level) const override
    {
-      return prolongations[level];
+      return prolongations[level].Get();
    }
 };
 
