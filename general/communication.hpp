@@ -21,6 +21,7 @@
 #include "sets.hpp"
 #include "globals.hpp"
 #include <mpi.h>
+#include <cstdint>
 
 namespace mfem
 {
@@ -588,6 +589,14 @@ template<> struct MPITypeMap<double>
    static MFEM_EXPORT const MPI_Datatype mpi_type;
 };
 template<> struct MPITypeMap<float>
+{
+   static MFEM_EXPORT const MPI_Datatype mpi_type;
+};
+template<> struct MPITypeMap<int64_t>
+{
+   static MFEM_EXPORT const MPI_Datatype mpi_type;
+};
+template<> struct MPITypeMap<uint64_t>
 {
    static MFEM_EXPORT const MPI_Datatype mpi_type;
 };
