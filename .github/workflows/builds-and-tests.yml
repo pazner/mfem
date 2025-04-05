@@ -268,6 +268,9 @@ jobs:
           config-options: ${{ matrix.config-opts }}
           library-only: ${{ matrix.target == 'dbg' && matrix.os != 'ubuntu-latest' }}
 
+      - name: Setup tmate session
+        uses: mxschmitt/action-tmate@v3
+
       # Run checks (and only checks) on debug targets
       - name: checks
         if: matrix.build-system == 'make' && matrix.target == 'dbg'
