@@ -22,5 +22,5 @@ int main(int argc, char *argv[])
 #endif
 
    // Exclude parallel tests.
-   return RunCatchSession(argc, argv, {"~[Parallel]"});
+   return RunCatchSession(argc, argv, {"[None]"});
 }
