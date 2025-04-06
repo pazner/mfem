@@ -156,6 +156,9 @@ jobs:
         run: |
           sudo apt-get install openmpi-bin libopenmpi-dev
 
+      - name: Setup tmate session
+        uses: mxschmitt/action-tmate@v3
+
       - name: get lcov (Linux)
         if: matrix.codecov == 'YES' && matrix.os == 'ubuntu-latest'
         run: |
@@ -267,9 +270,6 @@ jobs:
           precision: ${{ matrix.precision }}
           config-options: ${{ matrix.config-opts }}
           library-only: ${{ matrix.target == 'dbg' && matrix.os != 'ubuntu-latest' }}
-
-      - name: Setup tmate session
-        uses: mxschmitt/action-tmate@v3
 
       # Run checks (and only checks) on debug targets
       - name: checks
