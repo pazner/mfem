@@ -33,5 +33,5 @@ int main(int argc, char *argv[])
    mfem::Device device("cpu"); // make sure hypre runs on CPU, if possible
 
    // Only run tests that are labeled with Parallel.
-   return RunCatchSession(argc, argv, {"[Parallel]"}, Root());
+   return RunCatchSession(argc, argv, {"ParGridFunction in Serial"}, Root());
 }
