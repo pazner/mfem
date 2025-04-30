@@ -30,37 +30,27 @@ using namespace navier;
 
 constexpr real_t pi = M_PI;
 
-struct s_NavierContext
-{
-   int ser_ref_levels = 1;
-   int order = 3;
-   real_t kinvis = 1.0;
-   real_t t_final = 1.0;
-   real_t dt = 0.25e-4;
-   bool ni = false;
-} ctx;
-
 void vel(const Vector &xvec, real_t t, Vector &u)
 {
-   real_t x = xvec(0);
-   real_t y = xvec(1);
+   real_t x = xvec[0];
+   real_t y = xvec[1];
 
-   u(0) = pi*sin(t) * sin(pi*x)*sin(pi*x) * sin(2.0*pi*y);
-   u(1) = -pi*sin(t) * sin(2.0*pi*x) * sin(pi*y)*sin(pi*y);
+   u[0] = pi*sin(t) * sin(pi*x)*sin(pi*x) * sin(2.0*pi*y);
+   u[1] = -pi*sin(t) * sin(2.0*pi*x) * sin(pi*y)*sin(pi*y);
 }
 
 real_t p(const Vector &xvec, real_t t)
 {
-   real_t x = xvec(0);
-   real_t y = xvec(1);
+   real_t x = xvec[0];
+   real_t y = xvec[1];
 
    return sin(t) * cos(pi*x) * sin(pi*y);
 }
 
 void accel(const Vector &xvec, real_t t, Vector &fvec)
 {
-   real_t x = xvec(0);
-   real_t y = xvec(1);
+   real_t x = xvec[0];
+   real_t y = xvec[1];
 
    fvec[0] = -(pi*sin(t)*sin(pi*x)*sin(pi*y)) +
              pi*(2*pow(pi,2)*(1 - 2*cos(2*pi*x))*sin(t) +
@@ -75,16 +65,16 @@ void accel(const Vector &xvec, real_t t, Vector &fvec)
    //           + 2.0 * pow(pi, 2.0) * sin(t) * sin(pi * xi)
    //           * sin(2.0 * pi * xi) * sin(pi * yi))
    //        + pi
-   //        * (2.0 * ctx.kinvis * pow(pi, 2.0)
+   //        * (2.0 * pow(pi, 2.0)
    //           * (1.0 - 2.0 * cos(2.0 * pi * xi)) * sin(t)
    //           + cos(t) * pow(sin(pi * xi), 2.0))
    //        * sin(2.0 * pi * yi);
 
    // u(1) = pi * cos(pi * yi) * sin(t)
    //        * (cos(pi * xi)
-   //           + 2.0 * ctx.kinvis * pow(pi, 2.0) * cos(pi * yi)
+   //           + 2.0 * pow(pi, 2.0) * cos(pi * yi)
    //           * sin(2.0 * pi * xi))
-   //        - pi * (cos(t) + 6.0 * ctx.kinvis * pow(pi, 2.0) * sin(t))
+   //        - pi * (cos(t) + 6.0 * pow(pi, 2.0) * sin(t))
    //        * sin(2.0 * pi * xi) * pow(sin(pi * yi), 2.0)
    //        + 4.0 * pow(pi, 3.0) * cos(pi * yi) * pow(sin(t), 2.0)
    //        * pow(sin(pi * xi), 2.0) * pow(sin(pi * yi), 3.0);
@@ -95,15 +85,18 @@ int main(int argc, char *argv[])
    Mpi::Init(argc, argv);
    Hypre::Init();
 
+   int ser_ref_levels = 1;
+   int order = 3;
+   real_t t_final = 1.0;
+   real_t dt = 0.25e-4;
+
    OptionsParser args(argc, argv);
-   args.AddOption(&ctx.ser_ref_levels, "-rs", "--refine-serial",
+   args.AddOption(&ser_ref_levels, "-rs", "--refine-serial",
                   "Number of times to refine the mesh uniformly in serial.");
-   args.AddOption(&ctx.order, "-o", "--order",
+   args.AddOption(&order, "-o", "--order",
                   "Order (degree) of the finite elements.");
-   args.AddOption(&ctx.dt, "-dt", "--time-step", "Time step.");
-   args.AddOption(&ctx.t_final, "-tf", "--final-time", "Final time.");
-   args.AddOption(&ctx.ni, "-ni", "--enable-ni", "-no-ni", "--disable-ni",
-                  "Enable numerical integration rules.");
+   args.AddOption(&dt, "-dt", "--time-step", "Time step.");
+   args.AddOption(&t_final, "-tf", "--final-time", "Final time.");
    args.ParseCheck();
 
    Mesh *mesh = new Mesh("../../data/inline-quad.mesh");
@@ -112,7 +105,7 @@ int main(int argc, char *argv[])
    *nodes *= 2.0;
    *nodes -= 1.0;
 
-   for (int i = 0; i < ctx.ser_ref_levels; ++i)
+   for (int i = 0; i < ser_ref_levels; ++i)
    {
       mesh->UniformRefinement();
    }
@@ -126,8 +119,7 @@ int main(int argc, char *argv[])
    delete mesh;
 
    // Create the flow solver.
-   NavierSolver naviersolver(pmesh, ctx.order, ctx.kinvis);
-   naviersolver.EnableNI(ctx.ni);
+   NavierSolver naviersolver(pmesh, order, 1.0);
 
    VectorFunctionCoefficient u_excoeff(pmesh->Dimension(), vel);
    FunctionCoefficient p_excoeff(p);
@@ -142,9 +134,7 @@ int main(int argc, char *argv[])
    domain_attr = 1;
    naviersolver.AddAccelTerm(accel, domain_attr);
 
-   real_t t = 0.75;
-   real_t dt = ctx.dt;
-   real_t t_final = ctx.t_final;
+   real_t t = 0.0;
    bool last_step = false;
 
    u_excoeff.SetTime(t);
@@ -175,7 +165,7 @@ int main(int argc, char *argv[])
    ParaViewDataCollection pv("NavierProj", pmesh);
    pv.SetPrefixPath("ParaView");
    pv.SetHighOrderOutput(true);
-   pv.SetLevelsOfDetail(ctx.order);
+   pv.SetLevelsOfDetail(order);
    pv.RegisterField("u", u_gf);
    pv.RegisterField("p", p_gf);
    pv.RegisterField("u exact", &u_ex);
@@ -194,16 +184,13 @@ int main(int argc, char *argv[])
       u_excoeff.SetTime(t);
       p_excoeff.SetTime(t);
 
-      u_gf->ProjectCoefficient(u_excoeff);
-
-      // naviersolver.Step(t, dt, step);
       naviersolver.StepFirstOrder(t, dt);
+      // naviersolver.StepIncremental(t, dt);
+      // naviersolver.Step(t, dt, step);
 
       // Compare against exact solution of velocity and pressure.
       u_excoeff.SetTime(t);
       p_excoeff.SetTime(t);
-
-      u_gf->ProjectCoefficient(u_excoeff);
 
       const real_t err_u = u_gf->ComputeL2Error(u_excoeff);
       const real_t err_p = p_gf->ComputeL2Error(p_excoeff);

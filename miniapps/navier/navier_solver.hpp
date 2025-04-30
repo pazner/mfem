@@ -436,7 +436,7 @@ protected:
 
    // Print levels.
    int pl_mvsolve = 0;
-   int pl_spsolve = 1;
+   int pl_spsolve = 0;
    int pl_hsolve = 0;
    int pl_amg = 0;
 
