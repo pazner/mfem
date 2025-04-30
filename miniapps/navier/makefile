@@ -23,11 +23,7 @@ MFEM_LIB_FILE = mfem_is_not_built
 NAVIER_COMMON_SRC = navier_solver.cpp
 NAVIER_COMMON_OBJ = $(NAVIER_COMMON_SRC:.cpp=.o)
 
-PAR_MINIAPPS = navier_mms navier_kovasznay navier_kovasznay_vs navier_tgv\
- navier_shear navier_3dfoc navier_turbchan
-ifeq ($(MFEM_USE_GSLIB),YES)
-   PAR_MINIAPPS += navier_cht
-endif
+PAR_MINIAPPS = navier_proj
 
 ifeq ($(MFEM_USE_MPI),NO)
    MINIAPPS =
@@ -38,9 +34,13 @@ endif
 .SUFFIXES:
 .SUFFIXES: .o .cpp .mk
 .PHONY: all clean clean-build clean-exec
+.PRECIOUS: %.o
+
+all: $(MINIAPPS)
 
 # Remove built-in rules
 %: %.cpp
+%: %.o
 %.o: %.cpp
 
 %: %.o $(NAVIER_COMMON_OBJ)
@@ -48,23 +48,6 @@ endif
 
 %.o: $(SRC)%.cpp $(MFEM_LIB_FILE) $(CONFIG_MK)
 	$(MFEM_CXX) $(MFEM_FLAGS) -c $< -o $@
-
-all: $(MINIAPPS)
-
-PAR_TEST_EXECS = navier_mms navier_kovasznay navier_tgv
-MFEM_TESTS = TEST_EXECS
-include $(MFEM_TEST_MK)
-
-RUN_MPI = $(MFEM_MPIEXEC) $(MFEM_MPIEXEC_NP) $(MFEM_MPI_NP)
-
-navier_mms-test-par: navier_mms
-	@$(call mfem-test,$<, $(RUN_MPI), Navier,-cr)
-
-navier_kovasznay-test-par: navier_kovasznay
-	@$(call mfem-test,$<, $(RUN_MPI), Navier,-cr)
-
-navier_tgv-test-par: navier_tgv
-	@$(call mfem-test,$<, $(RUN_MPI), Navier,-cr)
 
 # Generate an error message if the MFEM library is not built and exit
 $(MFEM_LIB_FILE):

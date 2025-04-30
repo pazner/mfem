@@ -158,6 +158,8 @@ public:
    /// Initialize forms, solvers and preconditioners.
    void Setup(real_t dt);
 
+   void StepFirstOrder(real_t &time, real_t dt);
+
    /// Compute solution at the next time step t+dt.
    /**
     * This method can be called with the default value @a provisional which
@@ -434,14 +436,14 @@ protected:
 
    // Print levels.
    int pl_mvsolve = 0;
-   int pl_spsolve = 0;
+   int pl_spsolve = 1;
    int pl_hsolve = 0;
    int pl_amg = 0;
 
    // Relative tolerances.
 #if defined(MFEM_USE_DOUBLE)
    real_t rtol_mvsolve = 1e-12;
-   real_t rtol_spsolve = 1e-6;
+   real_t rtol_spsolve = 1e-12;
    real_t rtol_hsolve = 1e-8;
 #elif defined(MFEM_USE_SINGLE)
    real_t rtol_mvsolve = 1e-9;

@@ -31,7 +31,7 @@ NavierSolver::NavierSolver(ParMesh *mesh, int order, real_t kin_vis)
      gll_rules(0, Quadrature1D::GaussLobatto)
 {
    vfec = new H1_FECollection(order, pmesh->Dimension());
-   pfec = new H1_FECollection(order);
+   pfec = new H1_FECollection(order - 1, pmesh->Dimension());
    vfes = new ParFiniteElementSpace(pmesh, vfec, pmesh->Dimension());
    pfes = new ParFiniteElementSpace(pmesh, pfec);
 
@@ -94,12 +94,12 @@ NavierSolver::NavierSolver(ParMesh *mesh, int order, real_t kin_vis)
 
    cur_step = 0;
 
-   PrintInfo();
+   // PrintInfo();
 }
 
 void NavierSolver::Setup(real_t dt)
 {
-   if (verbose && pmesh->GetMyRank() == 0)
+   if (false && verbose && pmesh->GetMyRank() == 0)
    {
       mfem::out << "Setup" << std::endl;
       if (partial_assembly)
@@ -362,6 +362,85 @@ void NavierSolver::UpdateTimestepHistory(real_t dt)
    un_next_gf.GetTrueDofs(un_next);
    un = un_next;
    un_gf.SetFromTrueDofs(un);
+}
+
+void NavierSolver::StepFirstOrder(real_t &time, real_t dt)
+{
+   // Solve "definite Helmholtz" problem for provisional velocity.
+   // Set up the linear operator we invert. The coefficient is 1 / dt.
+   H_bdfcoeff.constant = 1.0 / dt;
+   H_form->Update();
+   H_form->Assemble();
+   H_form->FormSystemMatrix(vel_ess_tdof, H);
+
+   HInv->SetOperator(*H);
+
+   // Set up the right-hand side.
+   // Extrapolated f^{n+1}.
+   for (auto &accel_term : accel_terms)
+   {
+      accel_term.coeff->SetTime(time + dt);
+   }
+   f_form->Assemble();
+   f_form->ParallelAssemble(fn);
+
+   // Nonlinear terms. (DISABLED FOR NOW)
+   // N->Mult(un, Nun);
+   // resu = N u_n + f_n + (1/dt) M u_n
+
+   // resu = (1/dt) M un + ff
+   resu = 0.0;
+   resu.Add(1.0, fn);
+   un_gf.GetTrueDofs(un);
+   Mv->Mult(un, tmp1);
+   resu.Add(1.0/dt, tmp1);
+
+   // Set up and solve the system
+   vfes->GetRestrictionMatrix()->MultTranspose(resu, resu_gf);
+   un_next_gf = un_gf;
+   Vector XU, BU;
+   H_form->FormLinearSystem(vel_ess_tdof, un_next_gf, resu_gf, H, XU, BU, 1);
+   XU = 0.0;
+   HInv->Mult(BU, XU);
+
+   H_form->RecoverFEMSolution(XU, resu_gf, un_next_gf);
+   un_next_gf.GetTrueDofs(un_next);
+
+   // Set up right-hand side for pressure Poisson equation
+   D->Mult(un_next, resp);
+   resp *= -1.0;
+   // Set pressure Dirichlet boundary conditions
+   for (auto &pres_dbc : pres_dbcs)
+   {
+      pn_gf.ProjectBdrCoefficient(*pres_dbc.coeff, pres_dbc.attr);
+   }
+   // If pure Neumann for pressure, ensure system is solvable
+   if (pres_dbcs.empty()) { Orthogonalize(resp); }
+   pfes->GetRestrictionMatrix()->MultTranspose(resp, resp_gf);
+
+   Vector XP, BP;
+   Sp_form->FormLinearSystem(pres_ess_tdof, pn_gf, resp_gf, Sp, XP, BP, 1);
+   XP = 0.0;
+   SpInv->Mult(BP, XP);
+   Sp_form->RecoverFEMSolution(XP, resp_gf, pn_gf);
+
+   pn_gf *= 1.0/dt;
+
+   // If the boundary conditions on the pressure are pure Neumann remove the
+   // nullspace by removing the mean of the pressure solution. This is also
+   // ensured by the OrthoSolver wrapper for the preconditioner which removes
+   // the nullspace after every application.
+   if (pres_dbcs.empty()) { MeanZero(pn_gf); }
+
+   pn_gf.GetTrueDofs(pn);
+
+   // Update velocity based on pressure correction
+   G->Mult(pn, tmp1);
+   MvInv->Mult(tmp1, resu);
+   add(un_next, -dt, resu, un);
+   un_gf.SetFromTrueDofs(un);
+
+   time += dt;
 }
 
 void NavierSolver::Step(real_t &time, real_t dt, int current_step,
