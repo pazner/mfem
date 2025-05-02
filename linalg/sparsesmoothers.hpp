@@ -51,7 +51,7 @@ public:
    void Mult(const Vector &x, Vector &y) const override;
 
    /// Transposed matrix vector multiplication with GS Smoother.
-   virtual void MultTranspose(const Vector &x, Vector &y) const;
+   void MultTranspose(const Vector &x, Vector &y) const override;
 };
 
 /// Data type for scaled Jacobi-type smoother of sparse matrix
@@ -81,7 +81,7 @@ public:
    void Mult(const Vector &x, Vector &y) const override;
 
    /// Transposed matrix vector multiplication with Jacobi smoother (symmetric).
-   virtual void MultTranspose(const Vector &x, Vector &y) const
+   void MultTranspose(const Vector &x, Vector &y) const override
    {
       Mult(x, y);
    }
