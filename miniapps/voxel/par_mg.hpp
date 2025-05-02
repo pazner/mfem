@@ -99,7 +99,8 @@ template <typename T> using vec_unique_ptr = std::vector<std::unique_ptr<T>>;
 enum class ProblemType
 {
    Poisson,
-   Elasticity
+   Elasticity,
+   VectorPoisson
 };
 
 class ParVoxelMultigrid : public MultigridBase
@@ -131,6 +132,7 @@ public:
    ParFiniteElementSpace &GetFineSpace() { return *spaces.back(); }
    Operator &GetFineOperator() { return *operators.Last(); }
    ParBilinearForm &GetFineForm() { return *forms.back(); }
+   Array<int> &GetFineEssDofs() { return *ess_dofs.back(); }
    void FormFineLinearSystem(
       Vector& x, Vector& b, OperatorHandle& A, Vector& X, Vector& B);
 };

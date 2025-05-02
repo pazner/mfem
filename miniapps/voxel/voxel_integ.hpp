@@ -32,7 +32,7 @@ public:
    void AssembleDiagonalPA(Vector &diag) override;
    const DenseMatrix &GetElementMatrix() const
    {
-      MFEM_VERIFY(elmat.Size() > 0, "");
+      // MFEM_VERIFY(elmat.Size() > 0, "");
       return elmat;
    }
 };

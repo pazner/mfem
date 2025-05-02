@@ -722,8 +722,17 @@ ParVoxelMultigrid::ParVoxelMultigrid(const std::string &dir, int order,
    const int dim = meshes[0]->Dimension();
    fec.reset(new H1_FECollection(order, dim));
 
-   const int vdim = (pt == ProblemType::Poisson) ? 1 : dim;
-
+   const int vdim = [&]()
+   {
+      switch (pt)
+      {
+         case ProblemType::Poisson:
+            return 1;
+         case ProblemType::Elasticity:
+         case ProblemType::VectorPoisson:
+            return dim;
+      }
+   }();
 
    Array<int> bdr_is_ess;
    if (meshes[0]->bdr_attributes.Size() > 0)
@@ -756,8 +765,19 @@ ParVoxelMultigrid::ParVoxelMultigrid(const std::string &dir, int order,
       if (Mpi::Root()) { cout << "\n  Assembling form..." << flush; }
       forms.emplace_back(new ParBilinearForm(spaces[i].get()));
       BilinearFormIntegrator *integ = nullptr;
-      if (pt == ProblemType::Poisson) { integ = new DiffusionIntegrator; }
-      else { integ = new ElasticityIntegrator(lambda, mu); }
+
+      switch (pt)
+      {
+         case ProblemType::Poisson:
+            integ = new DiffusionIntegrator;
+            break;
+         case ProblemType::Elasticity:
+            integ = new ElasticityIntegrator(lambda, mu);
+            break;
+         case ProblemType::VectorPoisson:
+            integ = new VectorDiffusionIntegrator;
+      }
+
       VoxelIntegrator *voxel_integ = nullptr;
 
       if (i > 0)

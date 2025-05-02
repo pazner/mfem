@@ -410,6 +410,7 @@ miniapps/voxel/displaced.mesh
 miniapps/voxel/original.mesh
 miniapps/voxel/sol.gf
 miniapps/voxel/diag.pgm
+miniapps/voxel/stokes_voxel
 
 miniapps/tribol/contact-patch-test
 

@@ -26,7 +26,8 @@ VOXEL_SRC = ppm.cpp image_mesh.cpp mg.cpp mg_elasticity.cpp voxel_mesh.cpp par_m
 VOXEL_OBJ = $(VOXEL_SRC:.cpp=.o)
 
 SEQ_MINIAPPS =
-PAR_MINIAPPS = image_mg voxel_elasticity voxel_mg mk_diag_mesh preprocess par_solve
+PAR_MINIAPPS = image_mg voxel_elasticity voxel_mg mk_diag_mesh preprocess \
+					par_solve stokes_voxel
 
 ifeq ($(MFEM_USE_MPI),NO)
    MINIAPPS = $(SEQ_MINIAPPS)
