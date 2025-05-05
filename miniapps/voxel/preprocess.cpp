@@ -73,12 +73,17 @@ int main(int argc, char *argv[])
       "/Users/pazner/Documents/portland_state/10_research/13_meshes/bone_72k.mesh";
    string dir = "Voxel";
    int np = 1;
+   int ref = 0;
 
    OptionsParser args(argc, argv);
    args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use.");
    args.AddOption(&np, "-np", "--n-partitions", "Number of mesh partitions.");
    args.AddOption(&dir, "-d", "--dir", "Data directory.");
+   args.AddOption(&ref, "-r", "--refine", "Number of refinements.");
    args.ParseCheck();
+
+   mkdir("VoxelData", 0777);
+   dir = "VoxelData/" + dir;
 
    int err_flag = mkdir(dir.c_str(), 0777);
    err_flag = (err_flag && (errno != EEXIST)) ? 1 : 0;
@@ -88,7 +93,18 @@ int main(int argc, char *argv[])
    tic_toc.Restart();
    cout << "Reading fine mesh... " << flush;
    // Read the (fine) mesh from a file
-   unique_ptr<VoxelMesh> mesh(new VoxelMesh(mesh_file));
+
+   auto get_refined_mesh = [&]()
+   {
+      Mesh orig_mesh(mesh_file);
+      for (int i = 0; i < ref; ++i)
+      {
+         orig_mesh.UniformRefinement();
+      }
+      return orig_mesh;
+   };
+
+   unique_ptr<VoxelMesh> mesh(new VoxelMesh(get_refined_mesh()));
    cout << "Done. " << tic_toc.RealTime() << endl;
    const int dim = mesh->Dimension();
 

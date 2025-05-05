@@ -28,7 +28,11 @@ protected:
 
    VoxelMesh(double h_, const std::vector<int> &n_);
 
+   void Construct();
+
 public:
+   VoxelMesh(const Mesh &mesh_);
+   VoxelMesh(Mesh &&mesh_);
    VoxelMesh(const std::string &filename);
 
    VoxelMesh Coarsen() const;

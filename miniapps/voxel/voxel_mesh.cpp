@@ -48,7 +48,7 @@ int FindComponents(const Table &elem_elem, Array<int> &component)
    return num_comp;
 }
 
-VoxelMesh::VoxelMesh(const std::string &filename) : Mesh(filename)
+void VoxelMesh::Construct()
 {
    MFEM_VERIFY(GetNE() > 0, "Empty mesh not supported.");
 
@@ -127,6 +127,19 @@ VoxelMesh::VoxelMesh(const std::string &filename) : Mesh(filename)
       lex2idx[lin_idx] = i;
    }
 }
+
+VoxelMesh::VoxelMesh(const Mesh &mesh_) : Mesh(mesh_)
+{
+   Construct();
+}
+
+VoxelMesh::VoxelMesh(Mesh &&mesh_) : Mesh(std::move(mesh_))
+{
+   Construct();
+}
+
+VoxelMesh::VoxelMesh(const std::string &filename)
+   : VoxelMesh(Mesh::LoadFromFile(filename)) { }
 
 VoxelMesh::VoxelMesh(double h_, const std::vector<int> &n_)
    : Mesh(n_.size(), 0, 0), h(h_), n(n_) { }
