@@ -67,11 +67,27 @@ void SaveParVoxelMappings(const string &prefix,
    }
 }
 
+void EnsureDirectory(const std::string &dir)
+{
+   // create directories recursively
+   const char path_delim = '/';
+   std::string::size_type pos = 0;
+   do
+   {
+      pos = dir.find(path_delim, pos+1);
+      std::string subdir = dir.substr(0, pos);
+      int err_flag = mkdir(subdir.c_str(), 0777);
+      err_flag = (err_flag && (errno != EEXIST)) ? 1 : 0;
+      MFEM_VERIFY(err_flag == 0, "Could not create directory " << dir)
+   }
+   while (pos != std::string::npos);
+}
+
 int main(int argc, char *argv[])
 {
    string mesh_file =
       "/Users/pazner/Documents/portland_state/10_research/13_meshes/bone_72k.mesh";
-   string dir = "Voxel";
+   string dir = "VoxelData/Voxel";
    int np = 1;
    int ref = 0;
 
@@ -82,12 +98,7 @@ int main(int argc, char *argv[])
    args.AddOption(&ref, "-r", "--refine", "Number of refinements.");
    args.ParseCheck();
 
-   mkdir("VoxelData", 0777);
-   dir = "VoxelData/" + dir;
-
-   int err_flag = mkdir(dir.c_str(), 0777);
-   err_flag = (err_flag && (errno != EEXIST)) ? 1 : 0;
-   MFEM_VERIFY(err_flag == 0, "Could not create directory " << dir)
+   EnsureDirectory(dir);
 
    cout << "\n";
    tic_toc.Restart();

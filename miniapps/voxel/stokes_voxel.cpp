@@ -10,7 +10,7 @@ int main(int argc, char *argv[])
    Mpi::Init(argc, argv);
    Hypre::Init();
 
-   string dir = "Voxel";
+   string dir = "VoxelData/Voxel";
    int order = 2;
    bool visualization = false;
 
