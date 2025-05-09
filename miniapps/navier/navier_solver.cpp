@@ -26,8 +26,10 @@ void CopyDBFIntegrators(ParBilinearForm *src, ParBilinearForm *dst)
    }
 }
 
-NavierSolver::NavierSolver(ParMesh *mesh, int order, real_t kin_vis)
+NavierSolver::NavierSolver(ParMesh *mesh, int order, real_t kin_vis,
+                           bool nonlinear_)
    : pmesh(mesh), order(order), kin_vis(kin_vis),
+     nonlinear(nonlinear_),
      gll_rules(0, Quadrature1D::GaussLobatto)
 {
    vfec = new H1_FECollection(order, pmesh->Dimension());
@@ -364,6 +366,11 @@ void NavierSolver::UpdateTimestepHistory(real_t dt)
    un_gf.SetFromTrueDofs(un);
 }
 
+void NavierSolver::StepIncremental(real_t &time, real_t dt)
+{
+
+}
+
 void NavierSolver::StepFirstOrder(real_t &time, real_t dt)
 {
    // Solve "definite Helmholtz" problem for provisional velocity.
@@ -385,15 +392,26 @@ void NavierSolver::StepFirstOrder(real_t &time, real_t dt)
    f_form->ParallelAssemble(fn);
 
    // Nonlinear terms. (DISABLED FOR NOW)
-   // N->Mult(un, Nun);
+   // resu = 0.0; // Nonlinear disabled
+   if (nonlinear)
+   {
+      N->Mult(un, Nun);
+      resu = Nun; // Nonlinear enabled
+   }
+   else
+   {
+      resu = 0.0;
+   }
    // resu = N u_n + f_n + (1/dt) M u_n
 
    // resu = (1/dt) M un + ff
-   resu = 0.0;
    resu.Add(1.0, fn);
    un_gf.GetTrueDofs(un);
    Mv->Mult(un, tmp1);
    resu.Add(1.0/dt, tmp1);
+
+   G->Mult(pn, tmp1);
+   resu.Add(-1.0, tmp1);
 
    // Set up and solve the system
    vfes->GetRestrictionMatrix()->MultTranspose(resu, resu_gf);
@@ -435,9 +453,12 @@ void NavierSolver::StepFirstOrder(real_t &time, real_t dt)
    pn_gf.GetTrueDofs(pn);
 
    // Update velocity based on pressure correction
-   G->Mult(pn, tmp1);
-   MvInv->Mult(tmp1, resu);
-   add(un_next, -dt, resu, un);
+   // G->Mult(pn, tmp1);
+   // MvInv->Mult(tmp1, resu);
+   // add(un_next, -dt, resu, un);
+   // un_gf.SetFromTrueDofs(un);
+
+   un = un_next;
    un_gf.SetFromTrueDofs(un);
 
    time += dt;

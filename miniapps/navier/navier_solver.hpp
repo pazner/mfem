@@ -153,12 +153,13 @@ public:
     * automatically converted to the Reynolds number. If you want to set the
     * Reynolds number directly, you can provide the inverse.
     */
-   NavierSolver(ParMesh *mesh, int order, real_t kin_vis);
+   NavierSolver(ParMesh *mesh, int order, real_t kin_vis, bool nonlinear_);
 
    /// Initialize forms, solvers and preconditioners.
    void Setup(real_t dt);
 
    void StepFirstOrder(real_t &time, real_t dt);
+   void StepIncremental(real_t &time, real_t dt);
 
    /// Compute solution at the next time step t+dt.
    /**
@@ -314,6 +315,9 @@ protected:
 
    /// Enable/disable verbose output.
    bool verbose = true;
+
+   /// Enable nonlinear term (linear term is time-dependent Stokes).
+   bool nonlinear;
 
    /// Enable/disable partial assembly of forms.
    bool partial_assembly = false;

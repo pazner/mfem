@@ -29,6 +29,7 @@ using namespace mfem;
 using namespace navier;
 
 constexpr real_t pi = M_PI;
+bool nonlinear = false;
 
 void vel(const Vector &xvec, real_t t, Vector &u)
 {
@@ -52,32 +53,37 @@ void accel(const Vector &xvec, real_t t, Vector &fvec)
    real_t x = xvec[0];
    real_t y = xvec[1];
 
-   fvec[0] = -(pi*sin(t)*sin(pi*x)*sin(pi*y)) +
-             pi*(2*pow(pi,2)*(1 - 2*cos(2*pi*x))*sin(t) +
-                 cos(t)*pow(sin(pi*x),2))*sin(2*pi*y);
+   if (nonlinear)
+   {
+      fvec[0] = pi * sin(t) * sin(pi * x) * sin(pi * y)
+                * (-1.0
+                   + 2.0 * pow(pi, 2.0) * sin(t) * sin(pi * x)
+                   * sin(2.0 * pi * x) * sin(pi * y))
+                + pi
+                * (2.0 * pow(pi, 2.0)
+                   * (1.0 - 2.0 * cos(2.0 * pi * x)) * sin(t)
+                   + cos(t) * pow(sin(pi * x), 2.0))
+                * sin(2.0 * pi * y);
 
-   fvec[1] = pi*(cos(pi*x)*cos(pi*y)*sin(t) +
-                 sin(2*pi*x)*(2*pow(pi,2)*(-1 + 2*cos(2*pi*y))*sin(t) -
-                              cos(t)*pow(sin(pi*y),2)));
+      fvec[1] = pi * cos(pi * y) * sin(t)
+                * (cos(pi * x)
+                   + 2.0 * pow(pi, 2.0) * cos(pi * y)
+                   * sin(2.0 * pi * x))
+                - pi * (cos(t) + 6.0 * pow(pi, 2.0) * sin(t))
+                * sin(2.0 * pi * x) * pow(sin(pi * y), 2.0)
+                + 4.0 * pow(pi, 3.0) * cos(pi * y) * pow(sin(t), 2.0)
+                * pow(sin(pi * x), 2.0) * pow(sin(pi * y), 3.0);
+   }
+   else
+   {
+      fvec[0] = -(pi*sin(t)*sin(pi*x)*sin(pi*y)) +
+                pi*(2*pow(pi,2)*(1 - 2*cos(2*pi*x))*sin(t) +
+                    cos(t)*pow(sin(pi*x),2))*sin(2*pi*y);
 
-   // u(0) = pi * sin(t) * sin(pi * xi) * sin(pi * yi)
-   //        * (-1.0
-   //           + 2.0 * pow(pi, 2.0) * sin(t) * sin(pi * xi)
-   //           * sin(2.0 * pi * xi) * sin(pi * yi))
-   //        + pi
-   //        * (2.0 * pow(pi, 2.0)
-   //           * (1.0 - 2.0 * cos(2.0 * pi * xi)) * sin(t)
-   //           + cos(t) * pow(sin(pi * xi), 2.0))
-   //        * sin(2.0 * pi * yi);
-
-   // u(1) = pi * cos(pi * yi) * sin(t)
-   //        * (cos(pi * xi)
-   //           + 2.0 * pow(pi, 2.0) * cos(pi * yi)
-   //           * sin(2.0 * pi * xi))
-   //        - pi * (cos(t) + 6.0 * pow(pi, 2.0) * sin(t))
-   //        * sin(2.0 * pi * xi) * pow(sin(pi * yi), 2.0)
-   //        + 4.0 * pow(pi, 3.0) * cos(pi * yi) * pow(sin(t), 2.0)
-   //        * pow(sin(pi * xi), 2.0) * pow(sin(pi * yi), 3.0);
+      fvec[1] = pi*(cos(pi*x)*cos(pi*y)*sin(t) +
+                    sin(2*pi*x)*(2*pow(pi,2)*(-1 + 2*cos(2*pi*y))*sin(t) -
+                                 cos(t)*pow(sin(pi*y),2)));
+   }
 }
 
 int main(int argc, char *argv[])
@@ -97,44 +103,46 @@ int main(int argc, char *argv[])
                   "Order (degree) of the finite elements.");
    args.AddOption(&dt, "-dt", "--time-step", "Time step.");
    args.AddOption(&t_final, "-tf", "--final-time", "Final time.");
+   args.AddOption(&nonlinear, "-nl", "--nonlinear", "-lin", "--linear",
+                  "Include the nonlinear term?");
    args.ParseCheck();
 
-   Mesh *mesh = new Mesh("../../data/inline-quad.mesh");
-   mesh->EnsureNodes();
-   GridFunction *nodes = mesh->GetNodes();
+   Mesh mesh("../../data/inline-quad.mesh");
+   mesh.EnsureNodes();
+   GridFunction *nodes = mesh.GetNodes();
    *nodes *= 2.0;
    *nodes -= 1.0;
 
    for (int i = 0; i < ser_ref_levels; ++i)
    {
-      mesh->UniformRefinement();
+      mesh.UniformRefinement();
    }
 
    if (Mpi::Root())
    {
-      std::cout << "Number of elements: " << mesh->GetNE() << std::endl;
+      std::cout << "Number of elements: " << mesh.GetNE() << std::endl;
    }
 
-   ParMesh *pmesh = new ParMesh(MPI_COMM_WORLD, *mesh);
-   delete mesh;
+   ParMesh pmesh(MPI_COMM_WORLD, mesh);
+   mesh.Clear();
 
    // Create the flow solver.
-   NavierSolver naviersolver(pmesh, order, 1.0);
+   NavierSolver naviersolver(&pmesh, order, 1.0, nonlinear);
 
-   VectorFunctionCoefficient u_excoeff(pmesh->Dimension(), vel);
+   VectorFunctionCoefficient u_excoeff(pmesh.Dimension(), vel);
    FunctionCoefficient p_excoeff(p);
 
    // Add Dirichlet boundary conditions to velocity space restricted to
    // selected attributes on the mesh.
-   Array<int> attr(pmesh->bdr_attributes.Max());
+   Array<int> attr(pmesh.bdr_attributes.Max());
    attr = 1;
    naviersolver.AddVelDirichletBC(vel, attr);
 
-   Array<int> domain_attr(pmesh->attributes.Max());
+   Array<int> domain_attr(pmesh.attributes.Max());
    domain_attr = 1;
    naviersolver.AddAccelTerm(accel, domain_attr);
 
-   real_t t = 0.0;
+   real_t t = 0.75;
    bool last_step = false;
 
    u_excoeff.SetTime(t);
@@ -162,7 +170,7 @@ int main(int argc, char *argv[])
       printf("-----------------------------------------------------\n");
    }
 
-   ParaViewDataCollection pv("NavierProj", pmesh);
+   ParaViewDataCollection pv("NavierProj", &pmesh);
    pv.SetPrefixPath("ParaView");
    pv.SetHighOrderOutput(true);
    pv.SetLevelsOfDetail(order);
@@ -208,8 +216,6 @@ int main(int argc, char *argv[])
       pv.SetCycle(pv.GetCycle() + 1);
       pv.Save();
    }
-
-   delete pmesh;
 
    return 0;
 }
