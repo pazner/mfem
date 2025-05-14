@@ -316,9 +316,6 @@ protected:
    /// Enable/disable verbose output.
    bool verbose = true;
 
-   /// Enable nonlinear term (linear term is time-dependent Stokes).
-   bool nonlinear;
-
    /// Enable/disable partial assembly of forms.
    bool partial_assembly = false;
 
@@ -333,6 +330,9 @@ protected:
 
    /// Kinematic viscosity (dimensionless).
    real_t kin_vis;
+
+   /// Enable nonlinear term (linear term is time-dependent Stokes).
+   bool nonlinear;
 
    IntegrationRules gll_rules;
 
