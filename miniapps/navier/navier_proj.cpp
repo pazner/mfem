@@ -91,11 +91,13 @@ int main(int argc, char *argv[])
    Mpi::Init(argc, argv);
    Hypre::Init();
 
-   int ser_ref_levels = 1;    // Number of times to refine the mesh (serial refinement levels)
-   int order = 3;    // Degree of the velocity space
+   // Number of times to refine the mesh (serial refinement levels)
+   int ser_ref_levels = 1;
+   int order = 3; // Degree of the velocity space
    real_t t_initial = 0.0;
    real_t t_final = 1.0;
    real_t dt = 0.25e-4;
+   bool higher_order = false;
 
    OptionsParser args(argc, argv);
    args.AddOption(&ser_ref_levels, "-rs", "--refine-serial",
@@ -107,6 +109,8 @@ int main(int argc, char *argv[])
    args.AddOption(&t_final, "-tf", "--final-time", "Final time.");
    args.AddOption(&nonlinear, "-nl", "--nonlinear", "-lin", "--linear",
                   "Include the nonlinear term?");
+   args.AddOption(&higher_order, "-ho", "--high-order", "-lo", "--low-order",
+                  "High order or low order?");
    args.ParseCheck();
 
    Mesh mesh("../../data/inline-quad.mesh");
@@ -184,6 +188,8 @@ int main(int argc, char *argv[])
    pv.SetTime(0);
    pv.Save();
 
+   int step = 0;
+
    while (!last_step)
    {
       if (t + dt >= t_final - dt / 2)
@@ -194,9 +200,15 @@ int main(int argc, char *argv[])
       u_excoeff.SetTime(t);
       p_excoeff.SetTime(t);
 
-      naviersolver.StepFirstOrder(t, dt);
-      // naviersolver.StepIncremental(t, dt);
-      // naviersolver.Step(t, dt, step);
+      if (higher_order)
+      {
+         naviersolver.Step(t, dt, step);
+         ++step;
+      }
+      else
+      {
+         naviersolver.StepFirstOrder(t, dt);
+      }
 
       // Compare against exact solution of velocity and pressure.
       u_excoeff.SetTime(t);

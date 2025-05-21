@@ -510,24 +510,31 @@ void NavierSolver::Step(real_t &time, real_t dt, int current_step,
    // Nonlinear extrapolated terms.
    sw_extrap.Start();
 
-   N->Mult(un, Nun);
-   N->Mult(unm1, Nunm1);
-   N->Mult(unm2, Nunm2);
-
+   if (nonlinear)
    {
-      const auto d_Nun = Nun.Read();
-      const auto d_Nunm1 = Nunm1.Read();
-      const auto d_Nunm2 = Nunm2.Read();
-      auto d_Fext = Fext.Write();
-      const auto ab1_ = ab1;
-      const auto ab2_ = ab2;
-      const auto ab3_ = ab3;
-      mfem::forall(Fext.Size(), [=] MFEM_HOST_DEVICE (int i)
+      N->Mult(un, Nun);
+      N->Mult(unm1, Nunm1);
+      N->Mult(unm2, Nunm2);
+
       {
-         d_Fext[i] = ab1_ * d_Nun[i] +
-                     ab2_ * d_Nunm1[i] +
-                     ab3_ * d_Nunm2[i];
-      });
+         const auto d_Nun = Nun.Read();
+         const auto d_Nunm1 = Nunm1.Read();
+         const auto d_Nunm2 = Nunm2.Read();
+         auto d_Fext = Fext.Write();
+         const auto ab1_ = ab1;
+         const auto ab2_ = ab2;
+         const auto ab3_ = ab3;
+         mfem::forall(Fext.Size(), [=] MFEM_HOST_DEVICE (int i)
+         {
+            d_Fext[i] = ab1_ * d_Nun[i] +
+                        ab2_ * d_Nunm1[i] +
+                        ab3_ * d_Nunm2[i];
+         });
+      }
+   }
+   else
+   {
+      Fext = 0.0;
    }
 
    Fext.Add(1.0, fn);
@@ -708,7 +715,7 @@ void NavierSolver::Step(real_t &time, real_t dt, int current_step,
 
    sw_step.Stop();
 
-   if (verbose && pmesh->GetMyRank() == 0)
+   if (false && verbose && pmesh->GetMyRank() == 0)
    {
       mfem::out << std::setw(7) << "" << std::setw(3) << "It" << std::setw(8)
                 << "Resid" << std::setw(12) << "Reltol"
