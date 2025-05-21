@@ -91,8 +91,9 @@ int main(int argc, char *argv[])
    Mpi::Init(argc, argv);
    Hypre::Init();
 
-   int ser_ref_levels = 1;
-   int order = 3;
+   int ser_ref_levels = 1;    // Number of times to refine the mesh (serial refinement levels)
+   int order = 3;    // Degree of the velocity space
+   real_t t_initial = 0.0;
    real_t t_final = 1.0;
    real_t dt = 0.25e-4;
 
@@ -102,6 +103,7 @@ int main(int argc, char *argv[])
    args.AddOption(&order, "-o", "--order",
                   "Order (degree) of the finite elements.");
    args.AddOption(&dt, "-dt", "--time-step", "Time step.");
+   args.AddOption(&t_initial, "-ti", "--initial-time", "Initial time.");
    args.AddOption(&t_final, "-tf", "--final-time", "Final time.");
    args.AddOption(&nonlinear, "-nl", "--nonlinear", "-lin", "--linear",
                   "Include the nonlinear term?");
@@ -142,7 +144,7 @@ int main(int argc, char *argv[])
    domain_attr = 1;
    naviersolver.AddAccelTerm(accel, domain_attr);
 
-   real_t t = 0.75;
+   real_t t = t_initial;
    bool last_step = false;
 
    u_excoeff.SetTime(t);
