@@ -307,8 +307,9 @@ void NavierSolver::Setup(real_t dt)
    }
    else
    {
-      HInvPC = new HypreSmoother(*H.As<HypreParMatrix>());
-      dynamic_cast<HypreSmoother *>(HInvPC)->SetType(HypreSmoother::Jacobi, 1);
+      HInvPC = new HypreBoomerAMG(*H.As<HypreParMatrix>());
+      dynamic_cast<HypreBoomerAMG *>(HInvPC)->SetPrintLevel(0);
+      // dynamic_cast<Hy÷preSmoother *>(HInvPC)->SetType(HypreSmoother::Jacobi, 1);
    }
    HInv = new CGSolver(vfes->GetComm());
    HInv->iterative_mode = true;
