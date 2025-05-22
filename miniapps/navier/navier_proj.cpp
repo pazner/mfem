@@ -207,7 +207,7 @@ int main(int argc, char *argv[])
       }
       else
       {
-         naviersolver.StepFirstOrder(t, dt);
+      naviersolver.StepFirstOrder(t, dt);
       }
 
       // Compare against exact solution of velocity and pressure.
