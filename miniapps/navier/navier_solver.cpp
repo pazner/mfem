@@ -70,14 +70,26 @@ NavierSolver::NavierSolver(ParMesh *mesh, int order, real_t kin_vis,
    Lext.SetSize(vfes_truevsize);
    resu.SetSize(vfes_truevsize);
 
+   Du.SetSize(vfes_truevsize);
+
    tmp1.SetSize(vfes_truevsize);
 
    pn.SetSize(pfes_truevsize);
    pn = 0.0;
+   pnm1.SetSize(pfes_truevsize);
+   pnm1 = 0.0;
+   pstar.SetSize(pfes_truevsize);
+   pstar = 0.0;
+   phin.SetSize(pfes_truevsize);
+   phin = 0.0;
+   phinm1.SetSize(pfes_truevsize);
+   phinm1 = 0.0;
    resp.SetSize(pfes_truevsize);
    resp = 0.0;
    FText_bdr.SetSize(pfes_truevsize);
    g_bdr.SetSize(pfes_truevsize);
+
+   tmp2.SetSize(pfes_truevsize);
 
    un_gf.SetSpace(vfes);
    un_gf = 0.0;
@@ -367,9 +379,104 @@ void NavierSolver::UpdateTimestepHistory(real_t dt)
    un_gf.SetFromTrueDofs(un);
 }
 
-void NavierSolver::StepIncremental(real_t &time, real_t dt)
+void NavierSolver::StepIncremental(real_t &time, real_t dt, int current_step)
 {
+   SetIncrementalTimeIntegrationCoefficients(current_step);
 
+   // Solve "definite Helmholtz" problem for provisional velocity.
+   // Set up the linear operator we invert. The coefficient is 1 / dt.
+   H_bdfcoeff.constant = bd0 / dt;
+   H_form->Update();
+   H_form->Assemble();
+   H_form->FormSystemMatrix(vel_ess_tdof, H);
+
+   HInv->SetOperator(*H);
+
+   // Set up the right-hand side.
+   // Extrapolated f^{n+1}.
+   for (auto &accel_term : accel_terms)
+   {
+      accel_term.coeff->SetTime(time + dt);
+   }
+   f_form->Assemble();
+   f_form->ParallelAssemble(fn);
+
+   // Nonlinear terms
+   if (nonlinear)
+   {
+      MFEM_ABORT("");
+   }
+   else
+   {
+      resu = 0.0;
+   }
+
+   resu.Add(1.0, fn);
+
+   // Set pstar = g0 * pn + g1 * pnm1
+   pn_gf.GetTrueDofs(pn);
+   add(g0, pn, g1, pnm1, pstar);
+   G->Mult(pstar, tmp1);
+   resu.Add(-1.0, tmp1);
+
+   // Set tmp2 = -bd1/bd0 * phin - bd2/bd0 * phinm1
+   add(-bd1/bd0, phin, -bd2/bd0, phinm1, tmp2);
+   G->Mult(tmp2, tmp1);
+   resu.Add(-1.0, tmp1);
+
+   // BDF terms
+   un_gf.GetTrueDofs(un);
+   add(-bd1, un, -bd2, unm1, Du);
+   Mv->Mult(Du, tmp1);
+   resu.Add(1.0/dt, tmp1);
+
+   // Set up and solve the system
+   vfes->GetRestrictionMatrix()->MultTranspose(resu, resu_gf);
+   un_next_gf = un_gf;
+   Vector XU, BU;
+   H_form->FormLinearSystem(vel_ess_tdof, un_next_gf, resu_gf, H, XU, BU, 1);
+   XU = 0.0;
+   HInv->Mult(BU, XU);
+
+   H_form->RecoverFEMSolution(XU, resu_gf, un_next_gf);
+   un_next_gf.GetTrueDofs(un_next);
+
+   // Set up right-hand side for pressure Poisson equation
+   D->Mult(un_next, resp);
+   resp *= -bd0 / dt;
+   // Set pressure Dirichlet boundary conditions
+   for (auto &pres_dbc : pres_dbcs)
+   {
+      pn_gf.ProjectBdrCoefficient(*pres_dbc.coeff, pres_dbc.attr);
+   }
+   // If pure Neumann for pressure, ensure system is solvable
+   if (pres_dbcs.empty()) { Orthogonalize(resp); }
+   pfes->GetRestrictionMatrix()->MultTranspose(resp, resp_gf);
+
+   Vector XP, BP;
+   Sp_form->FormLinearSystem(pres_ess_tdof, pn_gf, resp_gf, Sp, XP, BP, 1);
+   XP = 0.0;
+   SpInv->Mult(BP, XP);
+   Sp_form->RecoverFEMSolution(XP, resp_gf, pn_gf);
+
+   // If the boundary conditions on the pressure are pure Neumann remove the
+   // nullspace by removing the mean of the pressure solution. This is also
+   // ensured by the OrthoSolver wrapper for the preconditioner which removes
+   // the nullspace after every application.
+   if (pres_dbcs.empty()) { MeanZero(pn_gf); }
+
+   // Rotate pressure and phi solutions
+   phinm1 = phin;
+   pn_gf.GetTrueDofs(phin);
+   add(1.0, pstar, 1.0, phin, pn);
+   pn_gf.SetFromTrueDofs(pn);
+
+   // Rotate velocity
+   unm1 = un;
+   un = un_next;
+   un_gf.SetFromTrueDofs(un);
+
+   time += dt;
 }
 
 void NavierSolver::StepFirstOrder(real_t &time, real_t dt)
@@ -392,8 +499,7 @@ void NavierSolver::StepFirstOrder(real_t &time, real_t dt)
    f_form->Assemble();
    f_form->ParallelAssemble(fn);
 
-   // Nonlinear terms. (DISABLED FOR NOW)
-   // resu = 0.0; // Nonlinear disabled
+   // Nonlinear terms
    if (nonlinear)
    {
       N->Mult(un, Nun);
@@ -401,11 +507,13 @@ void NavierSolver::StepFirstOrder(real_t &time, real_t dt)
    }
    else
    {
-      resu = 0.0;
+      resu = 0.0; // Nonlinear disabled
    }
-   // resu = N u_n + f_n + (1/dt) M u_n
+   // Depending on linear or nonlinear, either:
+   //    resu = N u_n + f_n + (1/dt) M u_n
+   // or
+   //    resu = (1/dt) M un + f_n
 
-   // resu = (1/dt) M un + ff
    resu.Add(1.0, fn);
    un_gf.GetTrueDofs(un);
    Mv->Mult(un, tmp1);
@@ -1166,6 +1274,39 @@ void NavierSolver::AddAccelTerm(VectorCoefficient *coeff, Array<int> &attr)
 void NavierSolver::AddAccelTerm(VecFuncT *f, Array<int> &attr)
 {
    AddAccelTerm(new VectorFunctionCoefficient(pmesh->Dimension(), f), attr);
+}
+
+void NavierSolver::SetIncrementalTimeIntegrationCoefficients(int step)
+{
+   const int bdf_order = std::min(step + 1, 2);
+
+   if (bdf_order == 1)
+   {
+      bd0 = 1.0;
+      bd1 = -1.0;
+      bd2 = 0.0;
+      bd3 = 0.0;
+
+      // g0 = 1.0;
+      // g1 = 0.0;
+      g0 = 0.0;
+      g1 = 0.0;
+   }
+   else if (bdf_order == 2)
+   {
+      bd0 = 3.0/2.0;
+      bd1 = -2.0;
+      bd2 = 1.0/2.0;
+      // g0 = 2.0;
+      // g1 = -1.0;
+
+      g0 = 1.0;
+      g1 = 0.0;
+   }
+   else
+   {
+      MFEM_ABORT("");
+   }
 }
 
 void NavierSolver::SetTimeIntegrationCoefficients(int step)

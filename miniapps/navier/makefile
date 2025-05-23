@@ -46,7 +46,7 @@ all: $(MINIAPPS)
 %: %.o $(NAVIER_COMMON_OBJ)
 	$(MFEM_CXX) $(MFEM_LINK_FLAGS) $^ -o $@ $(MFEM_LIBS)
 
-%.o: $(SRC)%.cpp $(MFEM_LIB_FILE) $(CONFIG_MK)
+%.o: $(SRC)%.cpp navier_solver.hpp $(MFEM_LIB_FILE) $(CONFIG_MK)
 	$(MFEM_CXX) $(MFEM_FLAGS) -c $< -o $@
 
 # Generate an error message if the MFEM library is not built and exit

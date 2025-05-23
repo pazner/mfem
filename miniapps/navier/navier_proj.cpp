@@ -97,7 +97,8 @@ int main(int argc, char *argv[])
    real_t t_initial = 0.0;
    real_t t_final = 1.0;
    real_t dt = 0.25e-4;
-   bool higher_order = false;
+
+   int time_order = 1;
 
    OptionsParser args(argc, argv);
    args.AddOption(&ser_ref_levels, "-rs", "--refine-serial",
@@ -109,9 +110,12 @@ int main(int argc, char *argv[])
    args.AddOption(&t_final, "-tf", "--final-time", "Final time.");
    args.AddOption(&nonlinear, "-nl", "--nonlinear", "-lin", "--linear",
                   "Include the nonlinear term?");
-   args.AddOption(&higher_order, "-ho", "--high-order", "-lo", "--low-order",
-                  "High order or low order?");
+   args.AddOption(&time_order, "-to", "--time-order",
+                  "Time integration order (1, 2, or 3).");
    args.ParseCheck();
+
+   MFEM_VERIFY(time_order >= 1 &&
+               time_order <= 3, "Time order must be 1, 2, or 3.");
 
    Mesh mesh("../../data/inline-quad.mesh");
    mesh.EnsureNodes();
@@ -200,15 +204,20 @@ int main(int argc, char *argv[])
       u_excoeff.SetTime(t);
       p_excoeff.SetTime(t);
 
-      if (higher_order)
+      if (time_order == 1)
       {
-         naviersolver.Step(t, dt, step);
-         ++step;
+         naviersolver.StepFirstOrder(t, dt);
+      }
+      else if (time_order == 2)
+      {
+         naviersolver.StepIncremental(t, dt, step);
       }
       else
       {
-      naviersolver.StepFirstOrder(t, dt);
+         naviersolver.Step(t, dt, step);
       }
+
+      ++step;
 
       // Compare against exact solution of velocity and pressure.
       u_excoeff.SetTime(t);

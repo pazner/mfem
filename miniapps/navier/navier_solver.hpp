@@ -159,7 +159,7 @@ public:
    void Setup(real_t dt);
 
    void StepFirstOrder(real_t &time, real_t dt);
-   void StepIncremental(real_t &time, real_t dt);
+   void StepIncremental(real_t &time, real_t dt, int current_step);
 
    /// Compute solution at the next time step t+dt.
    /**
@@ -300,6 +300,8 @@ protected:
     */
    void SetTimeIntegrationCoefficients(int step);
 
+   void SetIncrementalTimeIntegrationCoefficients(int step);
+
    /// Eliminate essential BCs in an Operator and apply to RHS.
    void EliminateRHS(Operator &A,
                      ConstrainedOperator &constrainedA,
@@ -395,10 +397,12 @@ protected:
    CGSolver *HInv = nullptr;
 
    Vector fn, un, un_next, unm1, unm2, Nun, Nunm1, Nunm2, Fext, FText, Lext,
-          resu;
+          resu, Du;
    Vector tmp1;
 
-   Vector pn, resp, FText_bdr, g_bdr;
+   Vector pn, pnm1, pstar, resp, FText_bdr, g_bdr;
+   Vector phin, phinm1;
+   Vector tmp2;
 
    ParGridFunction un_gf, un_next_gf, curlu_gf, curlcurlu_gf, Lext_gf, FText_gf,
                    resu_gf;
@@ -434,6 +438,9 @@ protected:
    real_t ab1 = 0.0;
    real_t ab2 = 0.0;
    real_t ab3 = 0.0;
+
+   real_t g0 = 0.0;
+   real_t g1 = 0.0;
 
    // Timers.
    StopWatch sw_setup, sw_step, sw_extrap, sw_curlcurl, sw_spsolve, sw_hsolve;
