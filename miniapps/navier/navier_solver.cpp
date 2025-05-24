@@ -402,9 +402,12 @@ void NavierSolver::StepIncremental(real_t &time, real_t dt, int current_step)
    f_form->ParallelAssemble(fn);
 
    // Nonlinear terms
+   un_gf.GetTrueDofs(un);
    if (nonlinear)
    {
-      MFEM_ABORT("");
+      N->Mult(un, Nun);
+      N->Mult(unm1, Nunm1);
+      add(ab1, Nun, ab2, Nunm1, resu);
    }
    else
    {
@@ -425,7 +428,6 @@ void NavierSolver::StepIncremental(real_t &time, real_t dt, int current_step)
    resu.Add(-1.0, tmp1);
 
    // BDF terms
-   un_gf.GetTrueDofs(un);
    add(-bd1, un, -bd2, unm1, Du);
    Mv->Mult(Du, tmp1);
    resu.Add(1.0/dt, tmp1);
@@ -571,6 +573,31 @@ void NavierSolver::StepFirstOrder(real_t &time, real_t dt)
    un_gf.SetFromTrueDofs(un);
 
    time += dt;
+}
+
+void NavierSolver::StartUp(VectorCoefficient &uex, Coefficient &pex,
+                           real_t t, real_t dt)
+{
+   uex.SetTime(t - 2*dt);
+   un_gf.ProjectCoefficient(uex);
+   un_gf.GetTrueDofs(unm2);
+
+   uex.SetTime(t - dt);
+   un_gf.ProjectCoefficient(uex);
+   un_gf.GetTrueDofs(unm1);
+   pex.SetTime(t - dt);
+   pn_gf.ProjectCoefficient(pex);
+   pn_gf.GetTrueDofs(pnm1);
+
+   uex.SetTime(t);
+   un_gf.ProjectCoefficient(uex);
+   un_gf.GetTrueDofs(un);
+   pex.SetTime(t);
+   pn_gf.ProjectCoefficient(pex);
+   pn_gf.GetTrueDofs(pn);
+
+   phinm1 = 0.0;
+   phin = 0.0;
 }
 
 void NavierSolver::Step(real_t &time, real_t dt, int current_step,
@@ -1287,8 +1314,10 @@ void NavierSolver::SetIncrementalTimeIntegrationCoefficients(int step)
       bd2 = 0.0;
       bd3 = 0.0;
 
-      // g0 = 1.0;
-      // g1 = 0.0;
+      ab1 = 1.0;
+      ab2 = 0.0;
+      ab3 = 0.0;
+
       g0 = 0.0;
       g1 = 0.0;
    }
@@ -1297,8 +1326,10 @@ void NavierSolver::SetIncrementalTimeIntegrationCoefficients(int step)
       bd0 = 3.0/2.0;
       bd1 = -2.0;
       bd2 = 1.0/2.0;
-      // g0 = 2.0;
-      // g1 = -1.0;
+
+      ab1 = 2.0;
+      ab2 = -1.0;
+      ab3 = 0.0;
 
       g0 = 1.0;
       g1 = 0.0;

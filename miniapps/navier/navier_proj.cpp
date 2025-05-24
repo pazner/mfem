@@ -192,7 +192,9 @@ int main(int argc, char *argv[])
    pv.SetTime(0);
    pv.Save();
 
-   int step = 0;
+   naviersolver.StartUp(u_excoeff, p_excoeff, t, dt);
+
+   int step = 1;
 
    while (!last_step)
    {

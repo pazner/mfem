@@ -276,6 +276,8 @@ public:
    /// Set the number of modes to cut off in the interpolation filter
    void SetCutoffModes(int c) { filter_cutoff_modes = c; }
 
+   void StartUp(VectorCoefficient &uex, Coefficient &pex, real_t t, real_t dt);
+
    /// Set the interpolation filter parameter @a a
    /**
     * If @a a is > 0, the filtering algorithm for the velocity field after every
