@@ -578,20 +578,29 @@ void NavierSolver::StepFirstOrder(real_t &time, real_t dt)
 void NavierSolver::StartUp(VectorCoefficient &uex, Coefficient &pex,
                            real_t t, real_t dt)
 {
+   dthist[0] = dt;
+   dthist[1] = dt;
+   dthist[2] = dt;
+
+   // Step tn - 2
    uex.SetTime(t - 2*dt);
    un_gf.ProjectCoefficient(uex);
    un_gf.GetTrueDofs(unm2);
 
+   // Step tn - 1
    uex.SetTime(t - dt);
    un_gf.ProjectCoefficient(uex);
    un_gf.GetTrueDofs(unm1);
+
    pex.SetTime(t - dt);
    pn_gf.ProjectCoefficient(pex);
    pn_gf.GetTrueDofs(pnm1);
 
+   // Step tn
    uex.SetTime(t);
    un_gf.ProjectCoefficient(uex);
    un_gf.GetTrueDofs(un);
+
    pex.SetTime(t);
    pn_gf.ProjectCoefficient(pex);
    pn_gf.GetTrueDofs(pn);
