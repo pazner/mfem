@@ -349,9 +349,9 @@ public:
    /// Return the number of local vector true dofs.
    int GetTrueVSize() const override { return ltdof_size; }
 
+   using FiniteElementSpace::GetElementDofs;
    /// Returns indexes of degrees of freedom in array dofs for i'th element and
    /// returns the DofTransformation data in a user-provided object.
-   using FiniteElementSpace::GetElementDofs;
    void GetElementDofs(int i, Array<int> &dofs,
                        DofTransformation &doftrans) const override;
 
@@ -470,9 +470,9 @@ public:
    // Face-neighbor functions
    void ExchangeFaceNbrData();
    int GetFaceNbrVSize() const { return num_face_nbr_dofs; }
+   void GetFaceNbrElementVDofs(int i, Array<int> &vdofs) const;
    void GetFaceNbrElementVDofs(int i, Array<int> &vdofs,
                                DofTransformation &doftrans) const;
-   DofTransformation *GetFaceNbrElementVDofs(int i, Array<int> &vdofs) const;
    void GetFaceNbrFaceVDofs(int i, Array<int> &vdofs) const;
    /** In the variable-order case with @a ndofs > 0, the order is taken such
        that the number of DOFs is @a ndofs. */

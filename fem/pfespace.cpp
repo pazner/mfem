@@ -558,8 +558,8 @@ void ParFiniteElementSpace::ApplyLDofSigns(Table &el_dof) const
    ApplyLDofSigns(all_dofs);
 }
 
-void ParFiniteElementSpace::GetElementDofs(int i, Array<int> &dofs,
-                                           DofTransformation &doftrans) const
+void ParFiniteElementSpace::GetElementDofs(
+   int i, Array<int> &dofs, DofTransformation &doftrans) const
 {
    if (elem_dof)
    {
@@ -574,17 +574,19 @@ void ParFiniteElementSpace::GetElementDofs(int i, Array<int> &dofs,
          doftrans.SetFaceOrientations(Fo);
          doftrans.SetVDim();
       }
-      return;
    }
-   FiniteElementSpace::GetElementDofs(i, dofs, doftrans);
-   if (Conforming())
+   else
    {
-      ApplyLDofSigns(dofs);
+      FiniteElementSpace::GetElementDofs(i, dofs, doftrans);
+      if (Conforming())
+      {
+         ApplyLDofSigns(dofs);
+      }
    }
 }
 
-void ParFiniteElementSpace::GetBdrElementDofs(int i, Array<int> &dofs,
-                                              DofTransformation &doftrans) const
+void ParFiniteElementSpace::GetBdrElementDofs(
+   int i, Array<int> &dofs, DofTransformation &doftrans) const
 {
    if (bdr_elem_dof)
    {
@@ -601,10 +603,13 @@ void ParFiniteElementSpace::GetBdrElementDofs(int i, Array<int> &dofs,
       }
       return;
    }
-   FiniteElementSpace::GetBdrElementDofs(i, dofs, doftrans);
-   if (Conforming())
+   else
    {
-      ApplyLDofSigns(dofs);
+      FiniteElementSpace::GetBdrElementDofs(i, dofs, doftrans);
+      if (Conforming())
+      {
+         ApplyLDofSigns(dofs);
+      }
    }
 }
 
@@ -1685,6 +1690,13 @@ void ParFiniteElementSpace::ExchangeFaceNbrData()
 }
 
 void ParFiniteElementSpace::GetFaceNbrElementVDofs(
+   int i, Array<int> &vdofs) const
+{
+   DofTransformation dummy;
+   GetFaceNbrElementVDofs(i, vdofs, dummy);
+}
+
+void ParFiniteElementSpace::GetFaceNbrElementVDofs(
    int i, Array<int> &vdofs, DofTransformation &doftrans) const
 {
    face_nbr_element_dof.GetRow(i, vdofs);
@@ -1698,14 +1710,6 @@ void ParFiniteElementSpace::GetFaceNbrElementVDofs(
       doftrans.SetFaceOrientations(Fo);
       doftrans.SetVDim(vdim, ordering);
    }
-}
-
-DofTransformation *ParFiniteElementSpace::GetFaceNbrElementVDofs(
-   int i, Array<int> &vdofs) const
-{
-   DoFTrans.SetDofTransformation(NULL);
-   GetFaceNbrElementVDofs(i, vdofs, DoFTrans);
-   return DoFTrans.GetDofTransformation() ? &DoFTrans : NULL;
 }
 
 void ParFiniteElementSpace::GetFaceNbrFaceVDofs(int i, Array<int> &vdofs) const

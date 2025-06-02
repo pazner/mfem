@@ -325,7 +325,6 @@ protected:
    mutable Array<int> face_to_be; // NURBS FE space only
 
    Array<StatelessDofTransformation *> DoFTransArray;
-   mutable DofTransformation DoFTrans;
 
    /** Matrix representing the prolongation from the global conforming dofs to
        a set of intermediate partially conforming dofs, e.g. the dofs associated
@@ -958,7 +957,7 @@ public:
    /// with triangular faces.
    ///
    /// @note The returned object should NOT be deleted by the caller.
-   DofTransformation *GetElementDofs(int elem, Array<int> &dofs) const;
+   void GetElementDofs(int elem, Array<int> &dofs) const;
 
    /// @brief The same as GetElementDofs(), but with a user-allocated
    /// DofTransformation object. @a doftrans must be allocated in advance and
@@ -981,14 +980,8 @@ public:
    /// with triangular faces.
    ///
    /// @note The returned object should NOT be deleted by the caller.
-   DofTransformation *GetBdrElementDofs(int bel, Array<int> &dofs) const;
+   void GetBdrElementDofs(int bel, Array<int> &dofs) const;
 
-   /// @brief The same as GetBdrElementDofs(), but with a user-allocated
-   /// DofTransformation object. @a doftrans must be allocated in advance and
-   /// will be owned by the caller. The user can use the
-   /// DofTransformation::GetDofTransformation method on the returned
-   /// @a doftrans object to detect if the DofTransformation should actually be
-   /// used.
    virtual void GetBdrElementDofs(int bel, Array<int> &dofs,
                                   DofTransformation &doftrans) const;
 
@@ -1193,14 +1186,8 @@ public:
    /// with triangular faces.
    ///
    /// @note The returned object should NOT be deleted by the caller.
-   DofTransformation *GetElementVDofs(int i, Array<int> &vdofs) const;
+   void GetElementVDofs(int i, Array<int> &vdofs) const;
 
-   /// @brief The same as GetElementVDofs(), but with a user-allocated
-   /// DofTransformation object. @a doftrans must be allocated in advance and
-   /// will be owned by the caller. The user can use the
-   /// DofTransformation::GetDofTransformation method on the returned
-   /// @a doftrans object to detect if the DofTransformation should actually be
-   /// used.
    void GetElementVDofs(int i, Array<int> &vdofs,
                         DofTransformation &doftrans) const;
 
@@ -1217,14 +1204,7 @@ public:
    /// with triangular faces.
    ///
    /// @note The returned object should NOT be deleted by the caller.
-   DofTransformation *GetBdrElementVDofs(int i, Array<int> &vdofs) const;
-
-   /// @brief The same as GetBdrElementVDofs(), but with a user-allocated
-   /// DofTransformation object. @a doftrans must be allocated in advance and
-   /// will be owned by the caller. The user can use the
-   /// DofTransformation::GetDofTransformation method on the returned
-   /// @a doftrans object to detect if the DofTransformation should actually be
-   /// used.
+   void GetBdrElementVDofs(int i, Array<int> &vdofs) const;
    void GetBdrElementVDofs(int i, Array<int> &vdofs,
                            DofTransformation &doftrans) const;
 
