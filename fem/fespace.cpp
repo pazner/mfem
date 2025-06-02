@@ -339,7 +339,7 @@ void FiniteElementSpace::GetBdrElementVDofs(
    int i, Array<int> &vdofs) const
 {
    DofTransformation dummy;
-   GetBdrElementDofs(i, vdofs, dummy);
+   GetBdrElementVDofs(i, vdofs, dummy);
 }
 
 void FiniteElementSpace::GetBdrElementVDofs(
