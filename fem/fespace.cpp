@@ -320,11 +320,11 @@ void FiniteElementSpace::AdjustVDofs(Array<int> &vdofs)
    }
 }
 
-void FiniteElementSpace::GetElementVDofs(
+DofTransformation *FiniteElementSpace::GetElementVDofs(
    int i, Array<int> &vdofs) const
 {
-   DofTransformation dummy;
-   GetElementVDofs(i, vdofs, dummy);
+   GetElementVDofs(i, vdofs, DoFTrans);
+   return &DoFTrans;
 }
 
 void FiniteElementSpace::GetElementVDofs(
@@ -335,11 +335,11 @@ void FiniteElementSpace::GetElementVDofs(
    doftrans.SetVDim(vdim, ordering);
 }
 
-void FiniteElementSpace::GetBdrElementVDofs(
+DofTransformation *FiniteElementSpace::GetBdrElementVDofs(
    int i, Array<int> &vdofs) const
 {
-   DofTransformation dummy;
-   GetBdrElementVDofs(i, vdofs, dummy);
+   GetBdrElementVDofs(i, vdofs, DoFTrans);
+   return &DoFTrans;
 }
 
 void FiniteElementSpace::GetBdrElementVDofs(
@@ -3402,11 +3402,11 @@ int FiniteElementSpace::GetNVariants(int entity, int index) const
 static const char* msg_orders_changed =
    "Element orders changed, you need to Update() the space first.";
 
-void FiniteElementSpace::GetElementDofs(int elem, Array<int> &dofs) const
+DofTransformation *FiniteElementSpace::GetElementDofs(
+   int elem, Array<int> &dofs) const
 {
-   DofTransformation dummy;
-   GetElementDofs(elem, dofs, dummy);
-   return;
+   GetElementDofs(elem, dofs, DoFTrans);
+   return &DoFTrans;
 }
 
 void FiniteElementSpace::GetElementDofs(int elem,
@@ -3517,11 +3517,11 @@ void FiniteElementSpace::GetElementDofs(int elem,
    }
 }
 
-void FiniteElementSpace::GetBdrElementDofs(
+DofTransformation *FiniteElementSpace::GetBdrElementDofs(
    int bel, Array<int> &dofs) const
 {
-   DofTransformation dummy;
-   GetBdrElementDofs(bel, dofs, dummy);
+   GetBdrElementDofs(bel, dofs, DoFTrans);
+   return &DoFTrans;
 }
 
 void FiniteElementSpace::GetBdrElementDofs(

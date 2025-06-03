@@ -325,6 +325,7 @@ protected:
    mutable Array<int> face_to_be; // NURBS FE space only
 
    Array<StatelessDofTransformation *> DoFTransArray;
+   mutable DofTransformation DoFTrans;
 
    /** Matrix representing the prolongation from the global conforming dofs to
        a set of intermediate partially conforming dofs, e.g. the dofs associated
@@ -945,8 +946,8 @@ public:
    /// could be used to produce the appropriate offsets from these local dofs.
    ///@{
 
-   /// @brief Returns indices of degrees of freedom of element 'elem'.
-   /// The returned indices are offsets into an @ref ldof vector. See also
+   /// @brief Returns indices of degrees of freedom of element 'elem'. The
+   /// returned indices are offsets into an @ref ldof vector. See also
    /// GetElementVDofs().
    ///
    /// @note In many cases the returned DofTransformation object will be NULL.
@@ -956,15 +957,18 @@ public:
    /// needed for Nedelec basis functions of order 2 and above on 3D elements
    /// with triangular faces.
    ///
-   /// @note The returned object should NOT be deleted by the caller.
-   void GetElementDofs(int elem, Array<int> &dofs) const;
+   /// @deprecated Use of the returned object is deprecated. The returned object
+   /// should @b not be deleted by the caller. If the DofTransformation is
+   /// needed, use GetElementDofs(int, Array<int> &, DofTransformation &)
+   /// instead.
+   DofTransformation *GetElementDofs(int elem, Array<int> &dofs) const;
 
-   /// @brief The same as GetElementDofs(), but with a user-allocated
-   /// DofTransformation object. @a doftrans must be allocated in advance and
-   /// will be owned by the caller. The user can use the
-   /// DofTransformation::GetDofTransformation method on the returned
-   /// @a doftrans object to detect if the DofTransformation should actually be
-   /// used.
+   /// @brief The same as GetElementDofs(), but with a user-provided
+   /// DofTransformation object.
+   ///
+   /// The user can use DofTransformation::IsIdentity on the returned @a
+   /// doftrans object to determine if the DofTransformation needs to actually
+   /// be used.
    virtual void GetElementDofs(int elem, Array<int> &dofs,
                                DofTransformation &doftrans) const;
 
@@ -979,9 +983,18 @@ public:
    /// needed for Nedelec basis functions of order 2 and above on 3D elements
    /// with triangular faces.
    ///
-   /// @note The returned object should NOT be deleted by the caller.
-   void GetBdrElementDofs(int bel, Array<int> &dofs) const;
+   /// @deprecated Use of the returned object is deprecated. The returned object
+   /// should @b not be deleted by the caller. If the DofTransformation is
+   /// needed, use GetBdrElementDofs(int, Array<int> &, DofTransformation &)
+   /// instead.
+   DofTransformation *GetBdrElementDofs(int bel, Array<int> &dofs) const;
 
+   /// @brief The same as GetBdrElementDofs(), but with a user-provided
+   /// DofTransformation object.
+   ///
+   /// The user can use DofTransformation::IsIdentity on the returned @a
+   /// doftrans object to determine if the DofTransformation needs to actually
+   /// be used.
    virtual void GetBdrElementDofs(int bel, Array<int> &dofs,
                                   DofTransformation &doftrans) const;
 
@@ -1185,9 +1198,18 @@ public:
    /// needed for Nedelec basis functions of order 2 and above on 3D elements
    /// with triangular faces.
    ///
-   /// @note The returned object should NOT be deleted by the caller.
-   void GetElementVDofs(int i, Array<int> &vdofs) const;
+   /// @deprecated Use of the returned object is deprecated. The returned object
+   /// should @b not be deleted by the caller. If the DofTransformation is
+   /// needed, use GetElementVDofs(int, Array<int> &, DofTransformation &)
+   /// instead.
+   DofTransformation *GetElementVDofs(int i, Array<int> &vdofs) const;
 
+   /// @brief The same as GetElementVDofs(), but with a user-provided
+   /// DofTransformation object.
+   ///
+   /// The user can use DofTransformation::IsIdentity on the returned @a
+   /// doftrans object to determine if the DofTransformation needs to actually
+   /// be used.
    void GetElementVDofs(int i, Array<int> &vdofs,
                         DofTransformation &doftrans) const;
 
@@ -1203,8 +1225,18 @@ public:
    /// needed for Nedelec basis functions of order 2 and above on 3D elements
    /// with triangular faces.
    ///
-   /// @note The returned object should NOT be deleted by the caller.
-   void GetBdrElementVDofs(int i, Array<int> &vdofs) const;
+   /// @deprecated Use of the returned object is deprecated. The returned object
+   /// should @b not be deleted by the caller. If the DofTransformation is
+   /// needed, use GetBdrElementVDofs(int, Array<int> &, DofTransformation &)
+   /// instead.
+   DofTransformation *GetBdrElementVDofs(int i, Array<int> &vdofs) const;
+
+   /// @brief The same as GetBdrElementVDofs(), but with a user-provided
+   /// DofTransformation object.
+   ///
+   /// The user can use DofTransformation::IsIdentity on the returned @a
+   /// doftrans object to determine if the DofTransformation needs to actually
+   /// be used.
    void GetBdrElementVDofs(int i, Array<int> &vdofs,
                            DofTransformation &doftrans) const;
 

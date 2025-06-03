@@ -601,7 +601,6 @@ void ParFiniteElementSpace::GetBdrElementDofs(
          doftrans.SetFaceOrientations(Fo);
          doftrans.SetVDim();
       }
-      return;
    }
    else
    {
