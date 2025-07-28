@@ -59,6 +59,18 @@ void FiniteElement::CalcVShape(
    MFEM_ABORT("method is not implemented for this class");
 }
 
+void FiniteElement::CalcGradVShape(
+   const IntegrationPoint &ip, DenseTensor &gradvshape) const
+{
+   MFEM_ABORT("method is not implemented for this class");
+}
+
+void FiniteElement::CalcGradVShape(
+   ElementTransformation &Trans, DenseTensor &gradvshape) const
+{
+   MFEM_ABORT("method is not implemented for this class");
+}
+
 void FiniteElement::CalcDivShape(
    const IntegrationPoint &ip, Vector &divshape) const
 {
@@ -1076,6 +1088,47 @@ void VectorFiniteElement::CalcVShape_RT(
    CalcVShape(Trans.GetIntPoint(), vshape);
    MultABt(vshape, Trans.Jacobian(), shape);
    shape *= (1.0 / Trans.Weight());
+}
+
+void VectorFiniteElement::CalcGradVShape_RT(
+   ElementTransformation &Trans, DenseTensor &gradvshape) const
+{
+   MFEM_ASSERT(map_type == H_DIV, "");
+#ifdef MFEM_THREAD_SAFE
+   DenseTensor gradvshape_ref(dof, dim, dim);
+#endif
+   gradvshape_ref.SetSize(dof, dim, dim);
+   const DenseMatrix &J = Trans.Jacobian();
+   const DenseMatrix &Jinv = Trans.InverseJacobian();
+   const double detJ = Trans.Weight();
+   CalcGradVShape(Trans.GetIntPoint(), gradvshape_ref);
+
+   // apply Piola transformation
+   // gradvshape = (1/det(J)) * J * gradvshape_ref * invJ
+   for (int j=0; j < dof; j++)
+   {
+      DenseMatrix temp_mat(dim, dim);
+      temp_mat = 0.0;
+      for (int k=0; k<dim; k++) // temp_mat = J * gradvshape_ref
+         for (int l=0; l<dim; l++)
+            for (int s=0; s<dim; s++)
+            {
+               temp_mat(k,l) += J(k,s)*gradvshape_ref(j,s,l);
+            }
+
+      for (int k=0; k<dim; k++)
+         for (int l=0; l<dim; l++)
+         {
+            gradvshape(j,k,l) = 0.0;
+         }
+
+      for (int k=0; k<dim; k++) // gradvshape = temp_mat * J^{-1} / detJ
+         for (int l=0; l<dim; l++)
+            for (int s=0; s<dim; s++)
+            {
+               gradvshape(j,k,l) += temp_mat(k,s)*Jinv(s,l)/detJ;
+            }
+   }
 }
 
 void VectorFiniteElement::CalcVShape_ND(

@@ -29,6 +29,7 @@ private:
 #ifndef MFEM_THREAD_SAFE
    mutable Vector shape_cx, shape_ox, shape_cy, shape_oy;
    mutable Vector dshape_cx, dshape_cy;
+   mutable Vector dshape_ox, dshape_oy;
 #endif
    Array<int> dof2nk;
    const real_t *cp;
@@ -44,10 +45,15 @@ public:
    void CalcVShape(ElementTransformation &Trans,
                    DenseMatrix &shape) const override
    { CalcVShape_RT(Trans, shape); }
-   void CalcDivShape(const IntegrationPoint &ip,
-                     Vector &divshape) const override;
-   void GetLocalInterpolation(ElementTransformation &Trans,
-                              DenseMatrix &I) const override
+   virtual void CalcDivShape(const IntegrationPoint &ip,
+                             Vector &divshape) const override;
+   virtual void CalcGradVShape(const IntegrationPoint &ip,
+                               DenseTensor &gradvshape) const override;
+   virtual void CalcGradVShape(ElementTransformation &Trans,
+                               DenseTensor &gradvshape) const override
+   { CalcGradVShape_RT(Trans, gradvshape); }
+   virtual void GetLocalInterpolation(ElementTransformation &Trans,
+                                      DenseMatrix &I) const override
    { LocalInterpolation_RT(*this, nk, dof2nk, Trans, I); }
    void GetLocalRestriction(ElementTransformation &Trans,
                             DenseMatrix &R) const override
@@ -116,10 +122,15 @@ public:
    void CalcVShape(ElementTransformation &Trans,
                    DenseMatrix &shape) const override
    { CalcVShape_RT(Trans, shape); }
-   void CalcDivShape(const IntegrationPoint &ip,
-                     Vector &divshape) const override;
-   void GetLocalInterpolation(ElementTransformation &Trans,
-                              DenseMatrix &I) const override
+   virtual void CalcDivShape(const IntegrationPoint &ip,
+                             Vector &divshape) const override;
+   virtual void CalcGradVShape(const IntegrationPoint &ip,
+                               DenseTensor &gradvshape) const override;
+   virtual void CalcGradVShape(ElementTransformation &Trans,
+                               DenseTensor &gradvshape) const override
+   { CalcGradVShape_RT(Trans, gradvshape); }
+   virtual void GetLocalInterpolation(ElementTransformation &Trans,
+                                      DenseMatrix &I) const override
    { LocalInterpolation_RT(*this, nk, dof2nk, Trans, I); }
    void GetLocalRestriction(ElementTransformation &Trans,
                             DenseMatrix &R) const override
@@ -172,6 +183,7 @@ class RT_TriangleElement : public VectorFiniteElement
    mutable Vector dshape_x, dshape_y, dshape_l;
    mutable DenseMatrix u;
    mutable Vector divu;
+   mutable DenseTensor gradu;
 #endif
    Array<int> dof2nk;
    DenseMatrixInverse Ti;
@@ -184,10 +196,15 @@ public:
    void CalcVShape(ElementTransformation &Trans,
                    DenseMatrix &shape) const override
    { CalcVShape_RT(Trans, shape); }
-   void CalcDivShape(const IntegrationPoint &ip,
-                     Vector &divshape) const override;
-   void GetLocalInterpolation(ElementTransformation &Trans,
-                              DenseMatrix &I) const override
+   virtual void CalcDivShape(const IntegrationPoint &ip,
+                             Vector &divshape) const override;
+   virtual void CalcGradVShape(const IntegrationPoint &ip,
+                               DenseTensor &gradvshape) const override;
+   virtual void CalcGradVShape(ElementTransformation &Trans,
+                               DenseTensor &gradvshape) const override
+   { CalcGradVShape_RT(Trans, gradvshape); }
+   virtual void GetLocalInterpolation(ElementTransformation &Trans,
+                                      DenseMatrix &I) const override
    { LocalInterpolation_RT(*this, nk, dof2nk, Trans, I); }
    void GetLocalRestriction(ElementTransformation &Trans,
                             DenseMatrix &R) const override
