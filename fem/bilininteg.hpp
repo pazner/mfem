@@ -3633,6 +3633,59 @@ protected:
       DenseMatrix &elmat, DenseMatrix &jmat);
 };
 
+/// Integrator for (grad u, grad v) vector FE elements.
+/** The gradients are evaluated elementwise as in DG methods. */
+class VectorFEDiffusionIntegrator: public BilinearFormIntegrator
+{
+   DenseTensor dshape;
+protected:
+   Coefficient *Q = nullptr;
+public:
+   VectorFEDiffusionIntegrator() { }
+   VectorFEDiffusionIntegrator(Coefficient &Q_) : Q(&Q_) { }
+   virtual void AssembleElementMatrix(const FiniteElement &el,
+                                      ElementTransformation &Trans,
+                                      DenseMatrix &elmat);
+};
+
+/// Integrator for DG diffusion face terms for vector FE elements.
+/** (See DGDiffusionIntegrator for the definition of the bilinear form.) */
+class VectorFE_DGDiffusionIntegrator: public BilinearFormIntegrator
+{
+   Vector normal, unit_normal;
+   DenseMatrix shape1, shape2;
+   DenseTensor dshape1, dshape2;
+   Array<int> vdofs1, vdofs2;
+protected:
+   const double kappa;
+   Coefficient *Q = nullptr;
+public:
+   VectorFE_DGDiffusionIntegrator(double kappa_)
+      : kappa(kappa_) { }
+   VectorFE_DGDiffusionIntegrator(double kappa_, Coefficient &Q_)
+      : kappa(kappa_), Q(&Q_) { }
+   virtual void AssembleFaceMatrix(const FiniteElement &el1,
+                                   const FiniteElement &el2,
+                                   FaceElementTransformations &Trans,
+                                   DenseMatrix &elmat);
+};
+
+class VectorFE_PenaltyIntegrator: public BilinearFormIntegrator
+{
+   Vector normal, unit_normal;
+   DenseMatrix shape1, shape2;
+   Array<int> vdofs1, vdofs2;
+protected:
+   const double kappa;
+   Coefficient *Q = nullptr;
+public:
+   VectorFE_PenaltyIntegrator(double kappa_) : kappa(kappa_) { }
+   virtual void AssembleFaceMatrix(const FiniteElement &el1,
+                                   const FiniteElement &el2,
+                                   FaceElementTransformations &Trans,
+                                   DenseMatrix &elmat);
+};
+
 /** Integrator for the DPG form:$ \langle v, [w] \rangle $ over all faces (the interface) where
     the trial variable $v$ is defined on the interface and the test variable $w$ is
     defined inside the elements, generally in a DG space. */
