@@ -4671,6 +4671,13 @@ Mesh Mesh::MakeRefined(Mesh &orig_mesh, int ref_factor, int ref_type)
    return mesh;
 }
 
+Mesh Mesh::MakeDuffyRefined(Mesh &orig_mesh, int ref_factor, int ref_type)
+{
+   Mesh mesh;
+   mesh.MakeDuffyRefined_(orig_mesh, ref_factor, ref_type);
+   return mesh;
+}
+
 Mesh Mesh::MakeRefined(Mesh &orig_mesh, const Array<int> &ref_factors,
                        int ref_type)
 {
@@ -5561,6 +5568,222 @@ void Mesh::MakeRefined_(Mesh &orig_mesh, const Array<int> &ref_factors,
    // interior "boundary" element that, when such "boundary" element is between
    // two elements on different processors.
    // MFEM_ASSERT(CheckBdrElementOrientation(false) == 0, "");
+}
+
+void Mesh::MakeDuffyRefined_(Mesh &orig_mesh, int ref_factor,
+                             int ref_type)
+{
+   SetEmpty();
+   Dim = orig_mesh.Dimension();
+   spaceDim = orig_mesh.SpaceDimension();
+
+   int orig_ne = orig_mesh.GetNE();
+   MFEM_VERIFY(orig_ne == 0 || ref_factor >= 1, "Refinement factor must be >= 1");
+   const int q_type = BasisType::GetQuadrature1D(ref_type);
+   MFEM_VERIFY(Quadrature1D::CheckClosed(q_type) != Quadrature1D::Invalid,
+               "Invalid refinement type. Must use closed basis type.");
+
+   MFEM_VERIFY(Dim <= 2, "Only 1D and 2D is currently supported.");
+
+   // Construct a scalar H1 FE space of order ref_factor and use its dofs as
+   // the indices of the new, refined vertices.
+   H1Duffy_FECollection rfec(ref_factor, Dim, ref_type);
+   FiniteElementSpace rfes(&orig_mesh, &rfec);
+
+   // Set the number of vertices, set the actual coordinates later
+   NumOfVertices = rfes.GetNDofs();
+   vertices.SetSize(NumOfVertices);
+
+   Array<int> rdofs;
+   DenseMatrix phys_pts;
+   GeometryRefiner refiner(q_type);
+
+   // Add refined elements and set vertex coordinates
+   for (int el = 0; el < orig_ne; el++)
+   {
+      Geometry::Type geom = orig_mesh.GetElementGeometry(el);
+      int attrib = orig_mesh.GetAttribute(el);
+      int nvert = Geometry::NumVerts[geom];
+
+      rfes.GetElementDofs(el, rdofs);
+      const FiniteElement *rfe = rfes.GetFE(el);
+      orig_mesh.GetElementTransformation(el)->Transform(
+         rfe->GetNodes(), phys_pts);
+      const int *c2h_map = rfec.GetDofMap(geom);
+      for (int i = 0; i < phys_pts.Width(); i++)
+      {
+         vertices[rdofs[i]].SetCoords(spaceDim, phys_pts.GetColumn(i));
+      }
+
+      if (geom == Geometry::SQUARE)
+      {
+         RefinedGeometry &RG = *refiner.Refine(geom, ref_factor);
+         for (int j = 0; j < RG.RefGeoms.Size()/nvert; j++)
+         {
+            Element *elem = NewElement(geom);
+            elem->SetAttribute(attrib);
+            int *v = elem->GetVertices();
+            for (int k = 0; k < nvert; k++)
+            {
+               int cid = RG.RefGeoms[k+nvert*j]; // local Cartesian index
+               v[k] = rdofs[c2h_map[cid]];
+            }
+            AddElement(elem);
+         }
+      }
+      else // triangle
+      {
+         // Add quads at bottom
+         for (int jy = 0; jy < ref_factor - 1; ++jy)
+         {
+            for (int jx = 0; jx < ref_factor; ++jx)
+            {
+               Element *elem = NewElement(Geometry::SQUARE);
+               elem->SetAttribute(attrib);
+               int *v = elem->GetVertices();
+               v[0] = rdofs[c2h_map[jx + jy*(ref_factor+1)]];
+               v[1] = rdofs[c2h_map[jx + 1 + jy*(ref_factor+1)]];
+               v[2] = rdofs[c2h_map[jx + 1 + (jy+1)*(ref_factor+1)]];
+               v[3] = rdofs[c2h_map[jx + (jy+1)*(ref_factor+1)]];
+               AddElement(elem);
+            }
+         }
+         // Add triangles along the top
+         const int offset = (ref_factor - 1)*(ref_factor + 1);
+         for (int jx = 0; jx < ref_factor; ++jx)
+         {
+            Element *elem = NewElement(Geometry::TRIANGLE);
+            elem->SetAttribute(attrib);
+            int *v = elem->GetVertices();
+            v[0] = rdofs[c2h_map[jx + offset]];
+            v[1] = rdofs[c2h_map[jx + 1 + offset]];
+            v[2] = rdofs[c2h_map[ref_factor + 1 + offset]];
+            AddElement(elem);
+         }
+      }
+   }
+
+   // Add refined boundary elements
+   for (int el = 0; el < orig_mesh.GetNBE(); el++)
+   {
+      int i, info;
+      orig_mesh.GetBdrElementAdjacentElement(el, i, info);
+      Geometry::Type geom = orig_mesh.GetBdrElementGeometry(el);
+      int attrib = orig_mesh.GetBdrAttribute(el);
+      int nvert = Geometry::NumVerts[geom];
+      RefinedGeometry &RG = *refiner.Refine(geom, ref_factor);
+
+      rfes.GetBdrElementDofs(el, rdofs);
+      MFEM_ASSERT(rdofs.Size() == RG.RefPts.Size(), "");
+      const int *c2h_map = rfec.GetDofMap(geom);
+      for (int j = 0; j < RG.RefGeoms.Size()/nvert; j++)
+      {
+         Element *elem = NewElement(geom);
+         elem->SetAttribute(attrib);
+         int *v = elem->GetVertices();
+         for (int k = 0; k < nvert; k++)
+         {
+            int cid = RG.RefGeoms[k+nvert*j]; // local Cartesian index
+            v[k] = rdofs[c2h_map[cid]];
+         }
+         AddBdrElement(elem);
+      }
+   }
+   FinalizeTopology(false);
+
+   sequence = orig_mesh.GetSequence() + 1;
+   last_operation = Mesh::REFINE;
+
+   // Setup the data for the coarse-fine refinement transformations
+   const int nref_quad = ref_factor * ref_factor;
+   const int nref_tri_quad = (ref_factor - 1) * ref_factor;
+   const int nref_tri_tri = ref_factor;
+   CoarseFineTr.embeddings.SetSize(GetNE());
+
+   CoarseFineTr.point_matrices[Geometry::SQUARE].SetSize(
+      Dim, 4, nref_quad + nref_tri_quad);
+   RefinedGeometry &RG = *refiner.Refine(Geometry::SQUARE, ref_factor);
+   for (int j = 0; j < RG.RefGeoms.Size()/4; j++)
+   {
+      DenseMatrix &Pj = CoarseFineTr.point_matrices[Geometry::SQUARE](j);
+      for (int k = 0; k < 4; k++)
+      {
+         int cid = RG.RefGeoms[k+4*j]; // local Cartesian index
+         const IntegrationPoint &ip = RG.RefPts[cid];
+         ip.Get(Pj.GetColumn(k), Dim);
+      }
+   }
+
+   // Add quads at bottom
+   for (int jy = 0; jy < ref_factor - 1; ++jy)
+   {
+      for (int jx = 0; jx < ref_factor; ++jx)
+      {
+         const int cid = jx + jy*ref_factor;
+         DenseMatrix &Pj = CoarseFineTr.point_matrices[Geometry::SQUARE](
+                              nref_quad + cid);
+         for (int k = 0; k < 4; k++)
+         {
+            const IntegrationPoint &ip = RG.RefPts[cid];
+            Pj(0,k) = ip.x * (1.0 - ip.y);
+            Pj(1,k) = ip.y;
+         }
+      }
+   }
+
+   CoarseFineTr.point_matrices[Geometry::TRIANGLE].SetSize(Dim, 3, nref_tri_tri);
+
+   // Add triangles along the top
+   const int offset = (ref_factor - 1)*(ref_factor + 1);
+   for (int jx = 0; jx < ref_factor; ++jx)
+   {
+      DenseMatrix &Pj = CoarseFineTr.point_matrices[Geometry::TRIANGLE](jx);
+      IntegrationPoint ip;
+
+      ip = RG.RefPts[jx + offset];
+      Pj(0,0) = ip.x * (1.0 - ip.y);
+      Pj(1,0) = ip.y;
+
+      ip = RG.RefPts[jx + 1 + offset];
+      Pj(0,1) = ip.x * (1.0 - ip.y);
+      Pj(1,1) = ip.y;
+
+      Pj(0,2) = 0.0;
+      Pj(1,2) = 1.0;
+   }
+
+   // Compute the point matrices and embeddings
+   int el_fine = 0;
+   for (int el_coarse = 0; el_coarse < orig_ne; ++el_coarse)
+   {
+      Geometry::Type geom = orig_mesh.GetElementBaseGeometry(el_coarse);
+      for (int j = 0; j < ref_factor * ref_factor; ++j)
+      {
+         Embedding &emb = CoarseFineTr.embeddings[el_fine];
+         if (geom == Geometry::SQUARE)
+         {
+            emb.geom = geom;
+            emb.matrix = j;
+         }
+         else // triangle
+         {
+            if (j < nref_tri_quad)
+            {
+               emb.geom = Geometry::SQUARE;
+               emb.matrix = nref_quad + j;
+            }
+            else
+            {
+               emb.geom = Geometry::TRIANGLE;
+               emb.matrix = j - nref_tri_quad;
+            }
+         }
+         emb.parent = el_coarse;
+         ++el_fine;
+      }
+   }
+
+   // MFEM_ASSERT(CheckElementOrientation(false) == 0, "");
 }
 
 Mesh Mesh::MakeSimplicial(const Mesh &orig_mesh)

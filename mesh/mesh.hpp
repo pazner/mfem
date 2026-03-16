@@ -694,6 +694,10 @@ protected:
    void MakeRefined_(Mesh &orig_mesh, const Array<int> &ref_factors,
                      int ref_type);
 
+   /// Internal function used in Mesh::MakeDuffyRefined
+   void MakeDuffyRefined_(Mesh &orig_mesh, int ref_factor,
+                          int ref_type);
+
    /// Initialize vertices/elements/boundary/tables from a nonconforming mesh.
    void InitFromNCMesh(const NCMesh &ncmesh);
 
@@ -945,6 +949,9 @@ public:
 
        @note The constructed Mesh is straight-sided. */
    static Mesh MakeRefined(Mesh &orig_mesh, int ref_factor, int ref_type);
+
+   /// Create a Duffy refined mesh.
+   static Mesh MakeDuffyRefined(Mesh &orig_mesh, int ref_factor, int ref_type);
 
    /// Create a refined mesh, where each element of the original mesh may be
    /// refined by a different factor.
