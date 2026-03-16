@@ -27,6 +27,8 @@ Line Loop(8) = {5};
 Line Loop(9) = {6};
 Plane Surface(10) = {7, 8, 9};
 
+Physical Surface(11) = {10};
+
 Mesh.MeshSizeFromPoints = 0;
 
 Field[1] = Distance;

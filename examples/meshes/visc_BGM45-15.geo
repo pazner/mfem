@@ -27,6 +27,7 @@ Line(10) = {10, 1};
 Line Loop(1) = {1:10};
 
 Plane Surface(1) = {1};
+Physical Surface(1) = {1};
 
 Field[1] = BoundaryLayer;
 Field[1].CurvesList = {2:7};

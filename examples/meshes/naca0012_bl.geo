@@ -209,6 +209,8 @@ Curve Loop(1) = {3};
 Curve Loop(2) = {1,2};
 Plane Surface(1) = {1,2};
 
+Physical Surface(1) = {1};
+
 // Field[1] = BoundaryLayer;
 // Field[1].CurvesList = {1,2};
 // Field[1].Size = 0.0001;
