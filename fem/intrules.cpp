@@ -1393,6 +1393,24 @@ IntegrationRule *IntegrationRules::TriangleIntegrationRule(int Order)
    // Note: Set TriangleIntRules[*] to ir only *after* ir is fully constructed.
    // This is needed in multithreaded environment.
 
+   // const int ir_order = 3*order;
+   const int nq = Order/2 + 1;
+   IntegrationRule ir_s_0_0(nq);
+   QuadratureFunctions1D::GaussJacobi(nq, 0.0, 0.0, &ir_s_0_0);
+   IntegrationRule ir_s_1_0(nq);
+   QuadratureFunctions1D::GaussJacobi(nq, 1.0, 0.0, &ir_s_1_0);
+
+   // IntegrationRule ir_tri(ir_s_0_0, ir_s_1_0);
+   // IntegrationRule ir(ir_s_0_0, ir_s_1_0);
+   ir = new IntegrationRule(ir_s_0_0, ir_s_1_0);
+   for (int i = 0; i < ir->Size(); ++i)
+   {
+      (*ir)[i].x *= (1.0 - (*ir)[i].y);
+   }
+   ir->SetOrder(Order);
+   TriangleIntRules[Order] = ir;
+   return ir;
+
    // assuming that orders <= 25 are pre-allocated
    switch (Order)
    {
