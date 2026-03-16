@@ -317,6 +317,53 @@ public:
    virtual ~H1_FECollection();
 };
 
+class H1Duffy_FECollection : public FiniteElementCollection
+{
+protected:
+   int dim;
+   int b_type;
+   int order;
+
+   char fec_name[32] = "H1_Duffy";
+   std::array<int, Geometry::NumGeom> dofs{}; // zero initialize
+   std::array<std::unique_ptr<FiniteElement>, Geometry::NumGeom> elements;
+
+   std::array<std::vector<int>, 2> seg_dof_ord;
+   std::array<std::vector<int>, 6> tri_dof_ord;
+   std::array<std::vector<int>, 8> quad_dof_ord;
+   std::array<std::vector<int>, 24> tet_dof_ord;
+
+public:
+   /// Construct the $H^1$ bubble collection consisting of degree-$p$
+   /// polynomials enriched with the bubble function times degree-$q$
+   /// polynomials.
+   explicit H1Duffy_FECollection(const int p, const int dim = 3,
+                                 const int btype = BasisType::GaussLobatto);
+
+   const FiniteElement *
+   FiniteElementForGeometry(Geometry::Type GeomType) const override;
+
+   int DofForGeometry(Geometry::Type GeomType) const override
+   { return dofs[GeomType]; }
+
+   const int *DofOrderForOrientation(Geometry::Type GeomType,
+                                     int Or) const override;
+
+   const char *Name() const override { return fec_name; }
+
+   int GetContType() const override { return CONTINUOUS; }
+
+   int GetBasisType() const { return b_type; }
+
+   FiniteElementCollection *GetTraceCollection() const override;
+
+   /// Get the Cartesian to local H1 dof map
+   const int *GetDofMap(Geometry::Type GeomType) const;
+
+   FiniteElementCollection *Clone(int p) const override
+   { return new H1Duffy_FECollection(p, dim, b_type); }
+};
+
 /** @brief Arbitrary order H1-conforming (continuous) finite elements with
     positive basis functions. */
 class H1Pos_FECollection : public H1_FECollection

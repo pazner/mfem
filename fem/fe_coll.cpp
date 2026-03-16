@@ -2122,6 +2122,87 @@ H1_FECollection::~H1_FECollection()
    }
 }
 
+H1Duffy_FECollection::H1Duffy_FECollection(const int p, const int dim,
+                                           const int btype)
+   : FiniteElementCollection(p),
+     dim(dim),
+     b_type(BasisType::Check(btype)),
+     order(p)
+{
+   MFEM_VERIFY(p >= 1, "H1Duffy_FECollection requires order >= 1.");
+   MFEM_VERIFY(dim >= 0 && dim <= 2, "Unsupported dimension.");
+
+   dofs[Geometry::POINT] = 1;
+   elements[Geometry::POINT] = make_unique<PointFiniteElement>();
+
+   if (dim >= 1)
+   {
+      dofs[Geometry::SEGMENT] = p - 1;
+      elements[Geometry::SEGMENT] = make_unique<H1_SegmentElement>(p, btype);
+   }
+
+   if (dim == 2)
+   {
+      dofs[Geometry::TRIANGLE] = (p-1)*(p-1);
+      dofs[Geometry::SQUARE] = (p-1)*(p-1);
+
+      elements[Geometry::TRIANGLE] =
+         make_unique<H1Duffy_TriangleElement>(p, btype);
+      elements[Geometry::SQUARE] =
+         make_unique<H1_QuadrilateralElement>(p, btype);
+   }
+
+   // DOF orderings. Need only for lower-dimensional entities.
+   // Segment DOF orderings in 2D.
+   if (dim >= 2)
+   {
+      seg_dof_ord[0].resize(p - 1);
+      seg_dof_ord[1].resize(p - 1);
+      for (int i = 0; i < p - 1; i++)
+      {
+         seg_dof_ord[0][i] = i;
+         seg_dof_ord[1][i] = p - 2 - i;
+      }
+   }
+}
+
+const FiniteElement *
+H1Duffy_FECollection::FiniteElementForGeometry(Geometry::Type GeomType) const
+{
+   return elements[GeomType].get();
+}
+
+const int *H1Duffy_FECollection::DofOrderForOrientation(
+   Geometry::Type GeomType, int Or) const
+{
+   if (GeomType == Geometry::SEGMENT)
+   {
+      return (Or > 0) ? seg_dof_ord[0].data() : seg_dof_ord[1].data();
+   }
+   return nullptr;
+}
+
+FiniteElementCollection *H1Duffy_FECollection::GetTraceCollection() const
+{
+   return (dim < 0) ? nullptr : new H1_Trace_FECollection(order, dim, b_type);
+}
+
+const int *H1Duffy_FECollection::GetDofMap(Geometry::Type GeomType) const
+{
+   const int *dof_map = NULL;
+   const FiniteElement *fe = elements[GeomType].get();
+   const auto *nodal_fe = dynamic_cast<const NodalFiniteElement*>(fe);
+   if (nodal_fe)
+   {
+      dof_map = nodal_fe->GetLexicographicOrdering().GetData();
+   }
+   else
+   {
+      MFEM_ABORT("Geometry type " << Geometry::Name[GeomType] << " is not "
+                 "implemented");
+   }
+   return dof_map;
+}
 
 H1_Trace_FECollection::H1_Trace_FECollection(const int p, const int dim,
                                              const int btype)
