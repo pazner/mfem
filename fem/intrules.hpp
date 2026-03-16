@@ -379,6 +379,8 @@ public:
        These methods calculate the actual points and weights for the different
        types of quadrature rules. */
    ///@{
+   static void GaussJacobi(const int np, const real_t alpha, const real_t beta,
+                           IntegrationRule* ir);
    static void GaussLegendre(const int np, IntegrationRule* ir);
    static void GaussLobatto(const int np, IntegrationRule *ir);
    static void OpenUniform(const int np, IntegrationRule *ir);
@@ -407,7 +409,8 @@ public:
       OpenUniform     = 2,  ///< aka open Newton-Cotes
       ClosedUniform   = 3,  ///< aka closed Newton-Cotes
       OpenHalfUniform = 4,  ///< aka "open half" Newton-Cotes
-      ClosedGL        = 5   ///< aka closed Gauss Legendre
+      ClosedGL        = 5,  ///< aka closed Gauss Legendre
+      GaussJacobi     = 6
    };
    /** @brief If the Quadrature1D type is not closed return Invalid; otherwise
        return type. */
