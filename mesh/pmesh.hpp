@@ -318,6 +318,8 @@ protected:
    /// Internal function used in ParMesh::MakeRefined (and related constructor)
    void MakeRefined_(ParMesh &orig_mesh, int ref_factor, int ref_type);
 
+   void MakeDuffyRefined_(ParMesh &orig_mesh, int ref_factor, int ref_type);
+
    // Mark Mesh::Swap as protected, should use ParMesh::Swap to swap @a ParMesh
    // objects.
    using Mesh::Swap;
@@ -381,6 +383,9 @@ public:
 
        @note The constructed ParMesh is linear, i.e. it does not have nodes. */
    static ParMesh MakeRefined(ParMesh &orig_mesh, int ref_factor, int ref_type);
+
+   static ParMesh MakeDuffyRefined(ParMesh &orig_mesh, int ref_factor,
+                                   int ref_type);
 
    /** Create a mesh by splitting each element of @a orig_mesh into simplices.
        See @a Mesh::MakeSimplicial for more details. */

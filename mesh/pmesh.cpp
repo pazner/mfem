@@ -1371,10 +1371,162 @@ void ParMesh::MakeRefined_(ParMesh &orig_mesh, int ref_factor, int ref_type)
    }
 }
 
+void ParMesh::MakeDuffyRefined_(ParMesh &orig_mesh, int ref_factor,
+                                int ref_type)
+{
+   MyComm = orig_mesh.GetComm();
+   NRanks = orig_mesh.GetNRanks();
+   MyRank = orig_mesh.GetMyRank();
+   face_nbr_el_to_face = nullptr;
+   glob_elem_offset = -1;
+   glob_offset_sequence = -1;
+   gtopo = orig_mesh.gtopo;
+   have_face_nbr_data = false;
+   pncmesh = NULL;
+
+   Mesh::MakeDuffyRefined_(orig_mesh, ref_factor, ref_type);
+
+   // Need to initialize:
+   // - shared_edges
+   // - group_svert, group_sedge
+   // - svert_lvert, sedge_ledge
+
+   meshgen = orig_mesh.meshgen; // copy the global 'meshgen'
+
+   H1Duffy_FECollection rfec(ref_factor, Dim, ref_type);
+   ParFiniteElementSpace rfes(&orig_mesh, &rfec);
+
+   // count the number of entries in each row of group_s{vert,edge,face}
+   group_svert.MakeI(GetNGroups()-1); // exclude the local group 0
+   group_sedge.MakeI(GetNGroups()-1);
+   group_stria.MakeI(GetNGroups()-1);
+   group_squad.MakeI(GetNGroups()-1);
+   for (int gr = 1; gr < GetNGroups(); gr++)
+   {
+      // orig vertex -> vertex
+      group_svert.AddColumnsInRow(gr-1, orig_mesh.GroupNVertices(gr));
+      // orig edge -> (ref_factor-1) vertices and (ref_factor) edges
+      const int orig_ne = orig_mesh.GroupNEdges(gr);
+      group_svert.AddColumnsInRow(gr-1, (ref_factor-1)*orig_ne);
+      group_sedge.AddColumnsInRow(gr-1, ref_factor*orig_ne);
+      // orig face -> (?) vertices, (?) edges, and (?) faces
+      const int orig_nt = orig_mesh.GroupNTriangles(gr);
+      if (orig_nt > 0)
+      {
+         const Geometry::Type geom = Geometry::TRIANGLE;
+         const int nvert = Geometry::NumVerts[geom];
+         RefinedGeometry &RG =
+            *GlobGeometryRefiner.Refine(geom, ref_factor, ref_factor);
+
+         // count internal vertices
+         group_svert.AddColumnsInRow(gr-1, orig_nt*rfec.DofForGeometry(geom));
+         // count internal edges
+         group_sedge.AddColumnsInRow(gr-1, orig_nt*(RG.RefEdges.Size()/2-
+                                                    RG.NumBdrEdges));
+         // count refined faces
+         group_stria.AddColumnsInRow(gr-1, orig_nt*(RG.RefGeoms.Size()/nvert));
+      }
+      const int orig_nq = orig_mesh.GroupNQuadrilaterals(gr);
+      if (orig_nq > 0)
+      {
+         const Geometry::Type geom = Geometry::SQUARE;
+         const int nvert = Geometry::NumVerts[geom];
+         RefinedGeometry &RG =
+            *GlobGeometryRefiner.Refine(geom, ref_factor, ref_factor);
+
+         // count internal vertices
+         group_svert.AddColumnsInRow(gr-1, orig_nq*rfec.DofForGeometry(geom));
+         // count internal edges
+         group_sedge.AddColumnsInRow(gr-1, orig_nq*(RG.RefEdges.Size()/2-
+                                                    RG.NumBdrEdges));
+         // count refined faces
+         group_squad.AddColumnsInRow(gr-1, orig_nq*(RG.RefGeoms.Size()/nvert));
+      }
+   }
+
+   group_svert.MakeJ();
+   svert_lvert.Reserve(group_svert.Size_of_connections());
+
+   group_sedge.MakeJ();
+   shared_edges.Reserve(group_sedge.Size_of_connections());
+   sedge_ledge.SetSize(group_sedge.Size_of_connections());
+
+   group_stria.MakeJ();
+   group_squad.MakeJ();
+   shared_trias.Reserve(group_stria.Size_of_connections());
+   shared_quads.Reserve(group_squad.Size_of_connections());
+   sface_lface.SetSize(shared_trias.Size() + shared_quads.Size());
+
+   Array<int> rdofs;
+   for (int gr = 1; gr < GetNGroups(); gr++)
+   {
+      // add shared vertices from original shared vertices
+      const int orig_n_verts = orig_mesh.GroupNVertices(gr);
+      for (int j = 0; j < orig_n_verts; j++)
+      {
+         rfes.GetVertexDofs(orig_mesh.GroupVertex(gr, j), rdofs);
+         group_svert.AddConnection(gr-1, svert_lvert.Append(rdofs[0])-1);
+      }
+
+      // add refined shared edges; add shared vertices from refined shared edges
+      const int orig_n_edges = orig_mesh.GroupNEdges(gr);
+      if (orig_n_edges > 0)
+      {
+         const Geometry::Type geom = Geometry::SEGMENT;
+         const int nvert = Geometry::NumVerts[geom];
+         RefinedGeometry &RG = *GlobGeometryRefiner.Refine(geom, ref_factor);
+         const int *c2h_map = rfec.GetDofMap(geom); // FIXME hp
+
+         for (int e = 0; e < orig_n_edges; e++)
+         {
+            rfes.GetSharedEdgeDofs(gr, e, rdofs);
+            MFEM_ASSERT(rdofs.Size() == RG.RefPts.Size(), "");
+            // add the internal edge 'rdofs' as shared vertices
+            for (int j = 2; j < rdofs.Size(); j++)
+            {
+               group_svert.AddConnection(gr-1, svert_lvert.Append(rdofs[j])-1);
+            }
+            for (int j = 0; j < RG.RefGeoms.Size(); j += nvert)
+            {
+               Element *elem = NewElement(geom);
+               int *v = elem->GetVertices();
+               for (int k = 0; k < nvert; k++)
+               {
+                  int cid = RG.RefGeoms[j+k]; // local Cartesian index
+                  v[k] = rdofs[c2h_map[cid]];
+               }
+               group_sedge.AddConnection(gr-1, shared_edges.Append(elem)-1);
+            }
+         }
+      }
+   }
+   group_svert.ShiftUpI();
+   group_sedge.ShiftUpI();
+   group_stria.ShiftUpI();
+   group_squad.ShiftUpI();
+
+   FinalizeParTopo();
+
+   if (Nodes != NULL)
+   {
+      // This call will turn the Nodes into a ParGridFunction
+      SetCurvature(1, GetNodalFESpace()->IsDGSpace(), spaceDim,
+                   GetNodalFESpace()->GetOrdering());
+   }
+}
+
 ParMesh ParMesh::MakeRefined(ParMesh &orig_mesh, int ref_factor, int ref_type)
 {
    ParMesh mesh;
    mesh.MakeRefined_(orig_mesh, ref_factor, ref_type);
+   return mesh;
+}
+
+ParMesh ParMesh::MakeDuffyRefined(ParMesh &orig_mesh, int ref_factor,
+                                  int ref_type)
+{
+   ParMesh mesh;
+   mesh.MakeDuffyRefined_(orig_mesh, ref_factor, ref_type);
    return mesh;
 }
 
