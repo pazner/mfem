@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # BL3
-gmsh -format msh22 -2 BL3.geo
+gmsh -format msh22 -2 -order 3 BL3.geo -o BL3_surf.msh
 
 # visc_BGM45-15
 gmsh -format msh22 -2 visc_BGM45-15.geo -o visc_BGM45-15.msh
