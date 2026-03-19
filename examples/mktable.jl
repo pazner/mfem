@@ -73,3 +73,93 @@ function mk_h_ref_table(mesh_name)
     println(raw"   \bottomrule")
     println(raw"\end{tabular}")
 end
+
+function sci(x, digits=2)
+    if x == 0
+        return "0"
+    else
+        s = @sprintf("%0.*e", digits, x)
+        a, b = split(s, 'e')
+        return "\$ $(a) \\times 10^{$(parse(Int, b))} \$"
+    end
+end
+
+function speedup(s)
+    return @sprintf "\$ %.2f \\times \$" s
+end
+
+function mk_timing_table()
+    data = JSON.parsefile("timings_new.json")
+    df = DataFrame(data)
+
+    Ns = sort(unique(df.N))
+
+    println("\\begin{tabular}{c cc cc cc}")
+    println("   \\toprule")
+    println("   \$N\$ & Assembly & Rate & Matvec & Rate & Total & Rate \\\\")
+    println("   \\midrule")
+    for (i, N) in enumerate(Ns)
+        row = df[(df.N .== N) .& (df.pa .== false), :][1, :]
+        total = row.assemble_time + row.elapsed
+
+        if i == 1
+            a_rate = m_rate = t_rate = "---"
+        else
+            Nprev = Ns[i-1]
+            prev = df[(df.N .== Nprev) .& (df.pa .== false), :][1, :]
+
+            prev_total = prev.assemble_time + prev.elapsed
+
+            a_rate = @sprintf("%.2f", log2(row.assemble_time / prev.assemble_time))
+            m_rate = @sprintf("%.2f", log2(row.matvec_time        / prev.matvec_time))
+            t_rate = @sprintf("%.2f", log2(total             / prev_total))
+        end
+
+        @printf("   %d & %s & %s & %s & %s & %s & %s \\\\\n",
+            N,
+            sci(row.assemble_time), a_rate,
+            sci(row.matvec_time),   m_rate,
+            sci(total),             t_rate)
+    end
+    println("   \\bottomrule")
+    println("\\end{tabular}")
+
+    println()
+
+    println("\\begin{tabular}{c ccc ccc ccc}")
+    println("   \\toprule")
+    println("   \$N\$ & Assembly & Rate & Speedup & Matvec & Rate & Speedup & Total & Rate & Speedup \\\\")
+    println("   \\midrule")
+    for (i, N) in enumerate(Ns)
+        row_fa = df[(df.N .== N) .& (df.pa .== false), :][1, :]
+        total_fa = row_fa.assemble_time + row_fa.elapsed
+
+        row = df[(df.N .== N) .& (df.pa .== true), :][1, :]
+        total = row.assemble_time + row.elapsed
+
+        a_speedup = row_fa.assemble_time / row.assemble_time
+        m_speedup = row_fa.matvec_time / row.matvec_time
+        t_speedup = total_fa / total
+
+        if i == 1
+            a_rate = m_rate = t_rate = "---"
+        else
+            Nprev = Ns[i-1]
+            prev = df[(df.N .== Nprev) .& (df.pa .== true), :][1, :]
+
+            prev_total = prev.assemble_time + prev.elapsed
+
+            a_rate = @sprintf("%.2f", log2(row.assemble_time / prev.assemble_time))
+            m_rate = @sprintf("%.2f", log2(row.matvec_time        / prev.matvec_time))
+            t_rate = @sprintf("%.2f", log2(total             / prev_total))
+        end
+
+        @printf("   %d & %s & %s & %s & %s & %s & %s & %s & %s & %s \\\\\n",
+            N,
+            sci(row.assemble_time), a_rate, speedup(a_speedup),
+            sci(row.matvec_time),   m_rate, speedup(m_speedup),
+            sci(total),             t_rate, speedup(t_speedup))
+    end
+    println("   \\bottomrule")
+    println("\\end{tabular}")
+end
