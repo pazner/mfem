@@ -9,15 +9,29 @@
 // terms of the BSD-3 license. We welcome feedback and contributions, see file
 // CONTRIBUTING.md for details.
 
-// Placeholder for a parallel H(div) hybridization solver.
-// Sample run: mpirun -np 4 hb -m ../../data/inline-quad.mesh -o 2
+// Solve the div-div plus mass problem with UMFPack on one MPI rank.
+// Sample run: mpirun -np 1 hb -m ../../data/inline-quad.mesh -o 2
 
 #include "mfem.hpp"
 #include "hb.hpp"
+#include <cmath>
 #include <iostream>
 
 using namespace mfem;
 using namespace std;
+
+void ExactSolution(const Vector &x, Vector &u)
+{
+   u = 0.0;
+   u(0) = cos(M_PI*x(0))*sin(M_PI*x(1));
+   u(1) = cos(M_PI*x(1))*sin(M_PI*x(0));
+}
+
+void RightHandSide(const Vector &x, Vector &f)
+{
+   ExactSolution(x, f);
+   f *= 1.0 + 2.0*M_PI*M_PI;
+}
 
 int main(int argc, char *argv[])
 {
@@ -44,16 +58,39 @@ int main(int argc, char *argv[])
    const HYPRE_BigInt n_global_dofs = fes_rt.GlobalTrueVSize();
    if (Mpi::Root()) { cout << "Global RT DOFs: " << n_global_dofs << '\n'; }
 
-   BrokenSpace fes_hat(fes_rt);
+   MFEM_VERIFY(Mpi::WorldSize() == 1, "");
 
-   // Array<int> ess_vdofs, ess_tdofs;
-   // if (mesh.bdr_attributes.Size())
-   // {
-   //    Array<int> ess_bdr(mesh.bdr_attributes.Max());
-   //    ess_bdr = 1;
-   //    fes_rt.GetEssentialVDofs(ess_bdr, ess_vdofs);
-   //    fes_rt.GetEssentialTrueDofs(ess_bdr, ess_tdofs);
-   // }
+   VectorFunctionCoefficient exact_coeff(dim, ExactSolution);
+   VectorFunctionCoefficient rhs_coeff(dim, RightHandSide);
+
+   Array<int> ess_tdofs;
+   fes_rt.GetBoundaryTrueDofs(ess_tdofs);
+
+   ParGridFunction x(&fes_rt);
+   x.ProjectCoefficient(exact_coeff);
+
+   ParLinearForm b(&fes_rt);
+   b.AddDomainIntegrator(new VectorFEDomainLFIntegrator(rhs_coeff));
+   b.Assemble();
+
+   ParBilinearForm a(&fes_rt);
+   a.AddDomainIntegrator(new DivDivIntegrator);
+   a.AddDomainIntegrator(new VectorFEMassIntegrator);
+   a.Assemble();
+
+   OperatorPtr A;
+   Vector B, X;
+   a.FormLinearSystem(ess_tdofs, x, b, A, X, B);
+
+   // On one rank, the diagonal block is the entire parallel matrix.
+   SparseMatrix A_serial;
+   A.As<HypreParMatrix>()->GetDiag(A_serial);
+   UMFPackSolver solver;
+   solver.SetOperator(A_serial);
+   solver.Mult(B, X);
+
+   a.RecoverFEMSolution(X, b, x);
+   cout << "L2 error: " << x.ComputeL2Error(exact_coeff) << '\n';
 
    return 0;
 }

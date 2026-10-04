@@ -55,6 +55,13 @@ struct BrokenSpace
       fes.GroupComm().Reduce<int>(multiplicity, GroupCommunicator::Sum);
       fes.GroupComm().Bcast(multiplicity);
 
+      // Compute offsets for the broken space.
+      HYPRE_BigInt size = restriction.Height();
+      Array<HYPRE_BigInt> flux_offsets;
+      Array<HYPRE_BigInt> *partitions[] = { &flux_offsets };
+      fes.GetParMesh()->GenerateOffsets(1, &size, partitions);
+      num_global_flux_dofs = flux_offsets[2];
+
       // Same-order RT and DG interface spaces share local face DOF numbering:
       // the RT element-interior DOFs follow this common prefix. The interface
       // restriction selects interior faces, including shared faces, without
@@ -80,13 +87,6 @@ struct BrokenSpace
          }
          else if (owned >= 0) { inactive_trace.Append(owned); }
       }
-
-      // Only the broken-flux partition needs separate numbering.
-      HYPRE_BigInt size = restriction.Height();
-      Array<HYPRE_BigInt> flux_offsets;
-      Array<HYPRE_BigInt> *partitions[] = { &flux_offsets };
-      fes.GetParMesh()->GenerateOffsets(1, &size, partitions);
-      num_global_flux_dofs = flux_offsets[2];
 
       SparseMatrix local_Ct(dofs.Size(), trace_fes.GetVSize());
       for (int i = 0; i < dofs.Size(); ++i)
