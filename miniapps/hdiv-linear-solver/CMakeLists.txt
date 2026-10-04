@@ -10,6 +10,11 @@
 # CONTRIBUTING.md for details.
 
 if (MFEM_USE_MPI)
+  add_mfem_miniapp(hb
+    MAIN hb.cpp
+    EXTRA_HEADERS hb.hpp
+    LIBRARIES mfem)
+
   add_mfem_miniapp(darcy
     MAIN darcy.cpp
     EXTRA_SOURCES change_basis.cpp discrete_divergence.cpp hdiv_linear_solver.cpp

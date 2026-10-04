@@ -26,7 +26,7 @@ HDIV_SRC = hdiv_linear_solver.cpp change_basis.cpp discrete_divergence.cpp
 HDIV_OBJ = $(HDIV_SRC:.cpp=.o)
 
 SEQ_MINIAPPS =
-PAR_MINIAPPS = grad_div darcy
+PAR_MINIAPPS = grad_div darcy hb
 
 ifeq ($(MFEM_USE_MPI),NO)
    MINIAPPS = $(SEQ_MINIAPPS)
@@ -50,6 +50,8 @@ $(MINIAPPS):%: %.o $(HDIV_OBJ)
 
 %.o: $(SRC)%.cpp $(MFEM_LIB_FILE) $(CONFIG_MK)
 	$(MFEM_CXX) $(MFEM_FLAGS) -c $< -o $@
+
+hb.o: $(SRC)hb.hpp
 
 MFEM_TESTS = MINIAPPS
 include $(MFEM_TEST_MK)
