@@ -130,6 +130,18 @@ struct BrokenSpace
          if (tdof >= 0 && multiplicity[d]) { x(tdof) /= multiplicity[d]; }
       }
    }
+
+   // R^T = P D^{-1}, the transpose of Average.
+   void AverageTranspose(const Vector &x, Vector &broken) const
+   {
+      Vector scaled(x);
+      for (int d = 0; d < multiplicity.Size(); ++d)
+      {
+         const int tdof = fes.GetLocalTDofNumber(d);
+         if (tdof >= 0 && multiplicity[d]) { scaled(tdof) /= multiplicity[d]; }
+      }
+      Prolongate(scaled, broken);
+   }
 };
 
 } // namespace mfem

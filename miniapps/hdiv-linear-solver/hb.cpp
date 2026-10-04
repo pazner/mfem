@@ -72,6 +72,8 @@ int main(int argc, char *argv[])
    ParLinearForm b(&fes_rt);
    b.AddDomainIntegrator(new VectorFEDomainLFIntegrator(rhs_coeff));
    b.Assemble();
+   Vector f;
+   b.ParallelAssemble(f); // Save the load before essential elimination.
 
    ParBilinearForm a(&fes_rt);
    a.AddDomainIntegrator(new DivDivIntegrator);
@@ -91,6 +93,66 @@ int main(int argc, char *argv[])
 
    a.RecoverFEMSolution(X, b, x);
    cout << "L2 error: " << x.ComputeL2Error(exact_coeff) << '\n';
+
+   BrokenSpace space(fes_rt);
+   Array<int> offsets({0, space.restriction.Height(),
+                       space.restriction.Height()+space.trace_fes.GetTrueVSize()});
+   BlockVector rhs(offsets), solution(offsets);
+   rhs = 0.0;
+   solution = 0.0;
+
+   space.AverageTranspose(f, rhs.GetBlock(0));
+   space.restriction.Mult(x, solution.GetBlock(0));
+
+   SparseMatrix A_hat(offsets[1]);
+   DenseMatrix element_matrix;
+   Array<int> element_dofs(space.nd);
+   for (int e = 0; e < fes_rt.GetNE(); ++e)
+   {
+      a.ComputeElementMatrix(e, element_matrix);
+      for (int i = 0; i < space.nd; ++i) { element_dofs[i] = e*space.nd+i; }
+      A_hat.AddSubMatrix(element_dofs, element_dofs, element_matrix);
+   }
+   A_hat.Finalize();
+
+   SparseMatrix Ct, inactive(space.trace_fes.GetTrueVSize());
+   space.Ct->GetDiag(Ct);
+   unique_ptr<SparseMatrix> C(Transpose(Ct));
+   for (int td : space.inactive_trace) { inactive.Add(td, td, 1.0); }
+   inactive.Finalize();
+   BlockMatrix K(offsets);
+   K.SetBlock(0, 0, &A_hat);
+   K.SetBlock(0, 1, &Ct);
+   K.SetBlock(1, 0, C.get());
+   K.SetBlock(1, 1, &inactive);
+   unique_ptr<SparseMatrix> K_serial(K.CreateMonolithic());
+
+   Vector essential(fes_rt.GetTrueVSize()), broken_essential;
+   essential = 0.0;
+   for (int td : ess_tdofs) { essential(td) = 1.0; }
+   space.Prolongate(essential, broken_essential);
+   for (int i = 0; i < broken_essential.Size(); ++i)
+   {
+      if (broken_essential(i) != 0.0)
+      {
+         K_serial->EliminateRowCol(i, solution(i), rhs);
+      }
+   }
+   solver.SetOperator(*K_serial);
+   solver.Mult(rhs, solution);
+
+   Vector recovered, difference(X), residual(rhs.Size()), jump(space.C->Height());
+   space.Average(solution.GetBlock(0), recovered);
+   difference -= recovered;
+   K_serial->Mult(solution, residual);
+   residual -= rhs;
+   space.C->Mult(solution.GetBlock(0), jump);
+   const real_t error = difference.Norml2()/max(real_t(1.0), X.Norml2());
+   cout << "HB relative solution difference: " << error
+        << "\nHB relative residual: "
+        << residual.Norml2()/max(real_t(1.0), rhs.Norml2())
+        << "\nHB continuity residual: " << jump.Norml2() << '\n';
+   MFEM_VERIFY(error < 1e-10, "HB solution differs from the conforming solve.");
 
    return 0;
 }
