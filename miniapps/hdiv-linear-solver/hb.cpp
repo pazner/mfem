@@ -94,60 +94,72 @@ int main(int argc, char *argv[])
    a.RecoverFEMSolution(X, b, x);
    cout << "L2 error: " << x.ComputeL2Error(exact_coeff) << '\n';
 
-   BrokenSpace space(fes_rt);
-   Array<int> offsets({0, space.restriction.Height(),
-                       space.restriction.Height()+space.trace_fes.GetTrueVSize()});
+   BrokenSpace fes_hat(fes_rt);
+   Array<int> offsets({0, fes_hat.GetNumBrokenDofs(),
+                       fes_hat.GetNumBrokenDofs() + fes_hat.GetNumTraceDofs()});
    BlockVector rhs(offsets), solution(offsets);
    rhs = 0.0;
    solution = 0.0;
 
-   space.AverageTranspose(f, rhs.GetBlock(0));
-   space.restriction.Mult(x, solution.GetBlock(0));
+   fes_hat.AverageTranspose(f, rhs.GetBlock(0));
+   fes_hat.LocalProlongate(x, solution.GetBlock(0));
 
    SparseMatrix A_hat(offsets[1]);
    DenseMatrix element_matrix;
-   Array<int> element_dofs(space.nd);
+   const int nd = fes_hat.GetNumDofsPerElem();
+   Array<int> element_dofs(nd);
    for (int e = 0; e < fes_rt.GetNE(); ++e)
    {
       a.ComputeElementMatrix(e, element_matrix);
-      for (int i = 0; i < space.nd; ++i) { element_dofs[i] = e*space.nd+i; }
+      for (int i = 0; i < nd; ++i) { element_dofs[i] = e*nd+i; }
       A_hat.AddSubMatrix(element_dofs, element_dofs, element_matrix);
    }
    A_hat.Finalize();
 
-   SparseMatrix Ct, inactive(space.trace_fes.GetTrueVSize());
-   space.Ct->GetDiag(Ct);
-   unique_ptr<SparseMatrix> C(Transpose(Ct));
-   for (int td : space.inactive_trace) { inactive.Add(td, td, 1.0); }
+   HypreParMatrix &C_par = fes_hat.GetC();
+   HypreParMatrix &Ct_par = fes_hat.GetCt();
+   SparseMatrix C, Ct;
+   C_par.GetDiag(C);
+   Ct_par.GetDiag(Ct);
+
+   SparseMatrix inactive(fes_hat.GetNumTraceDofs());
+   for (int td : fes_hat.GetInactiveTraceDofs()) { inactive.Add(td, td, 1.0); }
    inactive.Finalize();
    BlockMatrix K(offsets);
    K.SetBlock(0, 0, &A_hat);
    K.SetBlock(0, 1, &Ct);
-   K.SetBlock(1, 0, C.get());
+   K.SetBlock(1, 0, &C);
    K.SetBlock(1, 1, &inactive);
-   unique_ptr<SparseMatrix> K_serial(K.CreateMonolithic());
+   unique_ptr<SparseMatrix> K_mat(K.CreateMonolithic());
 
    Vector essential(fes_rt.GetTrueVSize()), broken_essential;
    essential = 0.0;
    for (int td : ess_tdofs) { essential(td) = 1.0; }
-   space.Prolongate(essential, broken_essential);
+   fes_hat.Prolongate(essential, broken_essential);
    for (int i = 0; i < broken_essential.Size(); ++i)
    {
       if (broken_essential(i) != 0.0)
       {
-         K_serial->EliminateRowCol(i, solution(i), rhs);
+         K_mat->EliminateRowCol(i, solution(i), rhs);
       }
    }
-   solver.SetOperator(*K_serial);
+   solver.SetOperator(*K_mat);
    solver.Mult(rhs, solution);
 
-   Vector recovered, difference(X), residual(rhs.Size()), jump(space.C->Height());
-   space.Average(solution.GetBlock(0), recovered);
+   Vector recovered;
+   fes_hat.Average(solution.GetBlock(0), recovered);
+
+   Vector difference = X;
    difference -= recovered;
-   K_serial->Mult(solution, residual);
-   residual -= rhs;
-   space.C->Mult(solution.GetBlock(0), jump);
    const real_t error = difference.Norml2()/max(real_t(1.0), X.Norml2());
+
+   Vector residual(K_mat->Height());
+   K_mat->Mult(solution, residual);
+   residual -= rhs;
+
+   Vector jump(fes_hat.GetNumTraceDofs());
+   C.Mult(solution.GetBlock(0), jump);
+
    cout << "HB relative solution difference: " << error
         << "\nHB relative residual: "
         << residual.Norml2()/max(real_t(1.0), rhs.Norml2())

@@ -17,7 +17,7 @@ namespace mfem
 
 inline real_t Sign(int d) { return d < 0 ? -1.0 : 1.0; }
 
-struct BrokenSpace
+class BrokenSpace
 {
    ParFiniteElementSpace &fes;
    // The DG interface space supplies face numbering, not a weak trace basis:
@@ -35,6 +35,7 @@ struct BrokenSpace
    std::unique_ptr<HypreParMatrix> Ct;
    std::unique_ptr<HypreParMatrix> C;
 
+public:
    BrokenSpace(ParFiniteElementSpace &fes_)
       : fes(fes_), trace_fec(fes.GetMaxElementOrder()-1, fes.GetMesh()->Dimension()),
         trace_fes(fes.GetParMesh(), &trace_fec),
@@ -105,12 +106,47 @@ struct BrokenSpace
       C.reset(Ct->Transpose());
    }
 
+   int GetNumBrokenDofs() const
+   {
+      return restriction.Height();
+   }
+
+   int GetNumTraceDofs() const
+   {
+      return trace_fes.GetTrueVSize();
+   }
+
+   int GetNumDofsPerElem() const
+   {
+      return nd;
+   }
+
+   HypreParMatrix &GetC()
+   {
+      return *C;
+   }
+
+   HypreParMatrix &GetCt()
+   {
+      return *Ct;
+   }
+
+   const Array<int> &GetInactiveTraceDofs() const
+   {
+      return inactive_trace;
+   }
+
+   void LocalProlongate(const Vector &x, Vector &broken) const
+   {
+      broken.SetSize(restriction.Height());
+      restriction.Mult(x, broken);
+   }
+
    void Prolongate(const Vector &x, Vector &broken) const
    {
       Vector conforming(fes.GetVSize());
       prolongation.Mult(x, conforming);
-      broken.SetSize(restriction.Height());
-      restriction.Mult(conforming, broken);
+      LocalProlongate(conforming, broken);
    }
 
    void Assemble(const Vector &broken, Vector &x) const
