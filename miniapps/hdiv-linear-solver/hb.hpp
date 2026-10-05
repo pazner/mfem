@@ -33,7 +33,7 @@ struct BrokenSpace
    Array<HYPRE_BigInt> trace_global;
    const HypreParMatrix &trace_prolongation;
    std::unique_ptr<HypreParMatrix> Ct;
-   std::unique_ptr<TransposeOperator> C;
+   std::unique_ptr<HypreParMatrix> C;
 
    BrokenSpace(ParFiniteElementSpace &fes_)
       : fes(fes_), trace_fec(fes.GetMaxElementOrder()-1, fes.GetMesh()->Dimension()),
@@ -102,7 +102,7 @@ struct BrokenSpace
                                  trace_fes.GlobalVSize(), flux_offsets.GetData(),
                                  trace_fes.GetDofOffsets(), &local_Ct);
       Ct.reset(ParMult(&parallel_Ct, &trace_prolongation, true));
-      C.reset(new TransposeOperator(Ct.get()));
+      C.reset(Ct->Transpose());
    }
 
    void Prolongate(const Vector &x, Vector &broken) const
