@@ -13,6 +13,7 @@
 #define MFEM_HDIV_HB_HPP
 
 #include "discrete_divergence.hpp"
+#include <vector>
 
 namespace mfem
 {
@@ -317,6 +318,43 @@ public:
       F_inverse_Et->AddMult(z2, y);
    }
 };
+
+/// Apply element inverses in native, element-contiguous broken coordinates.
+class BrokenElementSolver : public Solver
+{
+   DenseTensor lu;
+   Array<int> pivots;
+   std::vector<LUFactors> factors;
+
+public:
+   BrokenElementSolver(BilinearForm &a)
+      : Solver(0), lu(a.GetElementMatrices()),
+        pivots(lu.SizeI()*lu.SizeK()), factors(lu.SizeK())
+   {
+      const int nd = lu.SizeI();
+      height = width = nd*lu.SizeK();
+      for (int e = 0; e < lu.SizeK(); ++e)
+      {
+         factors[e] = LUFactors(lu.GetData(e), pivots.GetData()+e*nd);
+         MFEM_VERIFY(factors[e].Factor(nd),
+                     "Singular element matrix on element " << e);
+      }
+   }
+
+   BrokenElementSolver(const BrokenElementSolver &) = delete;
+   BrokenElementSolver &operator=(const BrokenElementSolver &) = delete;
+
+   void SetOperator(const Operator &) override { }
+
+   void Mult(const Vector &x, Vector &y) const override
+   {
+      y = x;
+      real_t *data = y.HostReadWrite();
+      const int nd = lu.SizeI();
+      for (int e = 0; e < lu.SizeK(); ++e)
+      {
+         factors[e].Solve(nd, 1, data+e*nd);
+      }
    }
 };
 
