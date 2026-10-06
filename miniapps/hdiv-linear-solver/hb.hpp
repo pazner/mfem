@@ -239,15 +239,22 @@ inline HypreParMatrix *AssembleGraphLaplacian(
 
 class GraphPreconditioner : public Solver
 {
+   Vector F_inverse;
+   std::unique_ptr<HypreParMatrix> F_inverse_Et;
    std::unique_ptr<HypreParMatrix> S;
-   std::unique_ptr<HypreBoomerAMG> S_inv;
+   std::unique_ptr<SparseMatrix> S_serial;
+   std::unique_ptr<Solver> S_inv;
    mutable Vector z1, z2;
 
 public:
-   Vector F_inverse;
-   std::unique_ptr<HypreParMatrix> F_inverse_Et;
 
-   GraphPreconditioner(BrokenSpace &fes_hat)
+   enum SolverType
+   {
+      AMG,
+      DIRECT
+   };
+
+   GraphPreconditioner(BrokenSpace &fes_hat, SolverType stype=AMG)
       : Solver(fes_hat.GetNumTraceDofs()), F_inverse(height)
    {
       ParFiniteElementSpace &fes_rt = fes_hat.GetFESpace();
@@ -315,9 +322,17 @@ public:
       Array<int> ess_rt_dofs;
       fes_rt.GetBoundaryTrueDofs(ess_rt_dofs);
       S.reset(AssembleGraphLaplacian(fes_rt, scalar_fes, ess_rt_dofs));
-      S_inv.reset(new HypreBoomerAMG(*S));
-      S_inv->SetPrintLevel(0);
-      S_inv->SetRelaxType(18); // Symmetric l1-Jacobi for MINRES.
+
+      if (stype == AMG)
+      {
+         S_inv.reset(new HypreBoomerAMG(*S));
+      }
+      else
+      {
+         S_serial = std::make_unique<SparseMatrix>();
+         S->GetDiag(*S_serial);
+         S_inv.reset(new UMFPackSolver(*S_serial));
+      }
       z1.SetSize(S->Height());
       z2.SetSize(S->Height());
    }

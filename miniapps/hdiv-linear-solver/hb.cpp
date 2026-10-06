@@ -41,11 +41,14 @@ int main(int argc, char *argv[])
    const char *mesh_file = "../../data/inline-quad.mesh";
    int order = 1;
    int ref = 0;
+   bool direct_solver = false;
 
    OptionsParser args(argc, argv);
    args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use.");
    args.AddOption(&order, "-o", "--order", "Polynomial degree.");
    args.AddOption(&ref, "-r", "--refine", "Mesh refinements.");
+   args.AddOption(&direct_solver, "-d", "--direct", "-a",
+                  "--amg", "Direct solver or AMG for HB system.");
    args.ParseCheck();
 
    ParMesh mesh = [&]()
@@ -142,7 +145,9 @@ int main(int argc, char *argv[])
       K_mat->EliminateRowCol(i, solution(i), rhs);
    }
    BrokenElementSolver element_inverse(a, ess_broken_dofs);
-   GraphPreconditioner trace_inverse(fes_hat);
+   auto stype = direct_solver ? GraphPreconditioner::DIRECT :
+                GraphPreconditioner::AMG;
+   GraphPreconditioner trace_inverse(fes_hat, stype);
    BlockDiagonalPreconditioner preconditioner(offsets);
    preconditioner.SetDiagonalBlock(0, &element_inverse);
    preconditioner.SetDiagonalBlock(1, &trace_inverse);
