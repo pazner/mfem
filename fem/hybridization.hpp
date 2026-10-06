@@ -174,6 +174,10 @@ public:
    /// Finalize the construction of the hybridized matrix.
    void Finalize();
 
+   /// Return the local constraint transpose, built by Init() on the host path.
+   SparseMatrix &GetConstraintTranspose() { return *Ct; }
+   const SparseMatrix &GetConstraintTranspose() const { return *Ct; }
+
    /// Return the serial hybridized matrix.
    SparseMatrix &GetMatrix() { return *H; }
 
