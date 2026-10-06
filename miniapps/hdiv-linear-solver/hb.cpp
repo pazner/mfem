@@ -9,8 +9,8 @@
 // terms of the BSD-3 license. We welcome feedback and contributions, see file
 // CONTRIBUTING.md for details.
 
-// Compare the hybridized MINRES solve with UMFPack on one MPI rank.
-// Sample run: mpirun -np 1 hb -m ../../data/inline-quad.mesh -o 2
+// Solve the hybridized system with MINRES; optional serial UMFPack comparison.
+// Sample run: mpirun -np 2 hb -m ../../data/inline-quad.mesh -o 2
 
 #include "mfem.hpp"
 #include "hb.hpp"
@@ -53,6 +53,8 @@ int main(int argc, char *argv[])
    args.AddOption(&run_comparison, "-c", "--compare", "-no-c",
                   "--no-comparison", "Compare with standard RT system.");
    args.ParseCheck();
+   MFEM_VERIFY(!direct_solver || Mpi::WorldSize() == 1,
+               "The direct solver requires one MPI rank.");
 
    ParMesh mesh = [&]()
    {
@@ -79,7 +81,7 @@ int main(int argc, char *argv[])
    ParLinearForm b(&fes_rt);
    b.AddDomainIntegrator(new VectorFEDomainLFIntegrator(rhs_coeff));
    b.Assemble();
-   Vector f;
+   Vector f(fes_rt.GetTrueVSize());
    b.ParallelAssemble(f); // Save the load before essential elimination.
 
    ParBilinearForm a(&fes_rt);
@@ -129,28 +131,22 @@ int main(int argc, char *argv[])
    }
    A_hat.Finalize();
 
-   HypreParMatrix &C_par = fes_hat.GetC();
-   HypreParMatrix &Ct_par = fes_hat.GetCt();
-   SparseMatrix C, Ct;
-   C_par.GetDiag(C);
-   Ct_par.GetDiag(Ct);
+   HypreParMatrix &C = fes_hat.GetC();
+   HypreParMatrix &Ct = fes_hat.GetCt();
 
    SparseMatrix inactive(fes_hat.GetNumTraceDofs());
    for (int td : fes_hat.GetInactiveTraceDofs()) { inactive.Add(td, td, 1.0); }
    inactive.Finalize();
-   BlockMatrix K(offsets);
+   BlockOperator K(offsets);
    K.SetBlock(0, 0, &A_hat);
    K.SetBlock(0, 1, &Ct);
    K.SetBlock(1, 0, &C);
    K.SetBlock(1, 1, &inactive);
-   unique_ptr<SparseMatrix> K_mat(K.CreateMonolithic());
 
    Array<int> ess_broken_dofs;
    fes_hat.GetBrokenEssentialDofs(ess_tdofs, ess_broken_dofs);
-   for (int i : ess_broken_dofs)
-   {
-      K_mat->EliminateRowCol(i, solution(i), rhs);
-   }
+   ConstrainedOperator constrained_K(&K, ess_broken_dofs);
+   constrained_K.EliminateRHS(solution, rhs);
    BrokenElementSolver element_inverse(a, ess_broken_dofs);
    auto stype = direct_solver ? GraphPreconditioner::DIRECT :
                 GraphPreconditioner::AMG;
@@ -160,7 +156,7 @@ int main(int argc, char *argv[])
    preconditioner.SetDiagonalBlock(1, &trace_inverse);
    MINRESSolver minres(MPI_COMM_WORLD);
    minres.SetPreconditioner(preconditioner);
-   minres.SetOperator(*K_mat);
+   minres.SetOperator(constrained_K);
    minres.SetRelTol(1e-10);
    minres.SetAbsTol(0.0);
    minres.SetMaxIter(1000);
@@ -176,8 +172,8 @@ int main(int argc, char *argv[])
       difference -= recovered;
       const real_t error = difference.Norml2()/max(real_t(1.0), X.Norml2());
 
-      Vector residual(K_mat->Height());
-      K_mat->Mult(solution, residual);
+      Vector residual(constrained_K.Height());
+      constrained_K.Mult(solution, residual);
       residual -= rhs;
 
       Vector jump(fes_hat.GetNumTraceDofs());
