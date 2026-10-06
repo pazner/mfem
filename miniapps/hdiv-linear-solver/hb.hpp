@@ -245,15 +245,12 @@ class GraphPreconditioner : public Solver
    std::unique_ptr<SparseMatrix> S_serial;
    std::unique_ptr<Solver> S_inv;
    mutable Vector z1, z2;
-
 public:
-
    enum SolverType
    {
       AMG,
       DIRECT
    };
-
    GraphPreconditioner(BrokenSpace &fes_hat, SolverType stype=AMG)
       : Solver(fes_hat.GetNumTraceDofs()), F_inverse(height)
    {

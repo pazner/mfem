@@ -42,6 +42,7 @@ int main(int argc, char *argv[])
    int order = 1;
    int ref = 0;
    bool direct_solver = false;
+   bool run_comparison = false;
 
    OptionsParser args(argc, argv);
    args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use.");
@@ -49,6 +50,8 @@ int main(int argc, char *argv[])
    args.AddOption(&ref, "-r", "--refine", "Mesh refinements.");
    args.AddOption(&direct_solver, "-d", "--direct", "-a",
                   "--amg", "Direct solver or AMG for HB system.");
+   args.AddOption(&run_comparison, "-c", "--compare", "-no-c",
+                  "--no-comparison", "Compare with standard RT system.");
    args.ParseCheck();
 
    ParMesh mesh = [&]()
@@ -63,8 +66,6 @@ int main(int argc, char *argv[])
    ParFiniteElementSpace fes_rt(&mesh, &fec);
    const HYPRE_BigInt n_global_dofs = fes_rt.GlobalTrueVSize();
    if (Mpi::Root()) { cout << "Global RT DOFs: " << n_global_dofs << '\n'; }
-
-   MFEM_VERIFY(Mpi::WorldSize() == 1, "");
 
    VectorFunctionCoefficient exact_coeff(dim, ExactSolution);
    VectorFunctionCoefficient rhs_coeff(dim, RightHandSide);
@@ -86,19 +87,25 @@ int main(int argc, char *argv[])
    a.AddDomainIntegrator(new VectorFEMassIntegrator);
    a.Assemble();
 
-   OperatorPtr A;
    Vector B, X;
-   a.FormLinearSystem(ess_tdofs, x, b, A, X, B);
 
-   // On one rank, the diagonal block is the entire parallel matrix.
-   SparseMatrix A_serial;
-   A.As<HypreParMatrix>()->GetDiag(A_serial);
-   UMFPackSolver solver;
-   solver.SetOperator(A_serial);
-   solver.Mult(B, X);
+   if (run_comparison)
+   {
+      MFEM_VERIFY(Mpi::WorldSize() == 1, "");
 
-   a.RecoverFEMSolution(X, b, x);
-   cout << "L2 error: " << x.ComputeL2Error(exact_coeff) << '\n';
+      OperatorPtr A;
+      a.FormLinearSystem(ess_tdofs, x, b, A, X, B);
+
+      // On one rank, the diagonal block is the entire parallel matrix.
+      SparseMatrix A_serial;
+      A.As<HypreParMatrix>()->GetDiag(A_serial);
+      UMFPackSolver solver;
+      solver.SetOperator(A_serial);
+      solver.Mult(B, X);
+
+      a.RecoverFEMSolution(X, b, x);
+      cout << "L2 error: " << x.ComputeL2Error(exact_coeff) << '\n';
+   }
 
    BrokenSpace fes_hat(fes_rt);
    Array<int> offsets({0, fes_hat.GetNumBrokenDofs(),
@@ -160,26 +167,29 @@ int main(int argc, char *argv[])
    minres.SetPrintLevel(1);
    minres.Mult(rhs, solution);
 
-   Vector recovered;
-   fes_hat.Average(solution.GetBlock(0), recovered);
+   if (run_comparison)
+   {
+      Vector recovered;
+      fes_hat.Average(solution.GetBlock(0), recovered);
 
-   Vector difference = X;
-   difference -= recovered;
-   const real_t error = difference.Norml2()/max(real_t(1.0), X.Norml2());
+      Vector difference = X;
+      difference -= recovered;
+      const real_t error = difference.Norml2()/max(real_t(1.0), X.Norml2());
 
-   Vector residual(K_mat->Height());
-   K_mat->Mult(solution, residual);
-   residual -= rhs;
+      Vector residual(K_mat->Height());
+      K_mat->Mult(solution, residual);
+      residual -= rhs;
 
-   Vector jump(fes_hat.GetNumTraceDofs());
-   C.Mult(solution.GetBlock(0), jump);
+      Vector jump(fes_hat.GetNumTraceDofs());
+      C.Mult(solution.GetBlock(0), jump);
 
-   cout << "HB MINRES iterations: " << minres.GetNumIterations()
-        << "\nHB relative solution difference: " << error
-        << "\nHB relative residual: "
-        << residual.Norml2()/max(real_t(1.0), rhs.Norml2())
-        << "\nHB continuity residual: " << jump.Norml2() << '\n';
-   // MFEM_VERIFY(error < 1e-10, "HB solution differs from the conforming solve.");
+      cout << "HB MINRES iterations: " << minres.GetNumIterations()
+           << "\nHB relative solution difference: " << error
+           << "\nHB relative residual: "
+           << residual.Norml2()/max(real_t(1.0), rhs.Norml2())
+           << "\nHB continuity residual: " << jump.Norml2() << '\n';
+      // MFEM_VERIFY(error < 1e-10, "HB solution differs from the conforming solve.");
+   }
 
    return 0;
 }
