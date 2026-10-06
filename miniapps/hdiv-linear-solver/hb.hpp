@@ -154,6 +154,21 @@ public:
       LocalProlongate(conforming, broken);
    }
 
+   /// Map conforming essential true DOFs to native broken DOF indices.
+   void GetBrokenEssentialDofs(const Array<int> &ess_tdofs,
+                               Array<int> &ess_broken_dofs) const
+   {
+      Vector essential(fes.GetTrueVSize()), broken_essential;
+      essential = 0.0;
+      for (int td : ess_tdofs) { essential(td) = 1.0; }
+      Prolongate(essential, broken_essential);
+      ess_broken_dofs.SetSize(0);
+      for (int i = 0; i < broken_essential.Size(); ++i)
+      {
+         if (broken_essential(i) != 0.0) { ess_broken_dofs.Append(i); }
+      }
+   }
+
    void Assemble(const Vector &broken, Vector &x) const
    {
       Vector conforming(fes.GetVSize());
@@ -301,6 +316,8 @@ public:
       fes_rt.GetBoundaryTrueDofs(ess_rt_dofs);
       S.reset(AssembleGraphLaplacian(fes_rt, scalar_fes, ess_rt_dofs));
       S_inv.reset(new HypreBoomerAMG(*S));
+      S_inv->SetPrintLevel(0);
+      S_inv->SetRelaxType(18); // Symmetric l1-Jacobi for MINRES.
       z1.SetSize(S->Height());
       z2.SetSize(S->Height());
    }
@@ -320,6 +337,7 @@ public:
 };
 
 /// Apply element inverses in native, element-contiguous broken coordinates.
+/// Essential DOFs use the same broken numbering and are constrained before LU.
 class BrokenElementSolver : public Solver
 {
    DenseTensor lu;
@@ -327,12 +345,19 @@ class BrokenElementSolver : public Solver
    std::vector<LUFactors> factors;
 
 public:
-   BrokenElementSolver(BilinearForm &a)
+   BrokenElementSolver(BilinearForm &a,
+                       const Array<int> &ess_dofs = Array<int>())
       : Solver(0), lu(a.GetElementMatrices()),
         pivots(lu.SizeI()*lu.SizeK()), factors(lu.SizeK())
    {
       const int nd = lu.SizeI();
       height = width = nd*lu.SizeK();
+      for (int d : ess_dofs)
+      {
+         const int e = d/nd, j = d%nd;
+         for (int i = 0; i < nd; ++i) { lu(i,j,e) = lu(j,i,e) = 0.0; }
+         lu(j,j,e) = 1.0;
+      }
       for (int e = 0; e < lu.SizeK(); ++e)
       {
          factors[e] = LUFactors(lu.GetData(e), pivots.GetData()+e*nd);
