@@ -165,6 +165,15 @@ void FormElementToFace3D(int order, Array<int> &element2face)
    }
 }
 
+void FormElementToFace(int dim, int order, Array<int> &element2face)
+{
+   MFEM_VERIFY(dim == 2 || dim == 3, "Unsupported dimension.");
+   const int nvol = dim == 2 ? order*order : order*order*order;
+   element2face.SetSize(2*dim*nvol);
+   if (dim == 2) { FormElementToFace2D(order, element2face); }
+   else { FormElementToFace3D(order, element2face); }
+}
+
 HypreParMatrix *FormDiscreteDivergenceMatrix(ParFiniteElementSpace &fes_rt,
                                              ParFiniteElementSpace &fes_l2,
                                              const Array<int> &ess_dofs)
@@ -193,11 +202,7 @@ HypreParMatrix *FormDiscreteDivergenceMatrix(ParFiniteElementSpace &fes_rt,
    // macro element, subelement i (in lexicographic ordering) has faces (also
    // in lexicographic order) given by the entries (j, i).
    Array<int> element2face;
-   element2face.SetSize(2*dim*nvol_per_el);
-
-   if (dim == 2) { FormElementToFace2D(order, element2face); }
-   else if (dim == 3) { FormElementToFace3D(order, element2face); }
-   else { MFEM_ABORT("Unsupported dimension.") }
+   FormElementToFace(dim, order, element2face);
 
    const ElementDofOrdering ordering = ElementDofOrdering::LEXICOGRAPHIC;
    const auto *R_rt = dynamic_cast<const ElementRestriction*>(

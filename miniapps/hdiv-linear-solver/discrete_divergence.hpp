@@ -23,6 +23,9 @@ namespace mfem
 /// are eliminated.
 void EliminateColumns(HypreParMatrix &D, const Array<int> &ess_dofs);
 
+/// Form the signed lexicographic subcell-to-face map for a tensor element.
+void FormElementToFace(int dim, int order, Array<int> &element2face);
+
 HypreParMatrix *FormDiscreteDivergenceMatrix(ParFiniteElementSpace &fes_rt,
                                              ParFiniteElementSpace &fes_l2,
                                              const Array<int> &ess_dofs);

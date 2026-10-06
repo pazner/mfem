@@ -12,6 +12,8 @@
 #ifndef MFEM_HDIV_HB_HPP
 #define MFEM_HDIV_HB_HPP
 
+#include "discrete_divergence.hpp"
+
 namespace mfem
 {
 
@@ -111,6 +113,8 @@ public:
       return restriction.Height();
    }
 
+   ParFiniteElementSpace &GetFESpace() const { return fes; }
+
    int GetNumTraceDofs() const
    {
       return trace_fes.GetTrueVSize();
@@ -177,6 +181,79 @@ public:
          if (tdof >= 0 && multiplicity[d]) { scaled(tdof) /= multiplicity[d]; }
       }
       Prolongate(scaled, broken);
+   }
+};
+
+class GraphPreconditioner
+{
+public:
+   Vector F_inverse;
+   std::unique_ptr<HypreParMatrix> F_inverse_Et;
+
+   GraphPreconditioner(BrokenSpace &fes_hat)
+      : F_inverse(fes_hat.GetNumTraceDofs())
+   {
+      ParFiniteElementSpace &fes_rt = fes_hat.GetFESpace();
+
+      // Compute the diagonal of the RT mass matrix using PA
+      Vector diagonal_lex(fes_hat.GetNumBrokenDofs());
+      diagonal_lex = 0.0;
+      VectorFEMassIntegrator mass;
+      mass.AssemblePA(fes_rt);
+      mass.AssembleDiagonalPA(diagonal_lex);
+
+      // Convert from lexicographic to native ordering
+      const Array<int> &dof_map = dynamic_cast<const TensorBasisElement&>(
+                                     *fes_rt.GetTypicalFE()).GetDofMap();
+      const int ndof_per_el = fes_hat.GetNumDofsPerElem();
+      Vector inverse_mass(fes_hat.GetNumBrokenDofs());
+      for (int e = 0; e < fes_rt.GetNE(); ++e)
+      {
+         for (int i = 0; i < ndof_per_el; ++i)
+         {
+            const real_t m = diagonal_lex(e*ndof_per_el+i);
+            inverse_mass(e*ndof_per_el+UnsignIndex(dof_map[i])) = 1.0/m;
+         }
+      }
+
+      // Each broken flux DOF couples to at most one multiplier, with value 1.
+      fes_hat.GetC().Mult(inverse_mass, F_inverse);
+      // Inactive multipliers have identity equations in the constrained system.
+      for (int td : fes_hat.GetInactiveTraceDofs()) { F_inverse(td) = 1.0; }
+      F_inverse.Reciprocal();
+
+      const int dim = fes_rt.GetMesh()->Dimension();
+      const int order = fes_rt.GetMaxElementOrder();
+      Array<int> element2face;
+      FormElementToFace(dim, order, element2face);
+      const int nvol_per_el = element2face.Size()/(2*dim);
+      L2_FECollection scalar_fec(order-1, dim, BasisType::IntegratedGLL,
+                                 FiniteElement::INTEGRAL);
+      ParFiniteElementSpace scalar_fes(fes_rt.GetParMesh(), &scalar_fec);
+
+      // Form M_b^{-1} D_hat^T in native broken coordinates.
+      SparseMatrix Dt_mass(fes_hat.GetNumBrokenDofs(), scalar_fes.GetVSize());
+      for (int e = 0; e < fes_rt.GetNE(); ++e)
+      {
+         for (int i = 0; i < nvol_per_el; ++i)
+         {
+            for (int k = 0; k < 2*dim; ++k)
+            {
+               const int d = element2face[k+2*dim*i];
+               const int mapped = dof_map[UnsignIndex(d)];
+               const int row = e*ndof_per_el+UnsignIndex(mapped);
+               Dt_mass.Add(row, e*nvol_per_el+i,
+                           Sign(d)*Sign(mapped)*inverse_mass(row));
+            }
+         }
+      }
+      Dt_mass.Finalize();
+      HypreParMatrix &Ct = fes_hat.GetCt();
+      HypreParMatrix Dt_par(fes_rt.GetComm(), Ct.GetGlobalNumRows(),
+                            scalar_fes.GlobalVSize(), Ct.GetRowStarts(),
+                            scalar_fes.GetDofOffsets(), &Dt_mass);
+      F_inverse_Et.reset(ParMult(&fes_hat.GetC(), &Dt_par, true));
+      F_inverse_Et->ScaleRows(F_inverse);
    }
 };
 
