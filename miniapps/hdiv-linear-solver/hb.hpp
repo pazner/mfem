@@ -184,14 +184,55 @@ public:
    }
 };
 
-class GraphPreconditioner
+/// Assemble W^{-1} + D M_g^{-1} D^T with unit mass coefficients.
+/// Essential RT columns are eliminated; the caller owns the returned matrix.
+inline HypreParMatrix *AssembleGraphLaplacian(
+   ParFiniteElementSpace &fes_rt, ParFiniteElementSpace &fes_l2,
+   const Array<int> &ess_rt_dofs)
 {
+   ParBilinearForm mass_rt(&fes_rt);
+   mass_rt.SetAssemblyLevel(AssemblyLevel::PARTIAL);
+   mass_rt.AddDomainIntegrator(new VectorFEMassIntegrator);
+   mass_rt.Assemble();
+   Vector rt_mass_diag_inv(fes_rt.GetTrueVSize());
+   mass_rt.AssembleDiagonal(rt_mass_diag_inv);
+   rt_mass_diag_inv.Reciprocal();
+
+   ParBilinearForm mass_l2(&fes_l2);
+   mass_l2.SetAssemblyLevel(AssemblyLevel::PARTIAL);
+   mass_l2.AddDomainIntegrator(new MassIntegrator);
+   mass_l2.Assemble();
+   Vector l2_mass_diag_inv(fes_l2.GetTrueVSize());
+   mass_l2.AssembleDiagonal(l2_mass_diag_inv);
+   l2_mass_diag_inv.Reciprocal();
+
+   SparseMatrix rt_diag(rt_mass_diag_inv), l2_diag(l2_mass_diag_inv);
+   HypreParMatrix M_inverse(fes_rt.GetComm(), fes_rt.GlobalTrueVSize(),
+                            fes_rt.GetTrueDofOffsets(), &rt_diag);
+   HypreParMatrix W_inverse(fes_l2.GetComm(), fes_l2.GlobalTrueVSize(),
+                            fes_l2.GetTrueDofOffsets(), &l2_diag);
+   std::unique_ptr<HypreParMatrix> D(
+      FormDiscreteDivergenceMatrix(fes_rt, fes_l2, ess_rt_dofs));
+   std::unique_ptr<HypreParMatrix> Dt(D->Transpose());
+   std::unique_ptr<HypreParMatrix> laplacian(RAP(&M_inverse, Dt.get()));
+   HypreParMatrix *S = ParAdd(laplacian.get(), &W_inverse);
+   S->CopyRowStarts();
+   S->CopyColStarts();
+   return S;
+}
+
+class GraphPreconditioner : public Solver
+{
+   std::unique_ptr<HypreParMatrix> S;
+   std::unique_ptr<HypreBoomerAMG> S_inv;
+   mutable Vector z1, z2;
+
 public:
    Vector F_inverse;
    std::unique_ptr<HypreParMatrix> F_inverse_Et;
 
    GraphPreconditioner(BrokenSpace &fes_hat)
-      : F_inverse(fes_hat.GetNumTraceDofs())
+      : Solver(fes_hat.GetNumTraceDofs()), F_inverse(height)
    {
       ParFiniteElementSpace &fes_rt = fes_hat.GetFESpace();
 
@@ -254,6 +295,28 @@ public:
                             scalar_fes.GetDofOffsets(), &Dt_mass);
       F_inverse_Et.reset(ParMult(&fes_hat.GetC(), &Dt_par, true));
       F_inverse_Et->ScaleRows(F_inverse);
+
+      Array<int> ess_rt_dofs;
+      fes_rt.GetBoundaryTrueDofs(ess_rt_dofs);
+      S.reset(AssembleGraphLaplacian(fes_rt, scalar_fes, ess_rt_dofs));
+      S_inv.reset(new HypreBoomerAMG(*S));
+      z1.SetSize(S->Height());
+      z2.SetSize(S->Height());
+   }
+
+   void SetOperator(const Operator &) override { }
+
+   // F^{-1} + F^{-1} E^T S^{-1} E F^{-1}.
+   void Mult(const Vector &x, Vector &y) const override
+   {
+      F_inverse_Et->MultTranspose(x, z1);
+      z2 = 0.0;
+      S_inv->Mult(z1, z2);
+      y = x;
+      y *= F_inverse;
+      F_inverse_Et->AddMult(z2, y);
+   }
+};
    }
 };
 
