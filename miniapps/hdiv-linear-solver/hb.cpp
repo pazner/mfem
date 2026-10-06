@@ -16,6 +16,7 @@
 #include "hb.hpp"
 #include <cmath>
 #include <iostream>
+#include <string>
 
 using namespace mfem;
 using namespace std;
@@ -43,16 +44,20 @@ int main(int argc, char *argv[])
    int ref = 0;
    bool direct_solver = false;
    bool run_comparison = false;
+   string trace_type = "graph";
 
    OptionsParser args(argc, argv);
    args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use.");
    args.AddOption(&order, "-o", "--order", "Polynomial degree.");
    args.AddOption(&ref, "-r", "--refine", "Mesh refinements.");
+   args.AddOption(&trace_type, "-t", "--trace", "Trace solver: graph or hb.");
    args.AddOption(&direct_solver, "-d", "--direct", "-a",
                   "--amg", "Direct solver or AMG for HB system.");
    args.AddOption(&run_comparison, "-c", "--compare", "-no-c",
                   "--no-comparison", "Compare with standard RT system.");
    args.ParseCheck();
+   MFEM_VERIFY(trace_type == "graph" || trace_type == "hb",
+               "Trace solver must be graph or hb.");
    MFEM_VERIFY(!direct_solver || Mpi::WorldSize() == 1,
                "The direct solver requires one MPI rank.");
 
@@ -131,8 +136,24 @@ int main(int argc, char *argv[])
    }
    A_hat.Finalize();
 
-   HypreParMatrix &C = fes_hat.GetC();
-   HypreParMatrix &Ct = fes_hat.GetCt();
+   auto stype = direct_solver ? DIRECT : AMG;
+   unique_ptr<Solver> trace_inverse;
+   if (trace_type == "graph")
+   {
+      trace_inverse.reset(new GraphPreconditioner(fes_hat, stype));
+   }
+   else
+   {
+      trace_inverse.reset(new TraceMultiplierSolver(
+                             a, ess_tdofs, TraceMultiplierSolver::ACTUAL, stype));
+   }
+   HypreParMatrix &Ct = [&]() -> HypreParMatrix &
+   {
+      if (trace_type == "graph") { return fes_hat.GetCt(); }
+      return static_cast<TraceMultiplierSolver&>(*trace_inverse)
+      .GetConstraintTranspose();
+   }();
+   TransposeOperator C(Ct);
 
    SparseMatrix inactive(fes_hat.GetNumTraceDofs());
    for (int td : fes_hat.GetInactiveTraceDofs()) { inactive.Add(td, td, 1.0); }
@@ -148,12 +169,9 @@ int main(int argc, char *argv[])
    ConstrainedOperator constrained_K(&K, ess_broken_dofs);
    constrained_K.EliminateRHS(solution, rhs);
    BrokenElementSolver element_inverse(a, ess_broken_dofs);
-   auto stype = direct_solver ? GraphPreconditioner::DIRECT :
-                GraphPreconditioner::AMG;
-   GraphPreconditioner trace_inverse(fes_hat, stype);
    BlockDiagonalPreconditioner preconditioner(offsets);
    preconditioner.SetDiagonalBlock(0, &element_inverse);
-   preconditioner.SetDiagonalBlock(1, &trace_inverse);
+   preconditioner.SetDiagonalBlock(1, trace_inverse.get());
    MINRESSolver minres(MPI_COMM_WORLD);
    minres.SetPreconditioner(preconditioner);
    minres.SetOperator(constrained_K);

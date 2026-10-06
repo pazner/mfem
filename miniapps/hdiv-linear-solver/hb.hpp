@@ -20,6 +20,8 @@ namespace mfem
 
 inline real_t Sign(int d) { return d < 0 ? -1.0 : 1.0; }
 
+enum SolverType { AMG, DIRECT };
+
 class BrokenSpace
 {
    ParFiniteElementSpace &fes;
@@ -246,11 +248,6 @@ class GraphPreconditioner : public Solver
    std::unique_ptr<Solver> S_inv;
    mutable Vector z1, z2;
 public:
-   enum SolverType
-   {
-      AMG,
-      DIRECT
-   };
    GraphPreconditioner(BrokenSpace &fes_hat, SolverType stype=AMG)
       : Solver(fes_hat.GetNumTraceDofs()), F_inverse(height)
    {
@@ -383,6 +380,11 @@ public:
 
    void SetOperator(const Operator &) override { }
 
+   void SolveElement(int e, DenseMatrix &rhs) const
+   {
+      factors[e].Solve(lu.SizeI(), rhs.Width(), rhs.Data());
+   }
+
    void Mult(const Vector &x, Vector &y) const override
    {
       y = x;
@@ -392,6 +394,69 @@ public:
       {
          factors[e].Solve(nd, 1, data+e*nd);
       }
+   }
+};
+
+/// Solve the weak multiplier system assembled by MFEM hybridization.
+class TraceMultiplierSolver : public Solver
+{
+   std::unique_ptr<HypreParMatrix> Ct;
+   std::unique_ptr<HypreParMatrix> H;
+   std::unique_ptr<SparseMatrix> H_serial;
+   std::unique_ptr<Solver> H_inv;
+
+public:
+   enum AssemblyMode { ACTUAL, LOR };
+
+   TraceMultiplierSolver(ParBilinearForm &a, const Array<int> &ess_tdofs,
+                         AssemblyMode amode=ACTUAL, SolverType stype=AMG)
+      : Solver(0)
+   {
+      MFEM_VERIFY(amode == ACTUAL, "LOR assembly is not implemented.");
+      ParFiniteElementSpace &fes = *a.ParFESpace();
+      DG_Interface_FECollection trace_fec(fes.GetMaxElementOrder()-1,
+                                          fes.GetMesh()->Dimension());
+      ParFiniteElementSpace trace_fes(fes.GetParMesh(), &trace_fec);
+      Hybridization hybridization(&fes, &trace_fes);
+      hybridization.SetConstraintIntegrator(new NormalTraceJumpIntegrator);
+      hybridization.Init(ess_tdofs);
+      SparseMatrix &local_Ct = hybridization.GetConstraintTranspose();
+      HYPRE_BigInt size = local_Ct.Height();
+      Array<HYPRE_BigInt> flux_offsets;
+      Array<HYPRE_BigInt> *partitions[] = { &flux_offsets };
+      fes.GetParMesh()->GenerateOffsets(1, &size, partitions);
+      HypreParMatrix parallel_Ct(fes.GetComm(), flux_offsets.Last(),
+                                 trace_fes.GlobalVSize(), flux_offsets.GetData(),
+                                 trace_fes.GetDofOffsets(), &local_Ct);
+      Ct.reset(ParMult(&parallel_Ct, trace_fes.Dof_TrueDof_Matrix(), true));
+      hybridization.AssembleElementMatrices(a.GetElementMatrices());
+      hybridization.Finalize();
+      H.reset(new HypreParMatrix(hybridization.GetParallelMatrix()));
+      height = width = H->Height();
+
+      if (stype == AMG)
+      {
+         auto *amg = new HypreBoomerAMG(*H);
+         H_inv.reset(amg);
+      }
+      else
+      {
+         MFEM_VERIFY(Mpi::WorldSize() == 1,
+                     "The direct multiplier solver requires one MPI rank.");
+         H_serial.reset(new SparseMatrix);
+         H->GetDiag(*H_serial);
+         H_inv.reset(new UMFPackSolver(*H_serial));
+      }
+   }
+
+   HypreParMatrix &GetConstraintTranspose() { return *Ct; }
+   const HypreParMatrix &GetConstraintTranspose() const { return *Ct; }
+   const HypreParMatrix &GetMatrix() const { return *H; }
+   void SetOperator(const Operator &) override { }
+   void Mult(const Vector &x, Vector &y) const override
+   {
+      y.SetSize(height);
+      H_inv->Mult(x, y);
    }
 };
 
