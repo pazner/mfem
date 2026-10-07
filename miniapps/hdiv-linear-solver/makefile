@@ -46,12 +46,14 @@ all: $(MINIAPPS)
 %.o: %.cpp
 
 $(MINIAPPS):%: %.o $(HDIV_OBJ)
-	$(MFEM_CXX) $(MFEM_LINK_FLAGS) $(HDIV_OBJ) -o $@ $< $(MFEM_LIBS)
+	$(MFEM_CXX) $(MFEM_LINK_FLAGS) $(filter %.o,$^) -o $@ $(MFEM_LIBS)
 
 %.o: $(SRC)%.cpp $(MFEM_LIB_FILE) $(CONFIG_MK)
 	$(MFEM_CXX) $(MFEM_FLAGS) -c $< -o $@
 
-hb.o: $(SRC)hb.hpp $(SRC)discrete_divergence.hpp
+hb: fast_diag.o
+hb.o: $(SRC)hb.hpp $(SRC)discrete_divergence.hpp $(SRC)fast_diag.hpp
+fast_diag.o: $(SRC)fast_diag.hpp
 
 MFEM_TESTS = MINIAPPS
 include $(MFEM_TEST_MK)

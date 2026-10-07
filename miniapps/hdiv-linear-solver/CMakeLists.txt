@@ -12,7 +12,8 @@
 if (MFEM_USE_MPI)
   add_mfem_miniapp(hb
     MAIN hb.cpp
-    EXTRA_HEADERS hb.hpp
+    EXTRA_SOURCES fast_diag.cpp discrete_divergence.cpp
+    EXTRA_HEADERS hb.hpp fast_diag.hpp
     LIBRARIES mfem)
 
   add_mfem_miniapp(darcy

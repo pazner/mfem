@@ -14,6 +14,7 @@
 
 #include "mfem.hpp"
 #include "hb.hpp"
+#include "fast_diag.hpp"
 #include <cmath>
 #include <iostream>
 #include <string>
@@ -44,6 +45,7 @@ int main(int argc, char *argv[])
    int ser_ref = 0;
    int par_ref = 0;
    bool direct_solver = false;
+   bool fast_diag = false;
    string trace_type = "graph";
 
    OptionsParser args(argc, argv);
@@ -56,6 +58,8 @@ int main(int argc, char *argv[])
                   "Trace solver: graph, hb, or lor.");
    args.AddOption(&direct_solver, "-d", "--direct", "-a",
                   "--amg", "Direct solver or AMG for HB system.");
+   args.AddOption(&fast_diag, "-fd", "--fast-diag", "-no-fd", "--no-fast-diag",
+                  "Use fast diagonalization for Cartesian element solves.");
    args.ParseCheck();
    MFEM_VERIFY(trace_type == "graph" || trace_type == "hb" || trace_type == "lor",
                "Trace solver must be graph, hb, or lor.");
@@ -151,9 +155,14 @@ int main(int argc, char *argv[])
    fes_hat.GetBrokenEssentialDofs(ess_tdofs, ess_broken_dofs);
    ConstrainedOperator constrained_K(&K, ess_broken_dofs);
    constrained_K.EliminateRHS(solution, rhs);
-   BrokenElementSolver element_inverse(a, ess_broken_dofs);
+   unique_ptr<Solver> element_inverse;
+   if (fast_diag)
+   {
+      element_inverse.reset(new FastDiagonalizationSolver(fes_rt, ess_broken_dofs));
+   }
+   else { element_inverse.reset(new BrokenElementSolver(a, ess_broken_dofs)); }
    BlockDiagonalPreconditioner preconditioner(offsets);
-   preconditioner.SetDiagonalBlock(0, &element_inverse);
+   preconditioner.SetDiagonalBlock(0, element_inverse.get());
    preconditioner.SetDiagonalBlock(1, trace_inverse.get());
    MINRESSolver minres(MPI_COMM_WORLD);
    minres.SetPreconditioner(preconditioner);
