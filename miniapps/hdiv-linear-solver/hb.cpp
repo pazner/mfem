@@ -59,7 +59,8 @@ int main(int argc, char *argv[])
    args.AddOption(&direct_solver, "-d", "--direct", "-a",
                   "--amg", "Direct solver or AMG for HB system.");
    args.AddOption(&fast_diag, "-fd", "--fast-diag", "-no-fd", "--no-fast-diag",
-                  "Use fast diagonalization for Cartesian element solves.");
+                  "Use fast diagonalization and partial assembly on Cartesian "
+                  "elements.");
    args.ParseCheck();
    MFEM_VERIFY(trace_type == "graph" || trace_type == "hb" || trace_type == "lor",
                "Trace solver must be graph, hb, or lor.");
@@ -109,17 +110,26 @@ int main(int argc, char *argv[])
    fes_hat.AverageTranspose(f, rhs.GetBlock(0));
    fes_hat.LocalProlongate(x, solution.GetBlock(0));
 
-   SparseMatrix A_hat(offsets[1]);
-   DenseMatrix element_matrix;
-   const int nd = fes_hat.GetNumDofsPerElem();
-   Array<int> element_dofs(nd);
-   for (int e = 0; e < fes_rt.GetNE(); ++e)
+   unique_ptr<Operator> A_hat;
+   if (fast_diag)
    {
-      a.ComputeElementMatrix(e, element_matrix);
-      for (int i = 0; i < nd; ++i) { element_dofs[i] = e*nd+i; }
-      A_hat.AddSubMatrix(element_dofs, element_dofs, element_matrix);
+      A_hat.reset(new BrokenElementPAOperator(a));
    }
-   A_hat.Finalize();
+   else
+   {
+      auto assembled = make_unique<SparseMatrix>(offsets[1]);
+      DenseMatrix element_matrix;
+      const int nd = fes_hat.GetNumDofsPerElem();
+      Array<int> element_dofs(nd);
+      for (int e = 0; e < fes_rt.GetNE(); ++e)
+      {
+         a.ComputeElementMatrix(e, element_matrix);
+         for (int i = 0; i < nd; ++i) { element_dofs[i] = e*nd+i; }
+         assembled->AddSubMatrix(element_dofs, element_dofs, element_matrix);
+      }
+      assembled->Finalize();
+      A_hat = std::move(assembled);
+   }
 
    auto stype = direct_solver ? DIRECT : AMG;
    unique_ptr<Solver> trace_inverse;
@@ -146,7 +156,7 @@ int main(int argc, char *argv[])
    for (int td : fes_hat.GetInactiveTraceDofs()) { inactive.Add(td, td, 1.0); }
    inactive.Finalize();
    BlockOperator K(offsets);
-   K.SetBlock(0, 0, &A_hat);
+   K.SetBlock(0, 0, A_hat.get());
    K.SetBlock(0, 1, &Ct);
    K.SetBlock(1, 0, &C);
    K.SetBlock(1, 1, &inactive);

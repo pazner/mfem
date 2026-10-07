@@ -345,6 +345,50 @@ public:
    }
 };
 
+/// Apply unmarked domain integrators using PA in native broken RT coordinates.
+class BrokenElementPAOperator : public Operator
+{
+   const Array<BilinearFormIntegrator*> &integrators;
+   const Array<int> &dof_map;
+   mutable Vector x_lex, y_lex;
+
+public:
+   BrokenElementPAOperator(BilinearForm &a)
+      : Operator(a.FESpace()->GetNE()*a.FESpace()->GetTypicalFE()->GetDof()),
+        integrators(*a.GetDBFI()),
+        dof_map(dynamic_cast<const TensorBasisElement&>(
+                   *a.FESpace()->GetTypicalFE()).GetDofMap()),
+        x_lex(height), y_lex(height)
+   {
+      x_lex.UseDevice(true);
+      y_lex.UseDevice(true);
+      for (auto *integrator : integrators) { integrator->AssemblePA(*a.FESpace()); }
+   }
+
+   void Mult(const Vector &x, Vector &y) const override
+   {
+      const int nd = dof_map.Size();
+      const int *map = dof_map.Read();
+      const real_t *input = x.Read();
+      real_t *lex_input = x_lex.Write();
+      MFEM_FORALL(i, height,
+      {
+         const int d = map[i%nd];
+         lex_input[i] = (d < 0 ? -1.0 : 1.0)*input[(i/nd)*nd+UnsignIndex(d)];
+      });
+      y_lex = 0.0;
+      for (auto *integrator : integrators) { integrator->AddMultPA(x_lex, y_lex); }
+      y.SetSize(height);
+      const real_t *lex_output = y_lex.Read();
+      real_t *output = y.Write();
+      MFEM_FORALL(i, height,
+      {
+         const int d = map[i%nd];
+         output[(i/nd)*nd+UnsignIndex(d)] = (d < 0 ? -1.0 : 1.0)*lex_output[i];
+      });
+   }
+};
+
 /// Apply element inverses in native, element-contiguous broken coordinates.
 /// Essential DOFs use the same broken numbering and are constrained before LU.
 class BrokenElementSolver : public Solver
