@@ -9,7 +9,7 @@
 // terms of the BSD-3 license. We welcome feedback and contributions, see file
 // CONTRIBUTING.md for details.
 
-// Solve the hybridized system with MINRES; optional serial UMFPack comparison.
+// Solve the hybridized system with MINRES.
 // Sample run: mpirun -np 2 hb -m ../../data/inline-quad.mesh -o 2
 
 #include "mfem.hpp"
@@ -44,7 +44,6 @@ int main(int argc, char *argv[])
    int ser_ref = 0;
    int par_ref = 0;
    bool direct_solver = false;
-   bool run_comparison = false;
    string trace_type = "graph";
 
    OptionsParser args(argc, argv);
@@ -57,8 +56,6 @@ int main(int argc, char *argv[])
                   "Trace solver: graph, hb, or lor.");
    args.AddOption(&direct_solver, "-d", "--direct", "-a",
                   "--amg", "Direct solver or AMG for HB system.");
-   args.AddOption(&run_comparison, "-c", "--compare", "-no-c",
-                  "--no-comparison", "Compare with standard RT system.");
    args.ParseCheck();
    MFEM_VERIFY(trace_type == "graph" || trace_type == "hb" || trace_type == "lor",
                "Trace solver must be graph, hb, or lor.");
@@ -92,32 +89,11 @@ int main(int argc, char *argv[])
    b.AddDomainIntegrator(new VectorFEDomainLFIntegrator(rhs_coeff));
    b.Assemble();
    Vector f(fes_rt.GetTrueVSize());
-   b.ParallelAssemble(f); // Save the load before essential elimination.
+   b.ParallelAssemble(f);
 
    ParBilinearForm a(&fes_rt);
    a.AddDomainIntegrator(new DivDivIntegrator);
    a.AddDomainIntegrator(new VectorFEMassIntegrator);
-
-   Vector B, X;
-
-   if (run_comparison)
-   {
-      MFEM_VERIFY(Mpi::WorldSize() == 1, "");
-
-      a.Assemble();
-      OperatorPtr A;
-      a.FormLinearSystem(ess_tdofs, x, b, A, X, B);
-
-      // On one rank, the diagonal block is the entire parallel matrix.
-      SparseMatrix A_serial;
-      A.As<HypreParMatrix>()->GetDiag(A_serial);
-      UMFPackSolver solver;
-      solver.SetOperator(A_serial);
-      solver.Mult(B, X);
-
-      a.RecoverFEMSolution(X, b, x);
-      cout << "L2 error: " << x.ComputeL2Error(exact_coeff) << '\n';
-   }
 
    BrokenSpace fes_hat(fes_rt);
    Array<int> offsets({0, fes_hat.GetNumBrokenDofs(),
@@ -187,30 +163,6 @@ int main(int argc, char *argv[])
    minres.SetMaxIter(1000);
    minres.SetPrintLevel(1);
    minres.Mult(rhs, solution);
-
-   if (run_comparison)
-   {
-      Vector recovered;
-      fes_hat.Average(solution.GetBlock(0), recovered);
-
-      Vector difference = X;
-      difference -= recovered;
-      const real_t error = difference.Norml2()/max(real_t(1.0), X.Norml2());
-
-      Vector residual(constrained_K.Height());
-      constrained_K.Mult(solution, residual);
-      residual -= rhs;
-
-      Vector jump(fes_hat.GetNumTraceDofs());
-      C.Mult(solution.GetBlock(0), jump);
-
-      cout << "HB MINRES iterations: " << minres.GetNumIterations()
-           << "\nHB relative solution difference: " << error
-           << "\nHB relative residual: "
-           << residual.Norml2()/max(real_t(1.0), rhs.Norml2())
-           << "\nHB continuity residual: " << jump.Norml2() << '\n';
-      // MFEM_VERIFY(error < 1e-10, "HB solution differs from the conforming solve.");
-   }
 
    return 0;
 }
