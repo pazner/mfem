@@ -95,6 +95,20 @@ int main(int argc, char *argv[])
    const int b1 = BasisType::GaussLobatto, b2 = BasisType::GaussLegendre;
    RT_FECollection fec_rt(order-1, dim, b1, b2);
    ParFiniteElementSpace fes_rt(&mesh, &fec_rt);
+   const int mt = FiniteElement::INTEGRAL;
+   L2_FECollection fec_l2(order-1, dim, b2, mt);
+   ParFiniteElementSpace fes_l2(&mesh, &fec_l2);
+
+   const auto global_ne = mesh.GetGlobalNE();
+   const auto global_rt_ndofs = fes_rt.GlobalTrueVSize();
+   const auto global_l2_ndofs = fes_l2.GlobalTrueVSize();
+   if (Mpi::Root())
+   {
+      cout << "Global number of elements: " << global_ne
+           << "\nGlobal number of RT DOFs: " << global_rt_ndofs
+           << "\nGlobal number of L2 DOFs: " << global_l2_ndofs
+           << endl;
+   }
 
    Array<int> ess_rt_dofs;
    fes_rt.GetBoundaryTrueDofs(ess_rt_dofs);
@@ -120,10 +134,6 @@ int main(int argc, char *argv[])
    {
       if (Mpi::Root()) { cout << "\nSaddle point solver... " << flush; }
       tic_toc.Clear(); tic_toc.Start();
-
-      const int mt = FiniteElement::INTEGRAL;
-      L2_FECollection fec_l2(order-1, dim, b2, mt);
-      ParFiniteElementSpace fes_l2(&mesh, &fec_l2);
 
       HdivSaddlePointSolver saddle_point_solver(
          mesh, fes_rt, fes_l2, alpha_coeff, beta_coeff, ess_rt_dofs,
@@ -225,13 +235,19 @@ int main(int argc, char *argv[])
       // Don't include cuBLAS setup time in the hybridization timings
       GPUBlas::Handle();
 
+      DG_Interface_FECollection fec_hb(order-1, dim);
+      ParFiniteElementSpace fes_hb(&mesh, &fec_hb);
+      const auto global_hb_ndofs = fes_hb.GlobalTrueVSize();
+      if (Mpi::Root())
+      {
+         cout << "Global number of multiplier DOFs: "
+              << global_hb_ndofs << endl;
+      }
+
       x.ProjectCoefficient(u_vec_coeff);
 
       if (Mpi::Root()) { cout << "\nHybridization solver... " << flush; }
       tic_toc.Clear(); tic_toc.Start();
-
-      DG_Interface_FECollection fec_hb(order-1, dim);
-      ParFiniteElementSpace fes_hb(&mesh, &fec_hb);
 
       ParBilinearForm a(&fes_rt);
       a.AddDomainIntegrator(new DivDivIntegrator(alpha_coeff));
