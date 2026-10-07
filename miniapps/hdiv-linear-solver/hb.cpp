@@ -41,7 +41,8 @@ int main(int argc, char *argv[])
 
    const char *mesh_file = "../../data/inline-quad.mesh";
    int order = 1;
-   int ref = 0;
+   int ser_ref = 0;
+   int par_ref = 0;
    bool direct_solver = false;
    bool run_comparison = false;
    string trace_type = "graph";
@@ -49,7 +50,9 @@ int main(int argc, char *argv[])
    OptionsParser args(argc, argv);
    args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use.");
    args.AddOption(&order, "-o", "--order", "Polynomial degree.");
-   args.AddOption(&ref, "-r", "--refine", "Mesh refinements.");
+   args.AddOption(&ser_ref, "-rs", "--refine-serial", "Serial mesh refinements.");
+   args.AddOption(&par_ref, "-rp", "--refine-parallel",
+                  "Parallel mesh refinements.");
    args.AddOption(&trace_type, "-t", "--trace",
                   "Trace solver: graph, hb, or lor.");
    args.AddOption(&direct_solver, "-d", "--direct", "-a",
@@ -65,9 +68,10 @@ int main(int argc, char *argv[])
    ParMesh mesh = [&]()
    {
       Mesh serial_mesh(mesh_file);
-      for (int i = 0; i < ref; ++i) { serial_mesh.UniformRefinement(); }
+      for (int i = 0; i < ser_ref; ++i) { serial_mesh.UniformRefinement(); }
       return ParMesh(MPI_COMM_WORLD, serial_mesh);
    }();
+   for (int i = 0; i < par_ref; ++i) { mesh.UniformRefinement(); }
    const int dim = mesh.Dimension();
    RT_FECollection fec(order - 1, dim, BasisType::GaussLobatto,
                        BasisType::IntegratedGLL);
@@ -93,7 +97,6 @@ int main(int argc, char *argv[])
    ParBilinearForm a(&fes_rt);
    a.AddDomainIntegrator(new DivDivIntegrator);
    a.AddDomainIntegrator(new VectorFEMassIntegrator);
-   a.Assemble();
 
    Vector B, X;
 
@@ -101,6 +104,7 @@ int main(int argc, char *argv[])
    {
       MFEM_VERIFY(Mpi::WorldSize() == 1, "");
 
+      a.Assemble();
       OperatorPtr A;
       a.FormLinearSystem(ess_tdofs, x, b, A, X, B);
 
