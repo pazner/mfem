@@ -108,6 +108,8 @@ int main(int argc, char *argv[])
    rhs = 0.0;
    solution = 0.0;
 
+   tic_toc.Restart();
+
    fes_hat.AverageTranspose(f, rhs.GetBlock(0));
    fes_hat.LocalProlongate(x, solution.GetBlock(0));
 
@@ -178,11 +180,16 @@ int main(int argc, char *argv[])
    MINRESSolver minres(MPI_COMM_WORLD);
    minres.SetPreconditioner(preconditioner);
    minres.SetOperator(constrained_K);
-   minres.SetRelTol(1e-10);
+   minres.SetRelTol(1e-12);
    minres.SetAbsTol(0.0);
    minres.SetMaxIter(1000);
    minres.SetPrintLevel(1);
    minres.Mult(rhs, solution);
+
+   if (Mpi::Root())
+   {
+      cout << "Elapsed: " << tic_toc.RealTime() << '\n';
+   }
 
    return 0;
 }
