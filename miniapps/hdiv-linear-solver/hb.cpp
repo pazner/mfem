@@ -92,6 +92,7 @@ int main(int argc, char *argv[])
 
    ParLinearForm b(&fes_rt);
    b.AddDomainIntegrator(new VectorFEDomainLFIntegrator(rhs_coeff));
+   b.UseFastAssembly(true);
    b.Assemble();
    Vector f(fes_rt.GetTrueVSize());
    b.ParallelAssemble(f);
