@@ -50,14 +50,15 @@ int main(int argc, char *argv[])
    args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use.");
    args.AddOption(&order, "-o", "--order", "Polynomial degree.");
    args.AddOption(&ref, "-r", "--refine", "Mesh refinements.");
-   args.AddOption(&trace_type, "-t", "--trace", "Trace solver: graph or hb.");
+   args.AddOption(&trace_type, "-t", "--trace",
+                  "Trace solver: graph, hb, or lor.");
    args.AddOption(&direct_solver, "-d", "--direct", "-a",
                   "--amg", "Direct solver or AMG for HB system.");
    args.AddOption(&run_comparison, "-c", "--compare", "-no-c",
                   "--no-comparison", "Compare with standard RT system.");
    args.ParseCheck();
-   MFEM_VERIFY(trace_type == "graph" || trace_type == "hb",
-               "Trace solver must be graph or hb.");
+   MFEM_VERIFY(trace_type == "graph" || trace_type == "hb" || trace_type == "lor",
+               "Trace solver must be graph, hb, or lor.");
    MFEM_VERIFY(!direct_solver || Mpi::WorldSize() == 1,
                "The direct solver requires one MPI rank.");
 
@@ -144,8 +145,10 @@ int main(int argc, char *argv[])
    }
    else
    {
+      const auto amode = trace_type == "lor" ?
+                         TraceMultiplierSolver::LOR : TraceMultiplierSolver::ACTUAL;
       trace_inverse.reset(new TraceMultiplierSolver(
-                             a, ess_tdofs, TraceMultiplierSolver::ACTUAL, stype));
+                             a, ess_tdofs, amode, stype));
    }
    HypreParMatrix &Ct = [&]() -> HypreParMatrix &
    {

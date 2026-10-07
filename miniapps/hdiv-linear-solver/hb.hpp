@@ -402,8 +402,101 @@ class TraceMultiplierSolver : public Solver
 {
    std::unique_ptr<HypreParMatrix> Ct;
    std::unique_ptr<HypreParMatrix> H;
+   std::unique_ptr<HypreParMatrix> J;
    std::unique_ptr<SparseMatrix> H_serial;
    std::unique_ptr<Solver> H_inv;
+   mutable Vector lor_rhs, lor_solution;
+
+   class LORSpace : public ParLORDiscretization
+   {
+   public:
+      using ParLORDiscretization::ParLORDiscretization;
+      void GetLocalPermutation(Array<int> &perm) const
+      { ConstructLocalDofPermutation(perm); }
+   };
+
+   // Inject dual weak coordinates on macro faces; subcell-interior rows are zero.
+   static HypreParMatrix *BuildMultiplierInjection(
+      ParFiniteElementSpace &fes, ParFiniteElementSpace &trace_fes,
+      const SparseMatrix &local_Ct, ParFiniteElementSpace &lor_fes,
+      ParFiniteElementSpace &lor_trace_fes, const SparseMatrix &lor_Ct,
+      const Array<int> &perm)
+   {
+      Array<int> lor_dof(fes.GetVSize());
+      lor_dof = -1;
+      for (int d = 0; d < perm.Size(); ++d)
+      { lor_dof[UnsignIndex(perm[d])] = d; }
+      const auto &restriction = dynamic_cast<const ElementRestriction&>(
+                                   *lor_fes.GetElementRestriction(
+                                      ElementDofOrdering::NATIVE));
+      const Array<int> &dofs = restriction.GatherMap();
+      Array<int> first_copy(lor_fes.GetVSize());
+      first_copy = -1;
+      for (int i = 0; i < dofs.Size(); ++i)
+      {
+         const int d = UnsignIndex(dofs[i]);
+         if (first_copy[d] < 0) { first_copy[d] = i; }
+      }
+      const auto &cf = lor_fes.GetMesh()->GetRefinementTransforms();
+      const int nd = fes.GetTypicalFE()->GetDof();
+      const int lor_nd = lor_fes.GetTypicalFE()->GetDof();
+      SparseMatrix local_J(lor_trace_fes.GetTrueVSize(), trace_fes.GetVSize());
+      Array<int> flux_dofs, trace_dofs, element_dofs, rows;
+      DenseMatrix face_Ct, inverse;
+      for (int f = 0; f < fes.GetMesh()->GetNumFaces(); ++f)
+      {
+         int e, e2;
+         fes.GetMesh()->GetFaceElements(f, &e, &e2);
+         fes.GetFaceVDofs(f, flux_dofs);
+         trace_fes.GetFaceVDofs(f, trace_dofs);
+         fes.GetElementVDofs(e, element_dofs);
+         rows.SetSize(flux_dofs.Size());
+         for (int i = 0; i < rows.Size(); ++i)
+         {
+            int j = 0;
+            while (UnsignIndex(element_dofs[j]) != UnsignIndex(flux_dofs[i]))
+            { ++j; }
+            rows[i] = e*nd+j;
+         }
+         face_Ct.SetSize(rows.Size(), trace_dofs.Size());
+         local_Ct.GetSubMatrix(rows, trace_dofs, face_Ct);
+         // Express the weak face constraint in globally oriented flux DOFs.
+         for (int i = 0; i < rows.Size(); ++i)
+         {
+            for (int j = 0; j < trace_dofs.Size(); ++j)
+            { face_Ct(i,j) *= Sign(element_dofs[rows[i]-e*nd]); }
+         }
+         const bool active = face_Ct.MaxMaxNorm() != 0.0;
+         if (active) { DenseMatrixInverse(face_Ct).GetInverseMatrix(inverse); }
+         // Preserve identity equations for inactive boundary multipliers.
+         else { inverse.Diag(1.0, rows.Size()); }
+         for (int i = 0; i < rows.Size(); ++i)
+         {
+            const int ld = lor_dof[UnsignIndex(flux_dofs[i])];
+            const int row = lor_trace_fes.GetLocalTDofNumber(ld);
+            if (row < 0) { continue; }
+            real_t scale = 1.0;
+            if (active)
+            {
+               const int copy = first_copy[ld];
+               scale = Sign(dofs[copy])*Sign(perm[ld])*lor_Ct(copy, ld);
+               if (cf.embeddings[copy/lor_nd].parent != e) { scale = -scale; }
+            }
+            for (int j = 0; j < trace_dofs.Size(); ++j)
+            { local_J.Add(row, trace_dofs[j], scale*inverse(j,i)); }
+         }
+      }
+      local_J.Finalize();
+      Array<HYPRE_BigInt> columns(local_J.NumNonZeroElems());
+      for (int i = 0; i < columns.Size(); ++i)
+      { columns[i] = trace_fes.GetGlobalTDofNumber(local_J.GetJ()[i]); }
+      return new HypreParMatrix(fes.GetComm(), local_J.Height(),
+                                lor_trace_fes.GlobalTrueVSize(),
+                                trace_fes.GlobalTrueVSize(), local_J.GetI(),
+                                columns.GetData(), local_J.GetData(),
+                                lor_trace_fes.GetTrueDofOffsets(),
+                                trace_fes.GetTrueDofOffsets());
+   }
 
 public:
    enum AssemblyMode { ACTUAL, LOR };
@@ -412,7 +505,6 @@ public:
                          AssemblyMode amode=ACTUAL, SolverType stype=AMG)
       : Solver(0)
    {
-      MFEM_VERIFY(amode == ACTUAL, "LOR assembly is not implemented.");
       ParFiniteElementSpace &fes = *a.ParFESpace();
       DG_Interface_FECollection trace_fec(fes.GetMaxElementOrder()-1,
                                           fes.GetMesh()->Dimension());
@@ -429,10 +521,63 @@ public:
                                  trace_fes.GlobalVSize(), flux_offsets.GetData(),
                                  trace_fes.GetDofOffsets(), &local_Ct);
       Ct.reset(ParMult(&parallel_Ct, trace_fes.Dof_TrueDof_Matrix(), true));
-      hybridization.AssembleElementMatrices(a.GetElementMatrices());
-      hybridization.Finalize();
-      H.reset(new HypreParMatrix(hybridization.GetParallelMatrix()));
-      height = width = H->Height();
+      height = width = trace_fes.GetTrueVSize();
+      if (amode == ACTUAL)
+      {
+         hybridization.AssembleElementMatrices(a.GetElementMatrices());
+         hybridization.Finalize();
+         H.reset(new HypreParMatrix(hybridization.GetParallelMatrix()));
+      }
+      else
+      {
+         MFEM_VERIFY(!fes.GetParMesh()->Nonconforming(),
+                     "LOR multiplier transfer requires a conforming mesh.");
+         LORSpace lor(fes);
+         Array<int> perm;
+         lor.GetLocalPermutation(perm);
+         // Use native RT0 ownership, rather than the copied HO prolongation.
+         ParFiniteElementSpace lor_fes(lor.GetParFESpace().GetParMesh(),
+                                       lor.GetParFESpace().FEColl());
+         DG_Interface_FECollection lor_trace_fec(0, fes.GetMesh()->Dimension());
+         ParFiniteElementSpace lor_trace_fes(lor_fes.GetParMesh(), &lor_trace_fec);
+         Vector essential(fes.GetTrueVSize()), local_essential(fes.GetVSize());
+         essential = 0.0;
+         for (int td : ess_tdofs) { essential(td) = 1.0; }
+         fes.GetProlongationMatrix()->Mult(essential, local_essential);
+         Array<int> lor_ess;
+         for (int d = 0; d < perm.Size(); ++d)
+         {
+            const int td = lor_fes.GetLocalTDofNumber(d);
+            if (td >= 0 && local_essential(UnsignIndex(perm[d])) != 0.0)
+            { lor_ess.Append(td); }
+         }
+         Hybridization lor_hybridization(&lor_fes, &lor_trace_fes);
+         lor_hybridization.SetConstraintIntegrator(new NormalTraceJumpIntegrator);
+         lor_hybridization.Init(lor_ess);
+         J.reset(BuildMultiplierInjection(fes, trace_fes, local_Ct, lor_fes,
+                                          lor_trace_fes,
+                                          lor_hybridization.GetConstraintTranspose(),
+                                          perm));
+         ParBilinearForm lor_a(&lor_fes);
+         lor_a.UseExternalIntegrators();
+         IntegrationRules irs(0, Quadrature1D::GaussLobatto);
+         const IntegrationRule &rule = irs.Get(
+                                          lor_fes.GetMesh()->GetTypicalElementGeometry(), 1);
+         Array<const IntegrationRule*> saved_rules;
+         for (auto *integrator : *a.GetDBFI())
+         {
+            saved_rules.Append(integrator->GetIntRule());
+            integrator->SetIntRule(&rule);
+            lor_a.AddDomainIntegrator(integrator);
+         }
+         lor_hybridization.AssembleElementMatrices(lor_a.GetElementMatrices());
+         for (int i = 0; i < saved_rules.Size(); ++i)
+         { (*a.GetDBFI())[i]->SetIntRule(saved_rules[i]); }
+         lor_hybridization.Finalize();
+         H.reset(new HypreParMatrix(lor_hybridization.GetParallelMatrix()));
+         lor_rhs.SetSize(H->Height());
+         lor_solution.SetSize(H->Height());
+      }
 
       if (stype == AMG)
       {
@@ -451,12 +596,19 @@ public:
 
    HypreParMatrix &GetConstraintTranspose() { return *Ct; }
    const HypreParMatrix &GetConstraintTranspose() const { return *Ct; }
+   /// Return the full refined multiplier matrix in LOR mode.
    const HypreParMatrix &GetMatrix() const { return *H; }
    void SetOperator(const Operator &) override { }
    void Mult(const Vector &x, Vector &y) const override
    {
       y.SetSize(height);
-      H_inv->Mult(x, y);
+      if (J)
+      {
+         J->Mult(x, lor_rhs);
+         H_inv->Mult(lor_rhs, lor_solution);
+         J->MultTranspose(lor_solution, y);
+      }
+      else { H_inv->Mult(x, y); }
    }
 };
 
