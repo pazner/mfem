@@ -38,7 +38,11 @@ public:
                              const Array<int> &inactive_dofs_)
       : Operator(Ct_.Width()), A_inverse(A_inverse_), Ct(Ct_),
         ess_dofs(ess_dofs_), inactive_dofs(inactive_dofs_),
-        z1(Ct_.Height()), z2(Ct_.Height()) { }
+        z1(Ct_.Height()), z2(Ct_.Height())
+   {
+      z1.UseDevice(true);
+      z2.UseDevice(true);
+   }
 
    void Mult(const Vector &x, Vector &y) const override
    {
@@ -47,7 +51,7 @@ public:
       A_inverse.Mult(z1, z2);
       z2.SetSubVector(ess_dofs, 0.0);
       Ct.MultTranspose(z2, y);
-      for (int td : inactive_dofs) { y(td) = x(td); }
+      CopyEntries(inactive_dofs, x, y);
    }
 };
 
@@ -70,6 +74,7 @@ int main(int argc, char *argv[])
    Hypre::Init();
 
    const char *mesh_file = "../../data/inline-quad.mesh";
+   const char *device_config = "cpu";
    int order = 1;
    int ser_ref = 0;
    int par_ref = 0;
@@ -80,13 +85,15 @@ int main(int argc, char *argv[])
 
    OptionsParser args(argc, argv);
    args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use.");
+   args.AddOption(&device_config, "-d", "--device",
+                  "Device configuration string, see Device::Configure().");
    args.AddOption(&order, "-o", "--order", "Polynomial degree.");
    args.AddOption(&ser_ref, "-rs", "--refine-serial", "Serial mesh refinements.");
    args.AddOption(&par_ref, "-rp", "--refine-parallel",
                   "Parallel mesh refinements.");
    args.AddOption(&trace_type, "-t", "--trace",
                   "Trace solver: graph, hb, or lor.");
-   args.AddOption(&direct_solver, "-d", "--direct", "-a",
+   args.AddOption(&direct_solver, "-ds", "--direct", "-a",
                   "--amg", "Direct solver or AMG for HB system.");
    args.AddOption(&fast_diag, "-fd", "--fast-diag", "-no-fd", "--no-fast-diag",
                   "Use fast diagonalization and partial assembly on Cartesian "
@@ -99,6 +106,9 @@ int main(int argc, char *argv[])
                "Trace solver must be graph, hb, or lor.");
    MFEM_VERIFY(!direct_solver || Mpi::WorldSize() == 1,
                "The direct solver requires one MPI rank.");
+
+   Device device(device_config);
+   if (Mpi::Root()) { device.Print(); }
 
    ParMesh mesh = [&]()
    {
@@ -158,6 +168,8 @@ int main(int argc, char *argv[])
    Array<int> offsets({0, fes_hat.GetNumBrokenDofs(),
                        fes_hat.GetNumBrokenDofs() + fes_hat.GetNumTraceDofs()});
    BlockVector rhs(offsets), solution(offsets);
+   rhs.UseDevice(true);
+   solution.UseDevice(true);
    rhs = 0.0;
    solution = 0.0;
 
@@ -210,9 +222,13 @@ int main(int argc, char *argv[])
    }();
    TransposeOperator C(Ct);
 
-   SparseMatrix inactive(fes_hat.GetNumTraceDofs());
-   for (int td : fes_hat.GetInactiveTraceDofs()) { inactive.Add(td, td, 1.0); }
-   inactive.Finalize();
+   // Identity on inactive multipliers (explicit zeros elsewhere).
+   Vector inactive_marker(fes_hat.GetNumTraceDofs());
+   inactive_marker.UseDevice(true);
+   inactive_marker = 0.0;
+   inactive_marker.SetSubVector(fes_hat.GetInactiveTraceDofs(), 1.0);
+   auto inactive_matrix = DiagonalSparseMatrix(inactive_marker);
+   SparseMatrix &inactive = *inactive_matrix;
    BlockOperator K(offsets);
    K.SetBlock(0, 0, A_hat.get());
    K.SetBlock(0, 1, &Ct);
@@ -250,11 +266,13 @@ int main(int argc, char *argv[])
 
       // Multiplier right-hand side C A^{-1} g - h.
       Vector z(g.Size()), r(h.Size());
+      z.UseDevice(true);
+      r.UseDevice(true);
       A_inverse.Mult(g, z);
       z.SetSubVector(ess_broken_dofs, 0.0);
       Ct.MultTranspose(z, r);
       r -= h;
-      for (int td : inactive_dofs) { r(td) = h(td); }
+      CopyEntries(inactive_dofs, h, r);
 
       MultiplierSchurComplement S(A_inverse, Ct, ess_broken_dofs, inactive_dofs);
       CGSolver cg(MPI_COMM_WORLD);

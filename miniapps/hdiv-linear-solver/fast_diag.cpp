@@ -59,14 +59,19 @@ FastDiagonalizationSolver::FastDiagonalizationSolver(
                "Expected quadrilateral or hexahedral elements.");
    dof_map = dynamic_cast<const TensorBasisElement&>(
                 *fes.GetTypicalFE()).GetDofMap();
+   // The source may be valid only on the device; dof_map is used on the host.
+   dof_map.HostRead();
    height = width = ne*nd;
 
    // Identify complete constrained faces. Interior/partial-face constraints
    // do not admit this tensor factorization.
    Array<int> constrained(height);
    constrained = 0;
-   for (int d : ess_dofs)
+   // The essential DOF list may already have been used on the device.
+   const int *h_ess = ess_dofs.HostRead();
+   for (int k = 0; k < ess_dofs.Size(); ++k)
    {
+      const int d = h_ess[k];
       MFEM_VERIFY(d >= 0 && d < height, "Invalid essential broken DOF.");
       constrained[d] = 1;
    }
@@ -178,8 +183,16 @@ FastDiagonalizationSolver::FastDiagonalizationSolver(
    const auto det_b = Reshape(beta_factors->detJ.HostRead(), nqb, ne);
    const auto a_val = Reshape(alpha_values.HostRead(), nqa, ne);
    const auto b_val = Reshape(beta_values.HostRead(), nqb, ne);
-   const real_t alpha_weight_sum = alpha_rule.GetWeights().Sum();
-   const real_t beta_weight_sum = beta_rule.GetWeights().Sum();
+   // Sum the point weights directly: the cached GetWeights() array may be
+   // valid only on the device.
+   auto weight_sum = [](const IntegrationRule &rule)
+   {
+      real_t sum = 0.0;
+      for (int q = 0; q < rule.GetNPoints(); ++q) { sum += rule.IntPoint(q).weight; }
+      return sum;
+   };
+   const real_t alpha_weight_sum = weight_sum(alpha_rule);
+   const real_t beta_weight_sum = weight_sum(beta_rule);
    for (int e = 0; e < ne; ++e)
    {
       real_t mass[3] = {}, div = 0.0;
