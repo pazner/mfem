@@ -13,6 +13,7 @@
 #define MFEM_HDIV_HB_HPP
 
 #include "discrete_divergence.hpp"
+#include "fast_diag.hpp"
 #include <vector>
 
 namespace mfem
@@ -202,15 +203,19 @@ public:
    }
 };
 
-/// Assemble W^{-1} + D M_g^{-1} D^T with unit mass coefficients.
-/// Essential RT columns are eliminated; the caller owns the returned matrix.
+/// Assemble W^{-1} + D M_g^{-1} D^T, with diagonal RT and L2 masses weighted
+/// by alpha and beta (one when null). Essential RT columns are eliminated; the
+/// caller owns the returned matrix.
 inline HypreParMatrix *AssembleGraphLaplacian(
    ParFiniteElementSpace &fes_rt, ParFiniteElementSpace &fes_l2,
-   const Array<int> &ess_rt_dofs)
+   const Array<int> &ess_rt_dofs, Coefficient *alpha = nullptr,
+   Coefficient *beta = nullptr)
 {
    ParBilinearForm mass_rt(&fes_rt);
    mass_rt.SetAssemblyLevel(AssemblyLevel::PARTIAL);
-   mass_rt.AddDomainIntegrator(new VectorFEMassIntegrator);
+   auto *rt_integrator = new VectorFEMassIntegrator(alpha);
+   rt_integrator->SetIntRule(GetCoefficientRule(alpha));
+   mass_rt.AddDomainIntegrator(rt_integrator);
    mass_rt.Assemble();
    Vector rt_mass_diag_inv(fes_rt.GetTrueVSize());
    mass_rt.AssembleDiagonal(rt_mass_diag_inv);
@@ -218,7 +223,9 @@ inline HypreParMatrix *AssembleGraphLaplacian(
 
    ParBilinearForm mass_l2(&fes_l2);
    mass_l2.SetAssemblyLevel(AssemblyLevel::PARTIAL);
-   mass_l2.AddDomainIntegrator(new MassIntegrator);
+   mass_l2.AddDomainIntegrator(beta ? new MassIntegrator(*beta,
+                                                         GetCoefficientRule(beta)) :
+                               new MassIntegrator);
    mass_l2.Assemble();
    Vector l2_mass_diag_inv(fes_l2.GetTrueVSize());
    mass_l2.AssembleDiagonal(l2_mass_diag_inv);
@@ -239,6 +246,10 @@ inline HypreParMatrix *AssembleGraphLaplacian(
    return S;
 }
 
+/// Preconditioner for the multiplier Schur complement C A^{-1} C^T, where
+/// A = alpha (u,v) + beta (div u,div v) on the broken RT space. Uses F^{-1} +
+/// F^{-1} E^T S^{-1} E F^{-1}, with lumped alpha-weighted RT and beta-weighted
+/// L2 masses. The coefficients default to one when null; beta must be positive.
 class GraphPreconditioner : public Solver
 {
    Vector F_inverse;
@@ -248,15 +259,18 @@ class GraphPreconditioner : public Solver
    std::unique_ptr<Solver> S_inv;
    mutable Vector z1, z2;
 public:
-   GraphPreconditioner(BrokenSpace &fes_hat, SolverType stype=AMG)
+   GraphPreconditioner(BrokenSpace &fes_hat, const Array<int> &ess_rt_dofs,
+                       Coefficient *alpha = nullptr, Coefficient *beta = nullptr,
+                       SolverType stype=AMG)
       : Solver(fes_hat.GetNumTraceDofs()), F_inverse(height)
    {
       ParFiniteElementSpace &fes_rt = fes_hat.GetFESpace();
 
-      // Compute the diagonal of the RT mass matrix using PA
+      // Compute the diagonal of the alpha-weighted RT mass matrix using PA
       Vector diagonal_lex(fes_hat.GetNumBrokenDofs());
       diagonal_lex = 0.0;
-      VectorFEMassIntegrator mass;
+      VectorFEMassIntegrator mass(alpha);
+      mass.SetIntRule(GetCoefficientRule(alpha));
       mass.AssemblePA(fes_rt);
       mass.AssembleDiagonalPA(diagonal_lex);
 
@@ -313,9 +327,8 @@ public:
       F_inverse_Et.reset(ParMult(&fes_hat.GetC(), &Dt_par, true));
       F_inverse_Et->ScaleRows(F_inverse);
 
-      Array<int> ess_rt_dofs;
-      fes_rt.GetBoundaryTrueDofs(ess_rt_dofs);
-      S.reset(AssembleGraphLaplacian(fes_rt, scalar_fes, ess_rt_dofs));
+      S.reset(AssembleGraphLaplacian(fes_rt, scalar_fes, ess_rt_dofs, alpha,
+                                     beta));
 
       if (stype == AMG)
       {
@@ -323,9 +336,13 @@ public:
       }
       else
       {
+#ifdef MFEM_USE_SUITESPARSE
          S_serial = std::make_unique<SparseMatrix>();
          S->GetDiag(*S_serial);
          S_inv.reset(new UMFPackSolver(*S_serial));
+#else
+         MFEM_ABORT("The direct solver requires MFEM_USE_SUITESPARSE.");
+#endif
       }
       z1.SetSize(S->Height());
       z2.SetSize(S->Height());
@@ -442,6 +459,12 @@ public:
 };
 
 /// Solve the weak multiplier system assembled by MFEM hybridization.
+/** In LOR mode, the integrators of the high-order form are evaluated on the
+    refined mesh by default, which requires coefficients that do not depend on
+    the high-order quadrature (e.g. not QuadratureFunctionCoefficient). Passing
+    lor_alpha and lor_beta instead assembles alpha (u,v) + beta (div u,div v)
+    on the refined mesh with those coefficients. Element attributes are
+    inherited by the refined mesh, so PWConstCoefficient may be used. */
 class TraceMultiplierSolver : public Solver
 {
    std::unique_ptr<HypreParMatrix> Ct;
@@ -546,9 +569,15 @@ public:
    enum AssemblyMode { ACTUAL, LOR };
 
    TraceMultiplierSolver(ParBilinearForm &a, const Array<int> &ess_tdofs,
-                         AssemblyMode amode=ACTUAL, SolverType stype=AMG)
+                         AssemblyMode amode=ACTUAL, SolverType stype=AMG,
+                         Coefficient *lor_alpha = nullptr,
+                         Coefficient *lor_beta = nullptr)
       : Solver(0)
    {
+      MFEM_VERIFY((lor_alpha == nullptr) == (lor_beta == nullptr),
+                  "Specify both or neither LOR coefficients.");
+      MFEM_VERIFY(!lor_alpha || amode == LOR,
+                  "LOR coefficients require LOR assembly mode.");
       ParFiniteElementSpace &fes = *a.ParFESpace();
       DG_Interface_FECollection trace_fec(fes.GetMaxElementOrder()-1,
                                           fes.GetMesh()->Dimension());
@@ -603,16 +632,26 @@ public:
                                           lor_hybridization.GetConstraintTranspose(),
                                           perm));
          ParBilinearForm lor_a(&lor_fes);
-         lor_a.UseExternalIntegrators();
          IntegrationRules irs(0, Quadrature1D::GaussLobatto);
          const IntegrationRule &rule = irs.Get(
                                           lor_fes.GetMesh()->GetTypicalElementGeometry(), 1);
          Array<const IntegrationRule*> saved_rules;
-         for (auto *integrator : *a.GetDBFI())
+         if (lor_alpha)
          {
-            saved_rules.Append(integrator->GetIntRule());
-            integrator->SetIntRule(&rule);
-            lor_a.AddDomainIntegrator(integrator);
+            lor_a.AddDomainIntegrator(new VectorFEMassIntegrator(*lor_alpha));
+            lor_a.AddDomainIntegrator(new DivDivIntegrator(*lor_beta));
+            for (auto *integrator : *lor_a.GetDBFI())
+            { integrator->SetIntRule(&rule); }
+         }
+         else
+         {
+            lor_a.UseExternalIntegrators();
+            for (auto *integrator : *a.GetDBFI())
+            {
+               saved_rules.Append(integrator->GetIntRule());
+               integrator->SetIntRule(&rule);
+               lor_a.AddDomainIntegrator(integrator);
+            }
          }
          lor_hybridization.AssembleElementMatrices(lor_a.GetElementMatrices());
          for (int i = 0; i < saved_rules.Size(); ++i)
@@ -632,9 +671,13 @@ public:
       {
          MFEM_VERIFY(Mpi::WorldSize() == 1,
                      "The direct multiplier solver requires one MPI rank.");
+#ifdef MFEM_USE_SUITESPARSE
          H_serial.reset(new SparseMatrix);
          H->GetDiag(*H_serial);
          H_inv.reset(new UMFPackSolver(*H_serial));
+#else
+         MFEM_ABORT("The direct solver requires MFEM_USE_SUITESPARSE.");
+#endif
       }
    }
 

@@ -17,16 +17,31 @@
 namespace mfem
 {
 
+/// Quadrature rule of a QuadratureFunctionCoefficient, or nullptr otherwise.
+/** Such coefficients can only be evaluated on their own rule. Assumes a mesh
+    with a single element geometry. */
+inline const IntegrationRule *GetCoefficientRule(Coefficient *coeff)
+{
+   auto *qf_coeff = dynamic_cast<QuadratureFunctionCoefficient*>(coeff);
+   if (!qf_coeff) { return nullptr; }
+   auto *qs = dynamic_cast<const QuadratureSpace*>(
+                 qf_coeff->GetQuadFunction().GetSpace());
+   MFEM_VERIFY(qs, "Expected an element quadrature space.");
+   return &qs->GetIntRule(0);
+}
+
 /// Approximate element inverse of alpha (u,v) + beta (div u,div v) for RT cells.
 /** Uses native, element-contiguous broken coordinates, including RT signs.
     Approximates alpha J^T J/det J by its elementwise averaged diagonal and
     beta/det J by its elementwise average, using reference quadrature weights.
-    Exact for affine orthogonal maps; an SPD preconditioner otherwise.
-    Requires LAPACK, uniform order, GaussLobatto/IntegratedGLL bases, positive
-    Jacobians, constant alpha > 0 and beta >= 0. Essential DOFs must be
-    unions of complete element faces, in broken numbering; their equations
-    are identity. Setup is on the host, and Mult uses host tensor contractions.
-    Reconstruct the solver after changing the mesh or coefficients. */
+    Exact for affine orthogonal maps and elementwise constant coefficients; an
+    SPD preconditioner otherwise. The coefficients alpha (mass) and beta (div)
+    default to one when null. Requires LAPACK, uniform order,
+    GaussLobatto/IntegratedGLL bases, positive Jacobians, alpha > 0 and
+    beta >= 0. Essential DOFs must be unions of complete element faces, in
+    broken numbering; their equations are identity. Setup is on the host, and
+    Mult uses host tensor contractions. Reconstruct the solver after changing
+    the mesh or coefficients. */
 class FastDiagonalizationSolver : public Solver
 {
    struct Basis
@@ -48,7 +63,8 @@ class FastDiagonalizationSolver : public Solver
 public:
    FastDiagonalizationSolver(FiniteElementSpace &fes,
                              const Array<int> &ess_dofs = Array<int>(),
-                             real_t alpha = 1.0, real_t beta = 1.0);
+                             Coefficient *alpha = nullptr,
+                             Coefficient *beta = nullptr);
 
    void Mult(const Vector &x, Vector &y) const override;
    void SetOperator(const Operator &) override

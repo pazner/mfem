@@ -22,6 +22,35 @@
 using namespace mfem;
 using namespace std;
 
+/// Multiplier Schur complement C A^{-1} C^T, with identity on inactive
+/// multipliers. Essential broken DOFs are eliminated from A.
+class MultiplierSchurComplement : public Operator
+{
+   const Operator &A_inverse;
+   const Operator &Ct;
+   const Array<int> &ess_dofs;
+   const Array<int> &inactive_dofs;
+   mutable Vector z1, z2;
+
+public:
+   MultiplierSchurComplement(const Operator &A_inverse_, const Operator &Ct_,
+                             const Array<int> &ess_dofs_,
+                             const Array<int> &inactive_dofs_)
+      : Operator(Ct_.Width()), A_inverse(A_inverse_), Ct(Ct_),
+        ess_dofs(ess_dofs_), inactive_dofs(inactive_dofs_),
+        z1(Ct_.Height()), z2(Ct_.Height()) { }
+
+   void Mult(const Vector &x, Vector &y) const override
+   {
+      Ct.Mult(x, z1);
+      z1.SetSubVector(ess_dofs, 0.0);
+      A_inverse.Mult(z1, z2);
+      z2.SetSubVector(ess_dofs, 0.0);
+      Ct.MultTranspose(z2, y);
+      for (int td : inactive_dofs) { y(td) = x(td); }
+   }
+};
+
 void ExactSolution(const Vector &x, Vector &u)
 {
    u = 0.0;
@@ -46,6 +75,7 @@ int main(int argc, char *argv[])
    int par_ref = 0;
    bool direct_solver = false;
    bool fast_diag = false;
+   bool use_cg = false;
    string trace_type = "graph";
 
    OptionsParser args(argc, argv);
@@ -61,6 +91,9 @@ int main(int argc, char *argv[])
    args.AddOption(&fast_diag, "-fd", "--fast-diag", "-no-fd", "--no-fast-diag",
                   "Use fast diagonalization and partial assembly on Cartesian "
                   "elements.");
+   args.AddOption(&use_cg, "-cg", "--cg", "-no-cg", "--no-cg",
+                  "Solve the multiplier Schur complement with CG (inner CG "
+                  "for A_hat) instead of MINRES on the full system.");
    args.ParseCheck();
    MFEM_VERIFY(trace_type == "graph" || trace_type == "hb" || trace_type == "lor",
                "Trace solver must be graph, hb, or lor.");
@@ -98,8 +131,28 @@ int main(int argc, char *argv[])
    b.ParallelAssemble(f);
 
    ParBilinearForm a(&fes_rt);
-   a.AddDomainIntegrator(new DivDivIntegrator);
-   a.AddDomainIntegrator(new VectorFEMassIntegrator);
+   // Mass (alpha) and div (beta) coefficients: piecewise constant on the
+   // crooked pipe mesh (attribute 1 is the pipe), unit otherwise.
+   unique_ptr<Coefficient> alpha, beta;
+   const string mesh_name(mesh_file);
+   const string crooked_pipe = "CrookedPipeMesh_1.mesh";
+   if (mesh_name.size() >= crooked_pipe.size() &&
+       mesh_name.compare(mesh_name.size() - crooked_pipe.size(),
+                         crooked_pipe.size(), crooked_pipe) == 0)
+   {
+      if (Mpi::Root()) { cout << "Using crooked pipe coefficients.\n"; }
+      Vector alpha_vec(mesh.attributes.Max()), beta_vec(mesh.attributes.Max());
+      alpha_vec = 0.2;
+      alpha_vec(0) = 2000.0;
+      beta_vec = 1.64098370E+00;
+      beta_vec(0) = 1.88046595E-03;
+      alpha.reset(new PWConstCoefficient(alpha_vec));
+      beta.reset(new PWConstCoefficient(beta_vec));
+   }
+   a.AddDomainIntegrator(beta ? new DivDivIntegrator(*beta) :
+                         new DivDivIntegrator);
+   a.AddDomainIntegrator(alpha ? new VectorFEMassIntegrator(*alpha) :
+                         new VectorFEMassIntegrator);
 
    BrokenSpace fes_hat(fes_rt);
    Array<int> offsets({0, fes_hat.GetNumBrokenDofs(),
@@ -138,7 +191,9 @@ int main(int argc, char *argv[])
    unique_ptr<Solver> trace_inverse;
    if (trace_type == "graph")
    {
-      trace_inverse.reset(new GraphPreconditioner(fes_hat, stype));
+      trace_inverse.reset(new GraphPreconditioner(fes_hat, ess_tdofs,
+                                                  alpha.get(), beta.get(),
+                                                  stype));
    }
    else
    {
@@ -171,20 +226,67 @@ int main(int argc, char *argv[])
    unique_ptr<Solver> element_inverse;
    if (fast_diag)
    {
-      element_inverse.reset(new FastDiagonalizationSolver(fes_rt, ess_broken_dofs));
+      element_inverse.reset(new FastDiagonalizationSolver(
+                               fes_rt, ess_broken_dofs, alpha.get(), beta.get()));
    }
    else { element_inverse.reset(new BrokenElementSolver(a, ess_broken_dofs)); }
-   BlockDiagonalPreconditioner preconditioner(offsets);
-   preconditioner.SetDiagonalBlock(0, element_inverse.get());
-   preconditioner.SetDiagonalBlock(1, trace_inverse.get());
-   MINRESSolver minres(MPI_COMM_WORLD);
-   minres.SetPreconditioner(preconditioner);
-   minres.SetOperator(constrained_K);
-   minres.SetRelTol(1e-12);
-   minres.SetAbsTol(0.0);
-   minres.SetMaxIter(1000);
-   minres.SetPrintLevel(1);
-   minres.Mult(rhs, solution);
+   if (use_cg)
+   {
+      // A_hat is block diagonal and local to each rank, so the inner solver
+      // does not need a communicator.
+      ConstrainedOperator constrained_A(A_hat.get(), ess_broken_dofs);
+      CGSolver A_inverse;
+      // Set the operator first: the element inverse rejects SetOperator.
+      A_inverse.SetOperator(constrained_A);
+      A_inverse.SetPreconditioner(*element_inverse);
+      A_inverse.SetRelTol(1e-12);
+      A_inverse.SetAbsTol(0.0);
+      A_inverse.SetMaxIter(1000);
+      A_inverse.iterative_mode = false;
+
+      const Array<int> &inactive_dofs = fes_hat.GetInactiveTraceDofs();
+      Vector &g = rhs.GetBlock(0), &h = rhs.GetBlock(1);
+      Vector &u = solution.GetBlock(0), &lambda = solution.GetBlock(1);
+
+      // Multiplier right-hand side C A^{-1} g - h.
+      Vector z(g.Size()), r(h.Size());
+      A_inverse.Mult(g, z);
+      z.SetSubVector(ess_broken_dofs, 0.0);
+      Ct.MultTranspose(z, r);
+      r -= h;
+      for (int td : inactive_dofs) { r(td) = h(td); }
+
+      MultiplierSchurComplement S(A_inverse, Ct, ess_broken_dofs, inactive_dofs);
+      CGSolver cg(MPI_COMM_WORLD);
+      cg.SetPreconditioner(*trace_inverse);
+      cg.SetOperator(S);
+      cg.SetRelTol(1e-12);
+      cg.SetAbsTol(0.0);
+      cg.SetMaxIter(1000);
+      cg.SetPrintLevel(1);
+      cg.Mult(r, lambda);
+
+      // Recover u = A^{-1} (g - C^T lambda); g retains the essential values.
+      Ct.Mult(lambda, z);
+      z.SetSubVector(ess_broken_dofs, 0.0);
+      z.Neg();
+      z += g;
+      A_inverse.Mult(z, u);
+   }
+   else
+   {
+      BlockDiagonalPreconditioner preconditioner(offsets);
+      preconditioner.SetDiagonalBlock(0, element_inverse.get());
+      preconditioner.SetDiagonalBlock(1, trace_inverse.get());
+      MINRESSolver minres(MPI_COMM_WORLD);
+      minres.SetPreconditioner(preconditioner);
+      minres.SetOperator(constrained_K);
+      minres.SetRelTol(1e-12);
+      minres.SetAbsTol(0.0);
+      minres.SetMaxIter(1000);
+      minres.SetPrintLevel(1);
+      minres.Mult(rhs, solution);
+   }
 
    if (Mpi::Root())
    {

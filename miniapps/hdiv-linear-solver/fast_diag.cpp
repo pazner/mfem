@@ -15,9 +15,31 @@
 namespace mfem
 {
 
+/// Evaluate coeff (one if null) at the points of the rule it is integrated on,
+/// in element-contiguous order, and return that rule.
+static const IntegrationRule &EvalCoefficient(
+   Mesh &mesh, Coefficient *coeff, const IntegrationRule &default_rule,
+   Vector &values)
+{
+   if (const IntegrationRule *rule = GetCoefficientRule(coeff))
+   {
+      const auto &qf =
+         static_cast<QuadratureFunctionCoefficient*>(coeff)->GetQuadFunction();
+      MFEM_VERIFY(qf.GetVDim() == 1, "Expected a scalar quadrature function.");
+      values = qf;
+      return *rule;
+   }
+   QuadratureSpace qs(mesh, default_rule);
+   QuadratureFunction qf(qs);
+   if (coeff) { coeff->Project(qf); }
+   else { qf = 1.0; }
+   values = qf;
+   return default_rule;
+}
+
 FastDiagonalizationSolver::FastDiagonalizationSolver(
    FiniteElementSpace &fes, const Array<int> &ess_dofs,
-   real_t alpha, real_t beta)
+   Coefficient *alpha, Coefficient *beta)
    : Solver(0), dim(fes.GetMesh()->Dimension()), p(fes.GetMaxElementOrder()),
      nd(fes.GetTypicalFE()->GetDof()), ne(fes.GetNE()),
      masks(ne, dim), mass_inverse(dim, ne), div_scale(ne), work(nd), scratch(nd)
@@ -32,7 +54,6 @@ FastDiagonalizationSolver::FastDiagonalizationSolver(
    MFEM_VERIFY((dim == 2 || dim == 3) && fes.GetVDim() == 1 &&
                fes.GetMesh()->SpaceDimension() == dim && !fes.IsVariableOrder(),
                "Expected a uniform-order 2D or 3D RT space.");
-   MFEM_VERIFY(alpha > 0.0 && beta >= 0.0, "Invalid coefficients.");
    const auto geom = Geometry::TensorProductGeometry(dim);
    MFEM_VERIFY(fes.GetTypicalFE()->GetGeomType() == geom,
                "Expected quadrilateral or hexahedral elements.");
@@ -138,34 +159,52 @@ FastDiagonalizationSolver::FastDiagonalizationSolver(
 
    // Average the diagonal of alpha J^T J/det J and beta/det J using
    // reference quadrature weights. Off-diagonal mass couplings are omitted.
+   // Quadrature function coefficients are averaged on their own rules.
    Mesh &mesh = *fes.GetMesh();
    const FiniteElement &fe = *fes.GetTypicalFE();
-   const IntegrationRule &rule = MassIntegrator::GetRule(
-                                    fe, fe, *mesh.GetTypicalElementTransformation());
-   const auto *factors = mesh.GetGeometricFactors(
-                            rule, GeometricFactors::JACOBIANS |
-                            GeometricFactors::DETERMINANTS);
-   const int nq = rule.GetNPoints();
-   const auto J = Reshape(factors->J.HostRead(), nq, dim, dim, ne);
-   const auto det = Reshape(factors->detJ.HostRead(), nq, ne);
-   const real_t weight_sum = rule.GetWeights().Sum();
+   const IntegrationRule &default_rule = MassIntegrator::GetRule(
+                                            fe, fe, *mesh.GetTypicalElementTransformation());
+   Vector alpha_values, beta_values;
+   const IntegrationRule &alpha_rule = EvalCoefficient(mesh, alpha, default_rule,
+                                                       alpha_values);
+   const IntegrationRule &beta_rule = EvalCoefficient(mesh, beta, default_rule,
+                                                      beta_values);
+   const int flags = GeometricFactors::JACOBIANS | GeometricFactors::DETERMINANTS;
+   const auto *alpha_factors = mesh.GetGeometricFactors(alpha_rule, flags);
+   const auto *beta_factors = mesh.GetGeometricFactors(beta_rule, flags);
+   const int nqa = alpha_rule.GetNPoints(), nqb = beta_rule.GetNPoints();
+   const auto J = Reshape(alpha_factors->J.HostRead(), nqa, dim, dim, ne);
+   const auto det_a = Reshape(alpha_factors->detJ.HostRead(), nqa, ne);
+   const auto det_b = Reshape(beta_factors->detJ.HostRead(), nqb, ne);
+   const auto a_val = Reshape(alpha_values.HostRead(), nqa, ne);
+   const auto b_val = Reshape(beta_values.HostRead(), nqb, ne);
+   const real_t alpha_weight_sum = alpha_rule.GetWeights().Sum();
+   const real_t beta_weight_sum = beta_rule.GetWeights().Sum();
    for (int e = 0; e < ne; ++e)
    {
       real_t mass[3] = {}, div = 0.0;
-      for (int q = 0; q < nq; ++q)
+      for (int q = 0; q < nqa; ++q)
       {
-         MFEM_VERIFY(det(q,e) > 0.0, "Nonpositive element Jacobian.");
-         const real_t w = rule.IntPoint(q).weight/det(q,e);
-         div += w;
+         MFEM_VERIFY(det_a(q,e) > 0.0, "Nonpositive element Jacobian.");
+         const real_t w = alpha_rule.IntPoint(q).weight*a_val(q,e)/det_a(q,e);
          for (int c = 0; c < dim; ++c)
          {
             for (int a = 0; a < dim; ++a)
             { mass[c] += w*J(q,a,c,e)*J(q,a,c,e); }
          }
       }
+      for (int q = 0; q < nqb; ++q)
+      {
+         MFEM_VERIFY(det_b(q,e) > 0.0, "Nonpositive element Jacobian.");
+         div += beta_rule.IntPoint(q).weight*b_val(q,e)/det_b(q,e);
+      }
+      MFEM_VERIFY(div >= 0.0, "Invalid coefficients.");
       for (int c = 0; c < dim; ++c)
-      { mass_inverse(c,e) = weight_sum/(alpha*mass[c]); }
-      div_scale(e) = beta*div/weight_sum;
+      {
+         MFEM_VERIFY(mass[c] > 0.0, "Invalid coefficients.");
+         mass_inverse(c,e) = alpha_weight_sum/mass[c];
+      }
+      div_scale(e) = div/beta_weight_sum;
    }
 #endif
 }
