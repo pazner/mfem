@@ -11,8 +11,6 @@
 
 #include "fast_diag.hpp"
 #include <algorithm>
-#include <cmath>
-#include <limits>
 
 namespace mfem
 {
@@ -138,37 +136,36 @@ FastDiagonalizationSolver::FastDiagonalizationSolver(
       lo.USolve(p, p, b.open.Data());
    }
 
-   // Contravariant Piola: mass component c scales as alpha |J_c|^2/det J,
-   // while div-div scales as beta/det J. Orthogonal columns allow rotations.
-   const real_t tol = 256*std::numeric_limits<real_t>::epsilon();
-   const IntegrationRule &check = IntRules.Get(geom, 2*p+2);
+   // Average the diagonal of alpha J^T J/det J and beta/det J using
+   // reference quadrature weights. Off-diagonal mass couplings are omitted.
+   Mesh &mesh = *fes.GetMesh();
+   const FiniteElement &fe = *fes.GetTypicalFE();
+   const IntegrationRule &rule = MassIntegrator::GetRule(
+                                    fe, fe, *mesh.GetTypicalElementTransformation());
+   const auto *factors = mesh.GetGeometricFactors(
+                            rule, GeometricFactors::JACOBIANS |
+                            GeometricFactors::DETERMINANTS);
+   const int nq = rule.GetNPoints();
+   const auto J = Reshape(factors->J.HostRead(), nq, dim, dim, ne);
+   const auto det = Reshape(factors->detJ.HostRead(), nq, ne);
+   const real_t weight_sum = rule.GetWeights().Sum();
    for (int e = 0; e < ne; ++e)
    {
-      auto &tr = *fes.GetElementTransformation(e);
-      tr.SetIntPoint(&Geometries.GetCenter(geom));
-      DenseMatrix J(tr.Jacobian()), metric(dim);
-      MultAtB(J, J, metric);
-      const real_t det = tr.Weight();
-      MFEM_VERIFY(det > 0.0, "Degenerate element.");
-      for (int c = 0; c < dim; ++c)
+      real_t mass[3] = {}, div = 0.0;
+      for (int q = 0; q < nq; ++q)
       {
-         mass_inverse(c,e) = det/(alpha*metric(c,c));
-         for (int a = 0; a < c; ++a)
+         MFEM_VERIFY(det(q,e) > 0.0, "Nonpositive element Jacobian.");
+         const real_t w = rule.IntPoint(q).weight/det(q,e);
+         div += w;
+         for (int c = 0; c < dim; ++c)
          {
-            MFEM_VERIFY(std::abs(metric(a,c)) <=
-                        tol*std::sqrt(metric(a,a)*metric(c,c)),
-                        "Fast diagonalization requires Cartesian elements.");
+            for (int a = 0; a < dim; ++a)
+            { mass[c] += w*J(q,a,c,e)*J(q,a,c,e); }
          }
       }
-      for (int q = 0; q < check.Size(); ++q)
-      {
-         tr.SetIntPoint(&check.IntPoint(q));
-         DenseMatrix diff(tr.Jacobian());
-         diff -= J;
-         MFEM_VERIFY(diff.MaxMaxNorm() <= tol*J.MaxMaxNorm(),
-                     "Fast diagonalization requires affine elements.");
-      }
-      div_scale(e) = beta/det;
+      for (int c = 0; c < dim; ++c)
+      { mass_inverse(c,e) = weight_sum/(alpha*mass[c]); }
+      div_scale(e) = beta*div/weight_sum;
    }
 #endif
 }

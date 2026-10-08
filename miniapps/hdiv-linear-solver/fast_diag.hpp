@@ -17,10 +17,13 @@
 namespace mfem
 {
 
-/// Element inverse of alpha (u,v) + beta (div u,div v) on Cartesian RT cells.
+/// Approximate element inverse of alpha (u,v) + beta (div u,div v) for RT cells.
 /** Uses native, element-contiguous broken coordinates, including RT signs.
-    Requires LAPACK, uniform order, GaussLobatto/IntegratedGLL bases, affine
-    orthogonal element maps, alpha > 0 and beta >= 0. Essential DOFs must be
+    Approximates alpha J^T J/det J by its elementwise averaged diagonal and
+    beta/det J by its elementwise average, using reference quadrature weights.
+    Exact for affine orthogonal maps; an SPD preconditioner otherwise.
+    Requires LAPACK, uniform order, GaussLobatto/IntegratedGLL bases, positive
+    Jacobians, constant alpha > 0 and beta >= 0. Essential DOFs must be
     unions of complete element faces, in broken numbering; their equations
     are identity. Setup is on the host, and Mult uses host tensor contractions.
     Reconstruct the solver after changing the mesh or coefficients. */
