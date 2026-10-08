@@ -80,7 +80,7 @@ real_t PWConstCoefficient::Eval(ElementTransformation & T,
                                 const IntegrationPoint & ip)
 {
    int att = T.Attribute;
-   return (constants(att-1));
+   return (constants.HostRead()[att-1]);
 }
 
 void PWConstCoefficient::Project(QuadratureFunction &qf)
