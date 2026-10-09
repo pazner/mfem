@@ -34,6 +34,20 @@ if (MFEM_USE_MPI)
     EXTRA_HEADERS change_basis.hpp discrete_divergence.hpp hdiv_linear_solver.hpp
     LIBRARIES mfem)
 
+  add_mfem_miniapp(spe10
+    MAIN spe10.cpp
+    EXTRA_SOURCES change_basis.cpp discrete_divergence.cpp hdiv_linear_solver.cpp
+    EXTRA_HEADERS change_basis.hpp discrete_divergence.hpp hdiv_linear_solver.hpp
+                  generic_coefficient.hpp spe10.hpp
+    LIBRARIES mfem)
+
+  add_mfem_miniapp(spe10_hb
+    MAIN spe10_hb.cpp
+    EXTRA_SOURCES fast_diag.cpp broken_hdiv.cpp discrete_divergence.cpp
+    EXTRA_HEADERS hb.hpp fast_diag.hpp broken_hdiv.hpp generic_coefficient.hpp
+                  spe10.hpp
+    LIBRARIES mfem)
+
   # Add the corresponding tests to the "test" target
   if (MFEM_ENABLE_TESTING)
     add_test(NAME darcy_np${MFEM_MPI_NP}

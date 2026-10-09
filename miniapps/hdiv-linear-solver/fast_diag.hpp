@@ -13,6 +13,7 @@
 #define MFEM_HDIV_FAST_DIAG_HPP
 
 #include "mfem.hpp"
+#include "generic_coefficient.hpp"
 
 namespace mfem
 {
@@ -41,16 +42,18 @@ void GetConstrainedFaceMasks(const FiniteElementSpace &fes,
 /// Approximate element inverse of alpha (u,v) + beta (div u,div v) for RT cells.
 /** Uses lexicographic, element-contiguous broken coordinates (the layout of
     MFEM's lexicographic element restriction, including RT signs).
-    Approximates alpha J^T J/det J by its elementwise averaged diagonal and
+    Approximates J^T alpha J/det J by its elementwise averaged diagonal and
     beta/det J by its elementwise average, using reference quadrature weights.
     Exact for affine orthogonal maps and elementwise constant coefficients; an
-    SPD preconditioner otherwise. The coefficients alpha (mass) and beta (div)
-    default to one when null. Requires LAPACK, uniform order,
+    SPD preconditioner otherwise. The mass coefficient alpha may be a scalar or
+    a diagonal matrix coefficient; alpha (mass) and beta (div) default to one
+    when null. Requires LAPACK, uniform order,
     GaussLobatto/IntegratedGLL bases, positive Jacobians, alpha > 0 and
     beta >= 0, and order + 1 at most the H(div) limit HDIV_MAX_D1D of the
     configured device. Essential DOFs must be unions of complete element faces,
-    in broken numbering; their equations are identity. Setup is on the host. Mult runs on the device with one thread
-    block per element, holding the element vector in shared memory. Reconstruct
+    in broken numbering; their equations are identity. Setup runs on the device,
+    except for the 1D bases. Mult runs on the device with one thread block per
+    element, holding the element vector in shared memory. Reconstruct
     the solver after changing the mesh or coefficients. */
 class FastDiagonalizationSolver : public Solver
 {
@@ -69,7 +72,7 @@ class FastDiagonalizationSolver : public Solver
 public:
    FastDiagonalizationSolver(FiniteElementSpace &fes,
                              const Array<int> &ess_dofs = Array<int>(),
-                             Coefficient *alpha = nullptr,
+                             GenericCoefficient alpha = GenericCoefficient(),
                              Coefficient *beta = nullptr);
 
    void Mult(const Vector &x, Vector &y) const override;

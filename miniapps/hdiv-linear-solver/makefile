@@ -21,12 +21,13 @@ MFEM_LIB_FILE = mfem_is_not_built
 -include $(CONFIG_MK)
 
 HDIV_HEADERS = hdiv_linear_solver.hpp discrete_divergence.hpp change_basis.hpp \
+					generic_coefficient.hpp \
 					../solvers/lor_mms.hpp
 HDIV_SRC = hdiv_linear_solver.cpp change_basis.cpp discrete_divergence.cpp
 HDIV_OBJ = $(HDIV_SRC:.cpp=.o)
 
 SEQ_MINIAPPS =
-PAR_MINIAPPS = grad_div darcy hb crooked_pipe
+PAR_MINIAPPS = grad_div darcy hb crooked_pipe spe10 spe10_hb
 
 ifeq ($(MFEM_USE_MPI),NO)
    MINIAPPS = $(SEQ_MINIAPPS)
@@ -51,11 +52,17 @@ $(MINIAPPS):%: %.o $(HDIV_OBJ)
 %.o: $(SRC)%.cpp $(MFEM_LIB_FILE) $(CONFIG_MK)
 	$(MFEM_CXX) $(MFEM_FLAGS) -c $< -o $@
 
-hb: fast_diag.o broken_hdiv.o
+darcy.o grad_div.o crooked_pipe.o spe10.o $(HDIV_OBJ): \
+   $(addprefix $(SRC),$(HDIV_HEADERS))
+spe10.o: $(SRC)spe10.hpp
+hb spe10_hb: fast_diag.o broken_hdiv.o
+spe10_hb.o: $(SRC)hb.hpp $(SRC)discrete_divergence.hpp $(SRC)fast_diag.hpp \
+            $(SRC)broken_hdiv.hpp $(SRC)generic_coefficient.hpp $(SRC)spe10.hpp
 hb.o: $(SRC)hb.hpp $(SRC)discrete_divergence.hpp $(SRC)fast_diag.hpp \
-      $(SRC)broken_hdiv.hpp
-fast_diag.o: $(SRC)fast_diag.hpp
-broken_hdiv.o: $(SRC)broken_hdiv.hpp $(SRC)fast_diag.hpp
+      $(SRC)broken_hdiv.hpp $(SRC)generic_coefficient.hpp
+fast_diag.o: $(SRC)fast_diag.hpp $(SRC)generic_coefficient.hpp
+broken_hdiv.o: $(SRC)broken_hdiv.hpp $(SRC)fast_diag.hpp \
+               $(SRC)generic_coefficient.hpp
 
 MFEM_TESTS = MINIAPPS
 include $(MFEM_TEST_MK)

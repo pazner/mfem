@@ -64,8 +64,8 @@ const IntegrationRule &GetMassIntRule(FiniteElementSpace &fes_l2)
 
 HdivSaddlePointSolver::HdivSaddlePointSolver(
    ParMesh &mesh, ParFiniteElementSpace &fes_rt_, ParFiniteElementSpace &fes_l2_,
-   Coefficient &L_coeff_, Coefficient &R_coeff_, const Array<int> &ess_rt_dofs_,
-   Mode mode_)
+   Coefficient &L_coeff_, GenericCoefficient R_coeff_,
+   const Array<int> &ess_rt_dofs_, Mode mode_)
    : minres(mesh.GetComm()),
      order(fes_rt_.GetMaxElementOrder()),
      fec_l2(order - 1, mesh.Dimension(), b2, mt),
@@ -100,7 +100,7 @@ HdivSaddlePointSolver::HdivSaddlePointSolver(
    mass_l2.AddDomainIntegrator(new MassIntegrator(W_coeff));
    mass_l2.SetAssemblyLevel(AssemblyLevel::PARTIAL);
 
-   mass_rt.AddDomainIntegrator(new VectorFEMassIntegrator(&R_coeff));
+   mass_rt.AddDomainIntegrator(R_coeff.NewIntegrator<VectorFEMassIntegrator>());
    mass_rt.SetAssemblyLevel(AssemblyLevel::PARTIAL);
 
    D.reset(FormDiscreteDivergenceMatrix(fes_rt, fes_l2, ess_rt_dofs));
@@ -154,7 +154,7 @@ HdivSaddlePointSolver::HdivSaddlePointSolver(
 
 HdivSaddlePointSolver::HdivSaddlePointSolver(
    ParMesh &mesh, ParFiniteElementSpace &fes_rt_, ParFiniteElementSpace &fes_l2_,
-   Coefficient &R_coeff_, const Array<int> &ess_rt_dofs_)
+   GenericCoefficient R_coeff_, const Array<int> &ess_rt_dofs_)
    : HdivSaddlePointSolver(mesh, fes_rt_, fes_l2_, zero, R_coeff_,
                            ess_rt_dofs_, Mode::DARCY)
 { }

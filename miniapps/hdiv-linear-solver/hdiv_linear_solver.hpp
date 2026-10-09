@@ -14,6 +14,7 @@
 
 #include "mfem.hpp"
 #include "change_basis.hpp"
+#include "generic_coefficient.hpp"
 #include <memory>
 
 namespace mfem
@@ -82,7 +83,8 @@ private:
    /// The block-diagonal preconditioner.
    std::unique_ptr<BlockDiagonalPreconditioner> D_prec;
 
-   Coefficient &L_coeff, &R_coeff;
+   Coefficient &L_coeff;
+   GenericCoefficient R_coeff;
 
    const Mode mode;
    bool zero_l2_block = false;
@@ -110,7 +112,7 @@ public:
    /// eliminated from B).
    ///
    /// The L block has coefficient @a L_coeff_ and the R block has coefficient
-   /// @a R_coeff_.
+   /// @a R_coeff_, which may be a scalar or a diagonal matrix coefficient.
    ///
    /// The parameter @a mode_ determines whether the block system corresponds to
    /// a grad-div problem or a Darcy problem. Specifically, if @a mode_ is
@@ -133,7 +135,7 @@ public:
                          ParFiniteElementSpace &fes_rt_,
                          ParFiniteElementSpace &fes_l2_,
                          Coefficient &L_coeff_,
-                         Coefficient &R_coeff_,
+                         GenericCoefficient R_coeff_,
                          const Array<int> &ess_rt_dofs_,
                          Mode mode_);
 
@@ -145,7 +147,7 @@ public:
    HdivSaddlePointSolver(ParMesh &mesh_,
                          ParFiniteElementSpace &fes_rt_,
                          ParFiniteElementSpace &fes_l2_,
-                         Coefficient &R_coeff_,
+                         GenericCoefficient R_coeff_,
                          const Array<int> &ess_rt_dofs_);
 
    /// @brief Build the linear operator and solver. Must be called when the

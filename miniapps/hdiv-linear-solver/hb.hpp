@@ -403,13 +403,14 @@ public:
 /// caller owns the returned matrix.
 inline HypreParMatrix *AssembleGraphLaplacian(
    ParFiniteElementSpace &fes_rt, ParFiniteElementSpace &fes_l2,
-   const Array<int> &ess_rt_dofs, Coefficient *alpha = nullptr,
+   const Array<int> &ess_rt_dofs,
+   GenericCoefficient alpha = GenericCoefficient(),
    Coefficient *beta = nullptr)
 {
    ParBilinearForm mass_rt(&fes_rt);
    mass_rt.SetAssemblyLevel(AssemblyLevel::PARTIAL);
-   auto *rt_integrator = new VectorFEMassIntegrator(alpha);
-   rt_integrator->SetIntRule(GetCoefficientRule(alpha));
+   auto *rt_integrator = alpha.NewIntegrator<VectorFEMassIntegrator>();
+   rt_integrator->SetIntRule(GetCoefficientRule(alpha.Q));
    mass_rt.AddDomainIntegrator(rt_integrator);
    mass_rt.Assemble();
    Vector rt_mass_diag_inv(fes_rt.GetTrueVSize());
@@ -458,8 +459,8 @@ class GraphPreconditioner : public Solver
    mutable Vector z1, z2;
 public:
    GraphPreconditioner(BrokenSpace &fes_hat, const Array<int> &ess_rt_dofs,
-                       Coefficient *alpha = nullptr, Coefficient *beta = nullptr,
-                       SolverType stype=AMG)
+                       GenericCoefficient alpha = GenericCoefficient(),
+                       Coefficient *beta = nullptr, SolverType stype=AMG)
       : Solver(fes_hat.GetNumTraceDofs()), F_inverse(height)
    {
       ParFiniteElementSpace &fes_rt = fes_hat.GetFESpace();
@@ -469,10 +470,11 @@ public:
       Vector diagonal_lex(fes_hat.GetNumBrokenDofs());
       diagonal_lex.UseDevice(true);
       diagonal_lex = 0.0;
-      VectorFEMassIntegrator mass(alpha);
-      mass.SetIntRule(GetCoefficientRule(alpha));
-      mass.AssemblePA(fes_rt);
-      mass.AssembleDiagonalPA(diagonal_lex);
+      std::unique_ptr<VectorFEMassIntegrator> mass(
+         alpha.NewIntegrator<VectorFEMassIntegrator>());
+      mass->SetIntRule(GetCoefficientRule(alpha.Q));
+      mass->AssemblePA(fes_rt);
+      mass->AssembleDiagonalPA(diagonal_lex);
 
       // The PA diagonal is in the lexicographic broken coordinates.
       Vector &inverse_mass = diagonal_lex;

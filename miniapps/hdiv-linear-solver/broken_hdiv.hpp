@@ -13,6 +13,7 @@
 #define MFEM_HDIV_BROKEN_HDIV_HPP
 
 #include "mfem.hpp"
+#include "generic_coefficient.hpp"
 
 namespace mfem
 {
@@ -35,8 +36,9 @@ namespace mfem
 
     The quadrature rule is that of MassIntegrator (as used by the PA
     VectorFEMassIntegrator and DivDivIntegrator), or the rule of
-    QuadratureFunctionCoefficient arguments. The coefficients alpha (mass) and
-    beta (div) default to one when null. Requires uniform-order quadrilateral or
+    QuadratureFunctionCoefficient arguments. The mass coefficient alpha may be
+    a scalar or a diagonal matrix coefficient; alpha (mass) and beta (div)
+    default to one when null. Requires uniform-order quadrilateral or
     hexahedral elements with positive Jacobians, within the H(div) limits
     HDIV_MAX_D1D and HDIV_MAX_Q1D of the configured device. Reconstruct the
     operator after changing the mesh or coefficients. */
@@ -44,7 +46,7 @@ class BrokenHdivOperator : public Operator
 {
    int dim, ne, d1d, q1d;
    const Array<real_t> *Bo, *Bc; // open and closed 1D bases at quadrature
-   /// Per quadrature point: the symmetric entries of alpha w J^T J/det J
+   /// Per quadrature point: the symmetric entries of w J^T alpha J/det J
    /// (row-major upper triangle), followed by beta w/det J.
    Vector qdata;
    /// Constrained faces of each element (see GetConstrainedFaceMasks), or
@@ -53,7 +55,7 @@ class BrokenHdivOperator : public Operator
 
 public:
    BrokenHdivOperator(const FiniteElementSpace &fes,
-                      Coefficient *alpha = nullptr,
+                      GenericCoefficient alpha = GenericCoefficient(),
                       Coefficient *beta = nullptr);
 
    /// Constrain the essential broken DOFs (unions of complete element faces):

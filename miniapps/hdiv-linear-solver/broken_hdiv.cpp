@@ -35,16 +35,17 @@ MFEM_HOST_DEVICE inline bool IsConstrained(const int *mask, int f, int k,
    return (k == 0 && (m & 1)) || (k == P && (m & 2));
 }
 
-/// Quadrature data in 2D: w/det J times alpha (J^T J)_{00}, (J^T J)_{01},
-/// (J^T J)_{11}, and beta.
+/// Quadrature data in 2D: w/det J times (J^T alpha J)_{00}, (J^T alpha J)_{01},
+/// (J^T alpha J)_{11}, and beta. alpha has AV (one or two, for a diagonal
+/// matrix) components per point.
 static void SetupQuadratureData2D(const int NE, const int NQ,
                                   const Array<real_t> &w, const Vector &j,
-                                  const Vector &alpha, const Vector &beta,
-                                  Vector &qd)
+                                  const Vector &alpha, const int AV,
+                                  const Vector &beta, Vector &qd)
 {
    const auto W = w.Read();
    const auto J = Reshape(j.Read(), NQ, 2, 2, NE);
-   const auto A = Reshape(alpha.Read(), NQ, NE);
+   const auto A = Reshape(alpha.Read(), AV, NQ, NE);
    const auto B = Reshape(beta.Read(), NQ, NE);
    auto D = Reshape(qd.Write(), NQ, 4, NE);
    mfem::forall(NE*NQ, [=] MFEM_HOST_DEVICE (int i)
@@ -53,23 +54,25 @@ static void SetupQuadratureData2D(const int NE, const int NQ,
       const real_t J11 = J(q,0,0,e), J21 = J(q,1,0,e);
       const real_t J12 = J(q,0,1,e), J22 = J(q,1,1,e);
       const real_t c = W[q]/(J11*J22 - J21*J12);
-      D(q,0,e) = c*A(q,e)*(J11*J11 + J21*J21);
-      D(q,1,e) = c*A(q,e)*(J11*J12 + J21*J22);
-      D(q,2,e) = c*A(q,e)*(J12*J12 + J22*J22);
+      const real_t a1 = A(0,q,e), a2 = AV == 1 ? a1 : A(1,q,e);
+      D(q,0,e) = c*(a1*J11*J11 + a2*J21*J21);
+      D(q,1,e) = c*(a1*J11*J12 + a2*J21*J22);
+      D(q,2,e) = c*(a1*J12*J12 + a2*J22*J22);
       D(q,3,e) = c*B(q,e);
    });
 }
 
-/// Quadrature data in 3D: w/det J times alpha times the upper triangle of
-/// J^T J (row-major), and beta.
+/// Quadrature data in 3D: w/det J times the upper triangle of J^T alpha J
+/// (row-major), and beta. alpha has AV (one or three, for a diagonal matrix)
+/// components per point.
 static void SetupQuadratureData3D(const int NE, const int NQ,
                                   const Array<real_t> &w, const Vector &j,
-                                  const Vector &alpha, const Vector &beta,
-                                  Vector &qd)
+                                  const Vector &alpha, const int AV,
+                                  const Vector &beta, Vector &qd)
 {
    const auto W = w.Read();
    const auto J = Reshape(j.Read(), NQ, 3, 3, NE);
-   const auto A = Reshape(alpha.Read(), NQ, NE);
+   const auto A = Reshape(alpha.Read(), AV, NQ, NE);
    const auto B = Reshape(beta.Read(), NQ, NE);
    auto D = Reshape(qd.Write(), NQ, 7, NE);
    mfem::forall(NE*NQ, [=] MFEM_HOST_DEVICE (int i)
@@ -87,8 +90,11 @@ static void SetupQuadratureData3D(const int NE, const int NQ,
          for (int b = a; b < 3; ++b)
          {
             real_t s = 0.0;
-            for (int k = 0; k < 3; ++k) { s += J(q,k,a,e)*J(q,k,b,e); }
-            D(q,idx++,e) = c*A(q,e)*s;
+            for (int k = 0; k < 3; ++k)
+            {
+               s += A(AV == 1 ? 0 : k,q,e)*J(q,k,a,e)*J(q,k,b,e);
+            }
+            D(q,idx++,e) = c*s;
          }
       }
       D(q,6,e) = c*B(q,e);
@@ -476,7 +482,8 @@ static void BrokenHdivApply3D(const int NE, const Array<real_t> &Bo_,
 }
 
 BrokenHdivOperator::BrokenHdivOperator(const FiniteElementSpace &fes,
-                                       Coefficient *alpha, Coefficient *beta)
+                                       GenericCoefficient alpha,
+                                       Coefficient *beta)
    : Operator(fes.GetNE()*fes.GetTypicalFE()->GetDof()),
      dim(fes.GetMesh()->Dimension()), ne(fes.GetNE())
 {
@@ -491,7 +498,9 @@ BrokenHdivOperator::BrokenHdivOperator(const FiniteElementSpace &fes,
                "Expected a uniform-order 2D or 3D RT space.");
 
    Mesh &mesh = *fes.GetMesh();
-   const IntegrationRule *alpha_rule = GetCoefficientRule(alpha);
+   MFEM_VERIFY(!dynamic_cast<VectorQuadratureFunctionCoefficient*>(alpha.D),
+               "Diagonal quadrature function coefficients are not supported.");
+   const IntegrationRule *alpha_rule = GetCoefficientRule(alpha.Q);
    const IntegrationRule *beta_rule = GetCoefficientRule(beta);
    MFEM_VERIFY(!alpha_rule || !beta_rule || alpha_rule == beta_rule,
                "Quadrature function coefficients must share a rule.");
@@ -517,19 +526,25 @@ BrokenHdivOperator::BrokenHdivOperator(const FiniteElementSpace &fes,
                "Expected a tensor-product quadrature rule.");
    const auto *geom = mesh.GetGeometricFactors(ir, GeometricFactors::JACOBIANS);
    QuadratureSpace qs(mesh, ir);
-   CoefficientVector alpha_values(alpha, qs, CoefficientStorage::FULL);
+   CoefficientVector alpha_values(qs, CoefficientStorage::FULL);
+   if (alpha.D) { alpha_values.Project(*alpha.D); }
+   else if (alpha.Q) { alpha_values.Project(*alpha.Q); }
+   else { alpha_values.SetConstant(1.0); }
+   const int alpha_vdim = alpha_values.GetVDim();
+   MFEM_VERIFY(alpha_vdim == 1 || alpha_vdim == dim,
+               "Expected a scalar or diagonal matrix mass coefficient.");
    CoefficientVector beta_values(beta, qs, CoefficientStorage::FULL);
    qdata.SetSize((dim == 3 ? 7 : 4)*nq*ne);
    qdata.UseDevice(true);
    if (dim == 3)
    {
       SetupQuadratureData3D(ne, nq, ir.GetWeights(), geom->J, alpha_values,
-                            beta_values, qdata);
+                            alpha_vdim, beta_values, qdata);
    }
    else
    {
       SetupQuadratureData2D(ne, nq, ir.GetWeights(), geom->J, alpha_values,
-                            beta_values, qdata);
+                            alpha_vdim, beta_values, qdata);
    }
 }
 

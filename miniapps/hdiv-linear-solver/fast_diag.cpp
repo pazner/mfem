@@ -43,6 +43,28 @@ static const IntegrationRule &EvalCoefficient(
    return default_rule;
 }
 
+/// Evaluate the mass coefficient alpha (scalar or diagonal matrix) like
+/// EvalCoefficient; vdim is set to its number of components.
+static const IntegrationRule &EvalMassCoefficient(
+   Mesh &mesh, const GenericCoefficient &alpha,
+   const IntegrationRule &default_rule, Vector &values, int &vdim)
+{
+   MFEM_VERIFY(!dynamic_cast<VectorQuadratureFunctionCoefficient*>(alpha.D),
+               "Diagonal quadrature function coefficients are not supported.");
+   vdim = alpha.GetVDim();
+   if (!alpha.D)
+   {
+      return EvalCoefficient(mesh, alpha.Q, default_rule, values);
+   }
+   QuadratureSpace qs(mesh, default_rule);
+   QuadratureFunction qf(qs, vdim);
+   qf.UseDevice(true);
+   alpha.D->Project(qf);
+   values.UseDevice(true);
+   values = qf;
+   return default_rule;
+}
+
 /// Sum of the point weights of rule. (The cached GetWeights() array may be
 /// valid only on the device.)
 static real_t WeightSum(const IntegrationRule &rule)
@@ -52,16 +74,17 @@ static real_t WeightSum(const IntegrationRule &rule)
    return sum;
 }
 
-/// Average the diagonal of alpha J^T J/det J and beta/det J over each element
+/// Average the diagonal of J^T alpha J/det J and beta/det J over each element
 /// on the device, using reference quadrature weights, and set
 /// mass_inverse(c,e) and div_scale(e) from them. The Jacobians J and
 /// determinants det_a are on alpha_rule, det_b on beta_rule; empty value
-/// vectors mean coefficient one. Elements with nonpositive Jacobians are
+/// vectors mean coefficient one. alpha has a_vdim components per point (one,
+/// or dim for a diagonal matrix). Elements with nonpositive Jacobians are
 /// counted in errors[0], and elements with invalid averages in errors[1].
 static void AverageElementGeometry(
    const int dim, const int ne,
    const IntegrationRule &alpha_rule, const Vector &J_, const Vector &det_a_,
-   const Vector &alpha_values,
+   const Vector &alpha_values, const int a_vdim,
    const IntegrationRule &beta_rule, const Vector &det_b_,
    const Vector &beta_values,
    DenseMatrix &mass_inverse, Vector &div_scale, Array<int> &errors)
@@ -90,10 +113,15 @@ static void AverageElementGeometry(
          for (int q = t; q < nqa; q += NT)
          {
             bad = bad || !(det_a(q,e) > 0.0);
-            const real_t w = wa[q]*(a_val ? a_val[q + nqa*e] : 1.0)/det_a(q,e);
-            for (int c = 0; c < dim; ++c)
+            const real_t w = wa[q]/det_a(q,e);
+            for (int a = 0; a < dim; ++a)
             {
-               for (int a = 0; a < dim; ++a) { mass[c] += w*J(q,a,c,e)*J(q,a,c,e); }
+               const real_t alpha = !a_val ? 1.0 : (a_vdim == 1 ? a_val[q + nqa*e] :
+                                                     a_val[a + a_vdim*(q + nqa*e)]);
+               for (int c = 0; c < dim; ++c)
+               {
+                  mass[c] += w*alpha*J(q,a,c,e)*J(q,a,c,e);
+               }
             }
          }
          for (int q = t; q < nqb; q += NT)
@@ -202,7 +230,7 @@ void GetConstrainedFaceMasks(const FiniteElementSpace &fes,
 
 FastDiagonalizationSolver::FastDiagonalizationSolver(
    FiniteElementSpace &fes, const Array<int> &ess_dofs,
-   Coefficient *alpha, Coefficient *beta)
+   GenericCoefficient alpha, Coefficient *beta)
    : Solver(0), dim(fes.GetMesh()->Dimension()), p(fes.GetMaxElementOrder()),
      nd(fes.GetTypicalFE()->GetDof()), ne(fes.GetNE()),
      masks(ne*dim), mass_inverse(dim, ne), div_scale(ne)
@@ -316,8 +344,9 @@ FastDiagonalizationSolver::FastDiagonalizationSolver(
    const IntegrationRule &default_rule = MassIntegrator::GetRule(
                                             fe, fe, *mesh.GetTypicalElementTransformation());
    Vector alpha_values, beta_values;
-   const IntegrationRule &alpha_rule = EvalCoefficient(mesh, alpha, default_rule,
-                                                       alpha_values);
+   int alpha_vdim;
+   const IntegrationRule &alpha_rule = EvalMassCoefficient(
+                                          mesh, alpha, default_rule, alpha_values, alpha_vdim);
    const IntegrationRule &beta_rule = EvalCoefficient(mesh, beta, default_rule,
                                                       beta_values);
    const int flags = GeometricFactors::JACOBIANS | GeometricFactors::DETERMINANTS;
@@ -326,7 +355,8 @@ FastDiagonalizationSolver::FastDiagonalizationSolver(
    Array<int> errors(2);
    ZeroDevice(errors);
    AverageElementGeometry(dim, ne, alpha_rule, alpha_factors->J,
-                          alpha_factors->detJ, alpha_values, beta_rule,
+                          alpha_factors->detJ, alpha_values, alpha_vdim,
+                          beta_rule,
                           beta_factors->detJ, beta_values, mass_inverse,
                           div_scale, errors);
    const int *h_err = errors.HostRead();
