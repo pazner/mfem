@@ -31,7 +31,8 @@ inline const IntegrationRule *GetCoefficientRule(Coefficient *coeff)
 }
 
 /// Approximate element inverse of alpha (u,v) + beta (div u,div v) for RT cells.
-/** Uses native, element-contiguous broken coordinates, including RT signs.
+/** Uses lexicographic, element-contiguous broken coordinates (the layout of
+    MFEM's lexicographic element restriction, including RT signs).
     Approximates alpha J^T J/det J by its elementwise averaged diagonal and
     beta/det J by its elementwise average, using reference quadrature weights.
     Exact for affine orthogonal maps and elementwise constant coefficients; an
@@ -46,7 +47,6 @@ inline const IntegrationRule *GetCoefficientRule(Coefficient *coeff)
 class FastDiagonalizationSolver : public Solver
 {
    int dim, p, nd, ne;
-   Array<int> dof_map;
    /// Constraint mask of each element and direction, at index e*dim+a. Bits
    /// select constrained left/right endpoints.
    Array<int> masks;

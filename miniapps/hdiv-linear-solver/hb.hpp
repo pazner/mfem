@@ -541,28 +541,6 @@ public:
    }
 };
 
-/// Apply unmarked domain integrators using PA in the lexicographic broken RT
-/// coordinates of BrokenSpace (the PA E-vector layout).
-class BrokenElementPAOperator : public Operator
-{
-   const Array<BilinearFormIntegrator*> &integrators;
-
-public:
-   BrokenElementPAOperator(BilinearForm &a)
-      : Operator(a.FESpace()->GetNE()*a.FESpace()->GetTypicalFE()->GetDof()),
-        integrators(*a.GetDBFI())
-   {
-      for (auto *integrator : integrators) { integrator->AssemblePA(*a.FESpace()); }
-   }
-
-   void Mult(const Vector &x, Vector &y) const override
-   {
-      y.SetSize(height);
-      y = 0.0;
-      for (auto *integrator : integrators) { integrator->AddMultPA(x, y); }
-   }
-};
-
 /// Apply element inverses in the lexicographic broken coordinates of
 /// BrokenSpace. The native element matrices of the form are converted to these
 /// coordinates. Essential DOFs use the same broken numbering and are

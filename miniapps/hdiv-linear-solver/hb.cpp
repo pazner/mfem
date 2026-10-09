@@ -15,6 +15,7 @@
 #include "mfem.hpp"
 #include "hb.hpp"
 #include "fast_diag.hpp"
+#include "broken_hdiv.hpp"
 #include <cmath>
 #include <iostream>
 #include <string>
@@ -181,7 +182,7 @@ int main(int argc, char *argv[])
    unique_ptr<Operator> A_hat;
    if (fast_diag)
    {
-      A_hat.reset(new BrokenElementPAOperator(a));
+      A_hat.reset(new BrokenHdivOperator(fes_rt, alpha.get(), beta.get()));
    }
    else
    {

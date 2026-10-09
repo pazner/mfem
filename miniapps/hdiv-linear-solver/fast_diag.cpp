@@ -59,10 +59,6 @@ FastDiagonalizationSolver::FastDiagonalizationSolver(
    const auto geom = Geometry::TensorProductGeometry(dim);
    MFEM_VERIFY(fes.GetTypicalFE()->GetGeomType() == geom,
                "Expected quadrilateral or hexahedral elements.");
-   dof_map = dynamic_cast<const TensorBasisElement&>(
-                *fes.GetTypicalFE()).GetDofMap();
-   // The source may be valid only on the device; dof_map is used on the host.
-   dof_map.HostRead();
    height = width = ne*nd;
 
    // Identify complete constrained faces. Interior/partial-face constraints
@@ -89,7 +85,7 @@ FastDiagonalizationSolver::FastDiagonalizationSolver(
          int count[2] = {0, 0};
          for (int j = 0; j < nc; ++j)
          {
-            if (!constrained[e*nd+UnsignIndex(dof_map[c*nc+j])]) { continue; }
+            if (!constrained[e*nd+c*nc+j]) { continue; }
             const int k = (j/stride)%(p+1);
             MFEM_VERIFY(k == 0 || k == p, "Cannot constrain interior DOFs.");
             ++count[k == p];
@@ -286,7 +282,6 @@ void FastDiagonalizationSolver::Mult(const Vector &x, Vector &y) const
    const int nvol = nc*p/(p+1);
    const int nb = (p+1)*(p+1) + p*p + p;
    const int sigma_offset = (p+1)*(p+1) + p*p;
-   const int *map = dof_map.Read();
    const int *d_masks = masks.Read();
    const real_t *d_basis = basis.Read();
    const real_t *m_inv = mass_inverse.Read();
@@ -303,11 +298,7 @@ void FastDiagonalizationSolver::Mult(const Vector &x, Vector &y) const
       const real_t *mi = m_inv + e*dim;
       real_t *ye = Y + e*nd;
 
-      MFEM_FOREACH_THREAD(j, x, nd)
-      {
-         const int d = map[j];
-         u[j] = (d < 0 ? -1.0 : 1.0)*ye[UnsignIndex(d)];
-      }
+      MFEM_FOREACH_THREAD(j, x, nd) { u[j] = ye[j]; }
       MFEM_SYNC_THREAD;
       Transform(dim, p, nd, mask, d_basis, nb, true, u, v);
       MFEM_FOREACH_THREAD(j, x, nd) { u[j] *= mi[j/nc]; }
@@ -336,8 +327,7 @@ void FastDiagonalizationSolver::Mult(const Vector &x, Vector &y) const
          const int c = j/nc, stride = c == 0 ? 1 : (c == 1 ? p : p*p);
          const int k = ((j%nc)/stride)%(p+1), m = mask[c];
          if ((k == 0 && (m & 1)) || (k == p && (m & 2))) { continue; }
-         const int d = map[j];
-         ye[UnsignIndex(d)] = (d < 0 ? -1.0 : 1.0)*u[j];
+         ye[j] = u[j];
       }
    });
 }
