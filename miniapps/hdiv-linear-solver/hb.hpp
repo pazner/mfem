@@ -35,6 +35,16 @@ inline void CopyEntries(const Array<int> &idx, const Vector &x, Vector &y)
    mfem::forall(n, [=] MFEM_HOST_DEVICE (int i) { d_y[d_idx[i]] = d_x[d_idx[i]]; });
 }
 
+/// Set y(i) = a(i) x(i), on the device.
+inline void MultiplyEntries(const Vector &a, const Vector &x, Vector &y)
+{
+   const int n = x.Size();
+   const real_t *d_a = a.Read();
+   const real_t *d_x = x.Read();
+   real_t *d_y = y.Write();
+   mfem::forall(n, [=] MFEM_HOST_DEVICE (int i) { d_y[i] = d_a[i]*d_x[i]; });
+}
+
 /// Return the diagonal matrix with entries d, filled on the device.
 inline std::unique_ptr<SparseMatrix> DiagonalSparseMatrix(const Vector &d)
 {
@@ -509,7 +519,11 @@ public:
 
       if (stype == AMG)
       {
-         S_inv.reset(new HypreBoomerAMG(*S));
+         auto *amg = new HypreBoomerAMG(*S);
+         // Printing the setup statistics is slow, see
+         // https://github.com/hypre-space/hypre/issues/1288
+         amg->SetPrintLevel(0);
+         S_inv.reset(amg);
       }
       else
       {
@@ -533,10 +547,8 @@ public:
    void Mult(const Vector &x, Vector &y) const override
    {
       F_inverse_Et->MultTranspose(x, z1);
-      z2 = 0.0;
-      S_inv->Mult(z1, z2);
-      y = x;
-      y *= F_inverse;
+      S_inv->Mult(z1, z2); // overwrites z2 (zero initial guess)
+      MultiplyEntries(F_inverse, x, y);
       F_inverse_Et->AddMult(z2, y);
    }
 };
@@ -851,6 +863,71 @@ public:
          J->MultTranspose(lor_solution, y);
       }
       else { H_inv->Mult(x, y); }
+   }
+};
+
+/// Check the structure of the constraint transpose Ct that the hybridized
+/// saddle-point operator relies on: the constraint couples only interior
+/// faces, so Ct has no entries in the rows of the essential (boundary) broken
+/// DOFs, and none in the columns of the inactive (boundary) multipliers.
+inline void VerifyConstraintStructure(const HypreParMatrix &Ct,
+                                      const Array<int> &ess_broken_dofs,
+                                      const Array<int> &inactive_dofs)
+{
+   Vector a(Ct.Width()), b(Ct.Height()), sub;
+   a.UseDevice(true);
+   b.UseDevice(true);
+   a.Randomize(1);
+   Ct.Mult(a, b);
+   b.GetSubVector(ess_broken_dofs, sub);
+   MFEM_VERIFY(sub.Normlinf() == 0.0,
+               "The constraint couples essential broken DOFs.");
+   b.Randomize(2);
+   Ct.MultTranspose(b, a);
+   a.GetSubVector(inactive_dofs, sub);
+   MFEM_VERIFY(sub.Normlinf() == 0.0,
+               "The constraint couples inactive multipliers.");
+}
+
+/// The constrained hybridized saddle-point operator
+///
+///    [ A  C^T ]
+///    [ C  I_i ]
+///
+/// in broken flux and multiplier coordinates, where I_i is the identity on the
+/// inactive multipliers. A must already be constrained (identity rows and
+/// columns for the essential broken DOFs), and Ct must have the structure
+/// checked by VerifyConstraintStructure, so that the essential and inactive
+/// equations are identities. Each output block is written directly, without
+/// the temporaries of a BlockOperator or the copies of a ConstrainedOperator.
+class HybridSaddlePointOperator : public Operator
+{
+   const Operator &A;
+   const HypreParMatrix &Ct;
+   const Array<int> &inactive_dofs;
+   mutable Vector x0, x1, y0, y1;
+
+public:
+   HybridSaddlePointOperator(const Operator &A_, const HypreParMatrix &Ct_,
+                             const Array<int> &inactive_dofs_)
+      : Operator(A_.Height() + Ct_.Width()), A(A_), Ct(Ct_),
+        inactive_dofs(inactive_dofs_) { }
+
+   void Mult(const Vector &x, Vector &y) const override
+   {
+      const int n0 = A.Height(), n1 = Ct.Width();
+      x.Read();
+      y.Write();
+      x0.MakeRef(const_cast<Vector&>(x), 0, n0);
+      x1.MakeRef(const_cast<Vector&>(x), n0, n1);
+      y0.MakeRef(y, 0, n0);
+      y1.MakeRef(y, n0, n1);
+      A.Mult(x0, y0);
+      Ct.Mult(1.0, x1, 1.0, y0);
+      Ct.MultTranspose(x0, y1);
+      CopyEntries(inactive_dofs, x1, y1);
+      y0.SyncAliasMemory(y);
+      y1.SyncAliasMemory(y);
    }
 };
 

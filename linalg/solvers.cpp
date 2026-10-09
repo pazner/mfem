@@ -1852,12 +1852,58 @@ void MINRESSolver::SetOperator(const Operator &op)
    }
 }
 
+/// MINRES helper: v = a x + b y + c v.
+static void MINRESAdd3(const real_t a, const Vector &x, const real_t b,
+                       const Vector &y, const real_t c, Vector &v)
+{
+   const bool use_dev = x.UseDevice() || y.UseDevice() || v.UseDevice();
+   const int n = v.Size();
+   const auto d_x = x.Read(use_dev);
+   const auto d_y = y.Read(use_dev);
+   auto d_v = v.ReadWrite(use_dev);
+   mfem::forall_switch(use_dev, n, [=] MFEM_HOST_DEVICE (int i)
+   {
+      d_v[i] = a*d_x[i] + b*d_y[i] + c*d_v[i];
+   });
+}
+
+/// MINRES helper: w0 = a w0 + b w1 + c z and x += d w0, where the w0 term is
+/// omitted when !use_w0 and the w1 term when !use_w1 (uninitialized vectors).
+static void MINRESUpdateDirection(const bool use_w0, const real_t a,
+                                  Vector &w0, const bool use_w1,
+                                  const real_t b, const Vector &w1,
+                                  const real_t c, const Vector &z,
+                                  const real_t d, Vector &x)
+{
+   const bool use_dev = w0.UseDevice() || w1.UseDevice() || z.UseDevice() ||
+                        x.UseDevice();
+   const int n = x.Size();
+   auto d_w0 = use_w0 ? w0.ReadWrite(use_dev) : w0.Write(use_dev);
+   const auto d_w1 = use_w1 ? w1.Read(use_dev) : nullptr;
+   const auto d_z = z.Read(use_dev);
+   auto d_x = x.ReadWrite(use_dev);
+   mfem::forall_switch(use_dev, n, [=] MFEM_HOST_DEVICE (int i)
+   {
+      real_t w = 0.0;
+      if (use_w0) { w = a*d_w0[i]; }
+      if (use_w1) { w += b*d_w1[i]; }
+      w += c*d_z[i];
+      d_w0[i] = w;
+      d_x[i] += d*w;
+   });
+}
+
 void MINRESSolver::Mult(const Vector &b, Vector &x) const
 {
    // Based on the MINRES algorithm on p. 86, Fig. 6.9 in
    // "Iterative Krylov Methods for Large Linear Systems",
    // by Henk A. van der Vorst, 2003.
    // Extended to support an SPD preconditioner.
+   //
+   // The Lanczos vectors are normalized lazily: v1 (and u1 = M^{-1} v1) hold
+   // beta times the normalized vector, and v0 holds beta_0 times the previous
+   // normalized vector. The scales are applied in the coefficients of the
+   // vector updates, avoiding separate normalization passes.
 
    b.UseDevice(true);
    x.UseDevice(true);
@@ -1865,7 +1911,20 @@ void MINRESSolver::Mult(const Vector &b, Vector &x) const
    int it;
    real_t beta, eta, gamma0, gamma1, sigma0, sigma1;
    real_t alpha, delta, rho1, rho2, rho3, norm_goal;
+   real_t s = 1.0, s0 = 1.0; // inverse scales of v1/u1 and of v0
    Vector *z = (prec) ? &u1 : &v1;
+   // The monitor sees z as without lazy normalization: scaled by z_scale
+   // within an iteration (a copy is made only when a monitor is attached).
+   real_t z_scale = 1.0;
+   Vector z_monitor;
+   auto monitor_z = [&]() -> const Vector &
+   {
+      if (!controller || z_scale == 1.0) { return *z; }
+      z_monitor.SetSize(z->Size());
+      z_monitor.UseDevice(true);
+      z_monitor.Set(z_scale, *z);
+      return z_monitor;
+   };
 
    converged = true;
 
@@ -1905,19 +1964,14 @@ void MINRESSolver::Mult(const Vector &b, Vector &x) const
 
    for (it = 1; it <= max_iter; it++)
    {
-      v1 /= beta;
-      if (prec)
-      {
-         u1 /= beta;
-      }
+      s = z_scale = 1.0/beta;
       oper->Mult(*z, q);
-      alpha = Dot(*z, q);
+      alpha = s*s*Dot(*z, q);
       MFEM_VERIFY(IsFinite(alpha), "alpha = " << alpha);
-      if (it > 1) // (v0 == 0) for (it == 1)
-      {
-         q.Add(-beta, v0);
-      }
-      add(q, -alpha, v1, v0);
+      // v0 = A z - alpha v1 - beta v0, in terms of the normalized vectors.
+      if (it > 1) { MINRESAdd3(s, q, -alpha*s, v1, -beta*s0, v0); }
+      else { add(s, q, -alpha*s, v1, v0); } // (v0 == 0) for (it == 1)
+      s0 = s;
 
       delta = gamma1*alpha - gamma0*sigma1*beta;
       rho3 = sigma0*beta;
@@ -1934,24 +1988,13 @@ void MINRESSolver::Mult(const Vector &b, Vector &x) const
       MFEM_VERIFY(IsFinite(beta), "beta = " << beta);
       rho1 = std::hypot(delta, beta);
 
-      if (it == 1)
-      {
-         w0.Set(1./rho1, *z);   // (w0 == 0) and (w1 == 0)
-      }
-      else if (it == 2)
-      {
-         add(1./rho1, *z, -rho2/rho1, w1, w0);   // (w0 == 0)
-      }
-      else
-      {
-         add(-rho3/rho1, w0, -rho2/rho1, w1, w0);
-         w0.Add(1./rho1, *z);
-      }
-
       gamma0 = gamma1;
       gamma1 = delta/rho1;
 
-      x.Add(gamma1*eta, w0);
+      // w0 = (z - rho3 w0 - rho2 w1)/rho1 and x += gamma1 eta w0, where
+      // (w0 == 0) for (it <= 2) and (w1 == 0) for (it == 1).
+      MINRESUpdateDirection(it > 2, -rho3/rho1, w0, it > 1, -rho2/rho1, w1,
+                            s/rho1, *z, gamma1*eta, x);
 
       sigma0 = sigma1;
       sigma1 = beta/rho1;
@@ -1969,7 +2012,7 @@ void MINRESSolver::Mult(const Vector &b, Vector &x) const
          mfem::out << "MINRES: iteration " << setw(3) << it << ": ||r||_B = "
                    << fabs(eta) << '\n';
       }
-      if (Monitor(it, fabs(eta), *z, x)) { goto loop_end; }
+      if (Monitor(it, fabs(eta), monitor_z(), x)) { goto loop_end; }
 
       if (prec)
       {
@@ -1977,6 +2020,7 @@ void MINRESSolver::Mult(const Vector &b, Vector &x) const
       }
       Swap(v0, v1);
       Swap(w0, w1);
+      z_scale = 1.0;
    }
    converged = false;
    it--;
@@ -1996,7 +2040,8 @@ loop_end:
       mfem::out << "MINRES: Number of iterations: " << setw(3) << final_iter << '\n';
    }
 
-   converged = Monitor(final_iter, final_norm, *z, x, true) || converged;
+   converged = Monitor(final_iter, final_norm, monitor_z(), x, true) ||
+               converged;
 
    // if (print_options.iteration_details || (!converged && print_options.errors))
    // {

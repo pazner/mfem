@@ -12,8 +12,8 @@
 if (MFEM_USE_MPI)
   add_mfem_miniapp(hb
     MAIN hb.cpp
-    EXTRA_SOURCES fast_diag.cpp discrete_divergence.cpp
-    EXTRA_HEADERS hb.hpp fast_diag.hpp
+    EXTRA_SOURCES fast_diag.cpp broken_hdiv.cpp discrete_divergence.cpp
+    EXTRA_HEADERS hb.hpp fast_diag.hpp broken_hdiv.hpp
     LIBRARIES mfem)
 
   add_mfem_miniapp(darcy
@@ -24,6 +24,12 @@ if (MFEM_USE_MPI)
 
   add_mfem_miniapp(grad_div
     MAIN grad_div.cpp
+    EXTRA_SOURCES change_basis.cpp discrete_divergence.cpp hdiv_linear_solver.cpp
+    EXTRA_HEADERS change_basis.hpp discrete_divergence.hpp hdiv_linear_solver.hpp
+    LIBRARIES mfem)
+
+  add_mfem_miniapp(crooked_pipe
+    MAIN crooked_pipe.cpp
     EXTRA_SOURCES change_basis.cpp discrete_divergence.cpp hdiv_linear_solver.cpp
     EXTRA_HEADERS change_basis.hpp discrete_divergence.hpp hdiv_linear_solver.hpp
     LIBRARIES mfem)

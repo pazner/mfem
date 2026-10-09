@@ -26,7 +26,7 @@ HDIV_SRC = hdiv_linear_solver.cpp change_basis.cpp discrete_divergence.cpp
 HDIV_OBJ = $(HDIV_SRC:.cpp=.o)
 
 SEQ_MINIAPPS =
-PAR_MINIAPPS = grad_div darcy hb
+PAR_MINIAPPS = grad_div darcy hb crooked_pipe
 
 ifeq ($(MFEM_USE_MPI),NO)
    MINIAPPS = $(SEQ_MINIAPPS)
@@ -51,9 +51,11 @@ $(MINIAPPS):%: %.o $(HDIV_OBJ)
 %.o: $(SRC)%.cpp $(MFEM_LIB_FILE) $(CONFIG_MK)
 	$(MFEM_CXX) $(MFEM_FLAGS) -c $< -o $@
 
-hb: fast_diag.o
-hb.o: $(SRC)hb.hpp $(SRC)discrete_divergence.hpp $(SRC)fast_diag.hpp
+hb: fast_diag.o broken_hdiv.o
+hb.o: $(SRC)hb.hpp $(SRC)discrete_divergence.hpp $(SRC)fast_diag.hpp \
+      $(SRC)broken_hdiv.hpp
 fast_diag.o: $(SRC)fast_diag.hpp
+broken_hdiv.o: $(SRC)broken_hdiv.hpp $(SRC)fast_diag.hpp
 
 MFEM_TESTS = MINIAPPS
 include $(MFEM_TEST_MK)

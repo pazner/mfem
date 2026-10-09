@@ -24,21 +24,21 @@ using namespace mfem;
 using namespace std;
 
 /// Multiplier Schur complement C A^{-1} C^T, with identity on inactive
-/// multipliers. Essential broken DOFs are eliminated from A.
+/// multipliers. A is constrained (identity on essential broken DOFs), and C^T
+/// has no entries in their rows (see VerifyConstraintStructure), so the
+/// essential DOFs do not contribute.
 class MultiplierSchurComplement : public Operator
 {
    const Operator &A_inverse;
    const Operator &Ct;
-   const Array<int> &ess_dofs;
    const Array<int> &inactive_dofs;
    mutable Vector z1, z2;
 
 public:
    MultiplierSchurComplement(const Operator &A_inverse_, const Operator &Ct_,
-                             const Array<int> &ess_dofs_,
                              const Array<int> &inactive_dofs_)
       : Operator(Ct_.Width()), A_inverse(A_inverse_), Ct(Ct_),
-        ess_dofs(ess_dofs_), inactive_dofs(inactive_dofs_),
+        inactive_dofs(inactive_dofs_),
         z1(Ct_.Height()), z2(Ct_.Height())
    {
       z1.UseDevice(true);
@@ -48,9 +48,7 @@ public:
    void Mult(const Vector &x, Vector &y) const override
    {
       Ct.Mult(x, z1);
-      z1.SetSubVector(ess_dofs, 0.0);
       A_inverse.Mult(z1, z2);
-      z2.SetSubVector(ess_dofs, 0.0);
       Ct.MultTranspose(z2, y);
       CopyEntries(inactive_dofs, x, y);
    }
@@ -73,6 +71,11 @@ int main(int argc, char *argv[])
 {
    Mpi::Init(argc, argv);
    Hypre::Init();
+#if defined(HYPRE_USING_GPU) && MFEM_HYPRE_VERSION >= 22100
+   // Use hypre's SpMV kernels rather than the vendor library: cuSPARSE was much
+   // slower for some of the AMG interpolation matrices.
+   HYPRE_SetSpMVUseVendor(0);
+#endif
 
    const char *mesh_file = "../../data/inline-quad.mesh";
    const char *device_config = "cpu";
@@ -119,6 +122,12 @@ int main(int argc, char *argv[])
    }();
    for (int i = 0; i < par_ref; ++i) { mesh.UniformRefinement(); }
    const int dim = mesh.Dimension();
+   const string mesh_name(mesh_file);
+   const string crooked_pipe_mesh = "CrookedPipeMesh_1.mesh";
+   const bool crooked_pipe = mesh_name.size() >= crooked_pipe_mesh.size() &&
+                             mesh_name.compare(
+                                mesh_name.size() - crooked_pipe_mesh.size(),
+                                crooked_pipe_mesh.size(), crooked_pipe_mesh) == 0;
    RT_FECollection fec(order - 1, dim, BasisType::GaussLobatto,
                        BasisType::IntegratedGLL);
    ParFiniteElementSpace fes_rt(&mesh, &fec);
@@ -126,13 +135,26 @@ int main(int argc, char *argv[])
    if (Mpi::Root()) { cout << "Global RT DOFs: " << n_global_dofs << '\n'; }
 
    VectorFunctionCoefficient exact_coeff(dim, ExactSolution);
-   VectorFunctionCoefficient rhs_coeff(dim, RightHandSide);
+   VectorFunctionCoefficient manufactured_rhs(dim, RightHandSide);
+   // As in crooked_pipe.cpp, the crooked pipe uses the constant source (1,...,1).
+   Vector ones(dim);
+   ones = 1.0;
+   VectorConstantCoefficient constant_rhs(ones);
+   VectorCoefficient &rhs_coeff = crooked_pipe ?
+                                  static_cast<VectorCoefficient&>(constant_rhs) :
+                                  manufactured_rhs;
 
+   // As in crooked_pipe.cpp, the crooked pipe has natural boundary conditions
+   // (no essential DOFs), so no boundary values are needed. Otherwise, the
+   // essential boundary values come from the exact solution.
    Array<int> ess_tdofs;
-   fes_rt.GetBoundaryTrueDofs(ess_tdofs);
-
    ParGridFunction x(&fes_rt);
-   x.ProjectCoefficient(exact_coeff);
+   if (crooked_pipe) { x = 0.0; }
+   else
+   {
+      fes_rt.GetBoundaryTrueDofs(ess_tdofs);
+      x.ProjectCoefficient(exact_coeff);
+   }
 
    ParLinearForm b(&fes_rt);
    b.AddDomainIntegrator(new VectorFEDomainLFIntegrator(rhs_coeff));
@@ -145,13 +167,13 @@ int main(int argc, char *argv[])
    // Mass (alpha) and div (beta) coefficients: piecewise constant on the
    // crooked pipe mesh (attribute 1 is the pipe), unit otherwise.
    unique_ptr<Coefficient> alpha, beta;
-   const string mesh_name(mesh_file);
-   const string crooked_pipe = "CrookedPipeMesh_1.mesh";
-   if (mesh_name.size() >= crooked_pipe.size() &&
-       mesh_name.compare(mesh_name.size() - crooked_pipe.size(),
-                         crooked_pipe.size(), crooked_pipe) == 0)
+   if (crooked_pipe)
    {
-      if (Mpi::Root()) { cout << "Using crooked pipe coefficients.\n"; }
+      if (Mpi::Root())
+      {
+         cout << "Using crooked pipe coefficients and natural boundary "
+              "conditions.\n";
+      }
       Vector alpha_vec(mesh.attributes.Max()), beta_vec(mesh.attributes.Max());
       alpha_vec = 0.2;
       alpha_vec(0) = 2000.0;
@@ -179,6 +201,9 @@ int main(int argc, char *argv[])
    fes_hat.AverageTranspose(f, rhs.GetBlock(0));
    fes_hat.LocalProlongate(x, solution.GetBlock(0));
 
+   Array<int> ess_broken_dofs;
+   fes_hat.GetBrokenEssentialDofs(ess_tdofs, ess_broken_dofs);
+
    unique_ptr<Operator> A_hat;
    if (fast_diag)
    {
@@ -202,6 +227,42 @@ int main(int argc, char *argv[])
       A_hat = std::move(assembled);
    }
 
+   // Eliminate the essential flux values u_e from the right-hand side, as
+   // ConstrainedOperator::EliminateRHS: g -= A u_e and g_e = u_e. The
+   // multiplier block is unchanged, since C has no entries in the essential
+   // columns (checked below).
+   {
+      Vector &u = solution.GetBlock(0), &g = rhs.GetBlock(0);
+      Vector u_e(u.Size()), A_u_e(u.Size()), values;
+      u_e.UseDevice(true);
+      A_u_e.UseDevice(true);
+      u.GetSubVector(ess_broken_dofs, values);
+      u_e = 0.0;
+      u_e.SetSubVector(ess_broken_dofs, values);
+      A_hat->Mult(u_e, A_u_e);
+      g -= A_u_e;
+      g.SetSubVector(ess_broken_dofs, values);
+   }
+   // Constrain A_hat: identity rows and columns for the essential DOFs.
+   if (fast_diag)
+   {
+      static_cast<BrokenHdivOperator&>(*A_hat).SetEssentialDofs(
+         fes_rt, ess_broken_dofs);
+   }
+   else
+   {
+      auto &A = static_cast<SparseMatrix&>(*A_hat);
+      // The matrix was applied on the device above; eliminate on the host.
+      A.HostReadI();
+      A.HostReadJ();
+      A.HostReadWriteData();
+      const int *h_ess = ess_broken_dofs.HostRead();
+      for (int k = 0; k < ess_broken_dofs.Size(); ++k)
+      {
+         A.EliminateRowCol(h_ess[k], Operator::DIAG_ONE);
+      }
+   }
+
    auto stype = direct_solver ? DIRECT : AMG;
    unique_ptr<Solver> trace_inverse;
    if (trace_type == "graph")
@@ -223,25 +284,9 @@ int main(int argc, char *argv[])
       return static_cast<TraceMultiplierSolver&>(*trace_inverse)
       .GetConstraintTranspose();
    }();
-   TransposeOperator C(Ct);
+   const Array<int> &inactive_dofs = fes_hat.GetInactiveTraceDofs();
+   VerifyConstraintStructure(Ct, ess_broken_dofs, inactive_dofs);
 
-   // Identity on inactive multipliers (explicit zeros elsewhere).
-   Vector inactive_marker(fes_hat.GetNumTraceDofs());
-   inactive_marker.UseDevice(true);
-   inactive_marker = 0.0;
-   inactive_marker.SetSubVector(fes_hat.GetInactiveTraceDofs(), 1.0);
-   auto inactive_matrix = DiagonalSparseMatrix(inactive_marker);
-   SparseMatrix &inactive = *inactive_matrix;
-   BlockOperator K(offsets);
-   K.SetBlock(0, 0, A_hat.get());
-   K.SetBlock(0, 1, &Ct);
-   K.SetBlock(1, 0, &C);
-   K.SetBlock(1, 1, &inactive);
-
-   Array<int> ess_broken_dofs;
-   fes_hat.GetBrokenEssentialDofs(ess_tdofs, ess_broken_dofs);
-   ConstrainedOperator constrained_K(&K, ess_broken_dofs);
-   constrained_K.EliminateRHS(solution, rhs);
    unique_ptr<Solver> element_inverse;
    if (fast_diag)
    {
@@ -253,17 +298,15 @@ int main(int argc, char *argv[])
    {
       // A_hat is block diagonal and local to each rank, so the inner solver
       // does not need a communicator.
-      ConstrainedOperator constrained_A(A_hat.get(), ess_broken_dofs);
       CGSolver A_inverse;
       // Set the operator first: the element inverse rejects SetOperator.
-      A_inverse.SetOperator(constrained_A);
+      A_inverse.SetOperator(*A_hat);
       A_inverse.SetPreconditioner(*element_inverse);
       A_inverse.SetRelTol(1e-12);
       A_inverse.SetAbsTol(0.0);
       A_inverse.SetMaxIter(1000);
       A_inverse.iterative_mode = false;
 
-      const Array<int> &inactive_dofs = fes_hat.GetInactiveTraceDofs();
       Vector &g = rhs.GetBlock(0), &h = rhs.GetBlock(1);
       Vector &u = solution.GetBlock(0), &lambda = solution.GetBlock(1);
 
@@ -272,12 +315,11 @@ int main(int argc, char *argv[])
       z.UseDevice(true);
       r.UseDevice(true);
       A_inverse.Mult(g, z);
-      z.SetSubVector(ess_broken_dofs, 0.0);
       Ct.MultTranspose(z, r);
       r -= h;
       CopyEntries(inactive_dofs, h, r);
 
-      MultiplierSchurComplement S(A_inverse, Ct, ess_broken_dofs, inactive_dofs);
+      MultiplierSchurComplement S(A_inverse, Ct, inactive_dofs);
       CGSolver cg(MPI_COMM_WORLD);
       cg.SetPreconditioner(*trace_inverse);
       cg.SetOperator(S);
@@ -289,19 +331,19 @@ int main(int argc, char *argv[])
 
       // Recover u = A^{-1} (g - C^T lambda); g retains the essential values.
       Ct.Mult(lambda, z);
-      z.SetSubVector(ess_broken_dofs, 0.0);
       z.Neg();
       z += g;
       A_inverse.Mult(z, u);
    }
    else
    {
+      HybridSaddlePointOperator K(*A_hat, Ct, inactive_dofs);
       BlockDiagonalPreconditioner preconditioner(offsets);
       preconditioner.SetDiagonalBlock(0, element_inverse.get());
       preconditioner.SetDiagonalBlock(1, trace_inverse.get());
       MINRESSolver minres(MPI_COMM_WORLD);
       minres.SetPreconditioner(preconditioner);
-      minres.SetOperator(constrained_K);
+      minres.SetOperator(K);
       minres.SetRelTol(1e-12);
       minres.SetAbsTol(0.0);
       minres.SetMaxIter(1000);

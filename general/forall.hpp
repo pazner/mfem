@@ -51,8 +51,8 @@ struct DofQuadLimits_CUDA
    static constexpr int MAX_T1D = 32;
    static constexpr int HCURL_MAX_D1D = 5;
    static constexpr int HCURL_MAX_Q1D = 6;
-   static constexpr int HDIV_MAX_D1D = 5;
-   static constexpr int HDIV_MAX_Q1D = 6;
+   static constexpr int HDIV_MAX_D1D = 6;
+   static constexpr int HDIV_MAX_Q1D = 7;
    static constexpr int MAX_INTERP_1D = 8;
    static constexpr int MAX_DET_1D = 6;
 };

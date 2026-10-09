@@ -37,6 +37,54 @@ static const IntegrationRule &EvalCoefficient(
    return default_rule;
 }
 
+void GetConstrainedFaceMasks(const FiniteElementSpace &fes,
+                             const Array<int> &ess_dofs, Array<int> &masks)
+{
+   const int dim = fes.GetMesh()->Dimension();
+   const int p = fes.GetMaxElementOrder();
+   const int nd = fes.GetTypicalFE()->GetDof();
+   const int ne = fes.GetNE();
+   const int height = ne*nd;
+
+   // Identify complete constrained faces. Interior/partial-face constraints
+   // do not admit the tensor-product structure.
+   Array<int> constrained(height);
+   constrained = 0;
+   // The essential DOF list may already have been used on the device.
+   const int *h_ess = ess_dofs.HostRead();
+   for (int k = 0; k < ess_dofs.Size(); ++k)
+   {
+      const int d = h_ess[k];
+      MFEM_VERIFY(d >= 0 && d < height, "Invalid essential broken DOF.");
+      constrained[d] = 1;
+   }
+   masks.SetSize(ne*dim);
+   masks = 0;
+   const int nc = nd/dim;
+   for (int e = 0; e < ne; ++e)
+   {
+      int stride = 1;
+      for (int c = 0; c < dim; ++c)
+      {
+         int count[2] = {0, 0};
+         for (int j = 0; j < nc; ++j)
+         {
+            if (!constrained[e*nd+c*nc+j]) { continue; }
+            const int k = (j/stride)%(p+1);
+            MFEM_VERIFY(k == 0 || k == p, "Cannot constrain interior DOFs.");
+            ++count[k == p];
+         }
+         for (int side = 0; side < 2; ++side)
+         {
+            MFEM_VERIFY(count[side] == 0 || count[side] == nc/(p+1),
+                        "Essential DOFs must cover complete element faces.");
+            if (count[side]) { masks[e*dim+c] |= 1 << side; }
+         }
+         stride *= p;
+      }
+   }
+}
+
 FastDiagonalizationSolver::FastDiagonalizationSolver(
    FiniteElementSpace &fes, const Array<int> &ess_dofs,
    Coefficient *alpha, Coefficient *beta)
@@ -61,44 +109,12 @@ FastDiagonalizationSolver::FastDiagonalizationSolver(
                "Expected quadrilateral or hexahedral elements.");
    height = width = ne*nd;
 
-   // Identify complete constrained faces. Interior/partial-face constraints
-   // do not admit this tensor factorization.
-   Array<int> constrained(height);
-   constrained = 0;
-   // The essential DOF list may already have been used on the device.
-   const int *h_ess = ess_dofs.HostRead();
-   for (int k = 0; k < ess_dofs.Size(); ++k)
-   {
-      const int d = h_ess[k];
-      MFEM_VERIFY(d >= 0 && d < height, "Invalid essential broken DOF.");
-      constrained[d] = 1;
-   }
-   masks = 0;
-   const int nc = nd/dim;
    for (int e = 0; e < ne; ++e)
    {
       MFEM_VERIFY(fes.GetFE(e)->GetGeomType() == geom,
                   "Expected quadrilateral or hexahedral elements.");
-      int stride = 1;
-      for (int c = 0; c < dim; ++c)
-      {
-         int count[2] = {0, 0};
-         for (int j = 0; j < nc; ++j)
-         {
-            if (!constrained[e*nd+c*nc+j]) { continue; }
-            const int k = (j/stride)%(p+1);
-            MFEM_VERIFY(k == 0 || k == p, "Cannot constrain interior DOFs.");
-            ++count[k == p];
-         }
-         for (int side = 0; side < 2; ++side)
-         {
-            MFEM_VERIFY(count[side] == 0 || count[side] == nc/(p+1),
-                        "Essential DOFs must cover complete element faces.");
-            if (count[side]) { masks[e*dim+c] |= 1 << side; }
-         }
-         stride *= p;
-      }
    }
+   GetConstrainedFaceMasks(fes, ess_dofs, masks);
 
    DenseMatrix Mc(p+1), Mo(p);
    Mc = 0.0;
@@ -275,8 +291,7 @@ MFEM_HOST_DEVICE static inline void Transform(
 
 void FastDiagonalizationSolver::Mult(const Vector &x, Vector &y) const
 {
-   MFEM_ASSERT(x.Size() == height, "Invalid vector size.");
-   y = x; // Also preserves identity equations and permits in-place application.
+   MFEM_ASSERT(x.Size() == height && y.Size() == height, "Invalid vector size.");
    const int dim = this->dim, p = this->p, nd = this->nd;
    const int nc = nd/dim;
    const int nvol = nc*p/(p+1);
@@ -286,7 +301,10 @@ void FastDiagonalizationSolver::Mult(const Vector &x, Vector &y) const
    const real_t *d_basis = basis.Read();
    const real_t *m_inv = mass_inverse.Read();
    const real_t *d_div = div_scale.Read();
-   real_t *Y = y.ReadWrite();
+   // Every entry of y is written; constrained DOFs keep identity equations.
+   // In-place application is supported: each element reads x before writing.
+   const real_t *X = x.Read();
+   real_t *Y = y.Write();
    mfem::forall_2D(ne, std::min(nd, 256), 1, [=] MFEM_HOST_DEVICE (int e)
    {
       // Size for 3D elements at the H(div) limit of this compilation pass.
@@ -296,9 +314,10 @@ void FastDiagonalizationSolver::Mult(const Vector &x, Vector &y) const
       real_t *u = s_u, *v = s_v;
       const int *mask = d_masks + e*dim;
       const real_t *mi = m_inv + e*dim;
+      const real_t *xe = X + e*nd;
       real_t *ye = Y + e*nd;
 
-      MFEM_FOREACH_THREAD(j, x, nd) { u[j] = ye[j]; }
+      MFEM_FOREACH_THREAD(j, x, nd) { u[j] = xe[j]; }
       MFEM_SYNC_THREAD;
       Transform(dim, p, nd, mask, d_basis, nb, true, u, v);
       MFEM_FOREACH_THREAD(j, x, nd) { u[j] *= mi[j/nc]; }
@@ -326,8 +345,8 @@ void FastDiagonalizationSolver::Mult(const Vector &x, Vector &y) const
       {
          const int c = j/nc, stride = c == 0 ? 1 : (c == 1 ? p : p*p);
          const int k = ((j%nc)/stride)%(p+1), m = mask[c];
-         if ((k == 0 && (m & 1)) || (k == p && (m & 2))) { continue; }
-         ye[j] = u[j];
+         const bool constrained = (k == 0 && (m & 1)) || (k == p && (m & 2));
+         ye[j] = constrained ? xe[j] : u[j];
       }
    });
 }

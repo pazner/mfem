@@ -421,6 +421,7 @@ miniapps/solvers/sol.*
 miniapps/hdiv-linear-solver/darcy
 miniapps/hdiv-linear-solver/grad_div
 miniapps/hdiv-linear-solver/hb
+miniapps/hdiv-linear-solver/crooked_pipe
 
 miniapps/parelag/MultilevelHcurlHdivSolver
 miniapps/parelag/*.mesh

@@ -30,6 +30,14 @@ inline const IntegrationRule *GetCoefficientRule(Coefficient *coeff)
    return &qs->GetIntRule(0);
 }
 
+/// Constraint masks of the faces of each element of the RT space fes, in the
+/// lexicographic broken coordinates: masks[e*dim+c] has bits 0 and 1 set when
+/// the faces at the left and right ends of direction c of element e are
+/// constrained. The essential DOFs (broken indices) must be unions of complete
+/// element faces. The space must have uniform-order tensor-product elements.
+void GetConstrainedFaceMasks(const FiniteElementSpace &fes,
+                             const Array<int> &ess_dofs, Array<int> &masks);
+
 /// Approximate element inverse of alpha (u,v) + beta (div u,div v) for RT cells.
 /** Uses lexicographic, element-contiguous broken coordinates (the layout of
     MFEM's lexicographic element restriction, including RT signs).

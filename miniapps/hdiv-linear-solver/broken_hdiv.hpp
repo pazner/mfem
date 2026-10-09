@@ -47,11 +47,20 @@ class BrokenHdivOperator : public Operator
    /// Per quadrature point: the symmetric entries of alpha w J^T J/det J
    /// (row-major upper triangle), followed by beta w/det J.
    Vector qdata;
+   /// Constrained faces of each element (see GetConstrainedFaceMasks), or
+   /// empty when there are no essential DOFs.
+   Array<int> masks;
 
 public:
    BrokenHdivOperator(const FiniteElementSpace &fes,
                       Coefficient *alpha = nullptr,
                       Coefficient *beta = nullptr);
+
+   /// Constrain the essential broken DOFs (unions of complete element faces):
+   /// they are treated as zero in the input and have identity rows, as for a
+   /// ConstrainedOperator with DIAG_ONE, but without extra vector copies.
+   void SetEssentialDofs(const FiniteElementSpace &fes,
+                         const Array<int> &ess_dofs);
 
    void Mult(const Vector &x, Vector &y) const override;
 };

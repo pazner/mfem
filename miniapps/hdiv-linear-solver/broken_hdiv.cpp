@@ -25,6 +25,16 @@ namespace mfem
 // open basis in every direction, and add D_hat^T of its transposed
 // interpolation to the output.
 
+/// Is the DOF with closed index k (of P+1) along its component's direction
+/// constrained, given the element's face masks for that direction?
+MFEM_HOST_DEVICE inline bool IsConstrained(const int *mask, int f, int k,
+                                           int P)
+{
+   if (!mask) { return false; }
+   const int m = mask[f];
+   return (k == 0 && (m & 1)) || (k == P && (m & 2));
+}
+
 /// Quadrature data in 2D: w/det J times alpha (J^T J)_{00}, (J^T J)_{01},
 /// (J^T J)_{11}, and beta.
 static void SetupQuadratureData2D(const int NE, const int NQ,
@@ -89,6 +99,7 @@ template <int T_D1D = 0, int T_Q1D = 0>
 static void BrokenHdivApply2D(const int NE, const Array<real_t> &Bo_,
                               const Array<real_t> &Bc_, const Vector &qd_,
                               const Vector &x_, Vector &y_,
+                              const int *masks,
                               const int d1d = 0, const int q1d = 0)
 {
    static constexpr int NF = 3; // the two components and the divergence
@@ -108,6 +119,7 @@ static void BrokenHdivApply2D(const int NE, const Array<real_t> &Bo_,
       const int Q1D = T_Q1D ? T_Q1D : q1d;
       const int P = D1D - 1;
       const int NC = D1D*P; // DOFs per component
+      const int *mask = masks ? masks + 2*e : nullptr;
       constexpr int MQ1 = T_Q1D ? T_Q1D : DofQuadLimits::HDIV_MAX_Q1D;
       constexpr int MD1 = T_D1D ? T_D1D : DofQuadLimits::HDIV_MAX_D1D;
       constexpr int MDQ = (MQ1 > MD1) ? MQ1 : MD1;
@@ -134,7 +146,8 @@ static void BrokenHdivApply2D(const int NE, const Array<real_t> &Bo_,
             MFEM_FOREACH_THREAD(dx,x,nx)
             {
                const int i = f*NC + dx + nx*dy;
-               X[i] = x(i,e);
+               const int k = f == 0 ? dx : dy; // closed index
+               X[i] = IsConstrained(mask, f, k, P) ? 0.0 : x(i,e);
             }
          }
       }
@@ -264,7 +277,7 @@ static void BrokenHdivApply2D(const int NE, const Array<real_t> &Bo_,
                if (k > 0) { div += R[r - s]; }
                if (k < P) { div -= R[r]; }
                const int i = f*NC + dx + nx*dy;
-               y(i,e) = Y[i] + div;
+               y(i,e) = IsConstrained(mask, f, k, P) ? x(i,e) : Y[i] + div;
             }
          }
       }
@@ -354,6 +367,7 @@ template <int T_D1D = 0, int T_Q1D = 0>
 static void BrokenHdivApply3D(const int NE, const Array<real_t> &Bo_,
                               const Array<real_t> &Bc_, const Vector &qd_,
                               const Vector &x_, Vector &y_,
+                              const int *masks,
                               const int d1d = 0, const int q1d = 0)
 {
    static constexpr int NF = 4; // the three components and the divergence
@@ -380,6 +394,7 @@ static void BrokenHdivApply3D(const int NE, const Array<real_t> &Bo_,
       // Field stride: every stage of a field fits in max(D1D,Q1D)^3.
       const int M = (Q1D > D1D) ? Q1D : D1D;
       const int S = M*M*M;
+      const int *mask = masks ? masks + 3*e : nullptr;
 
       MFEM_SHARED real_t sBc[MD1*MQ1];
       MFEM_SHARED real_t sBo[(MD1-1)*MQ1];
@@ -389,8 +404,10 @@ static void BrokenHdivApply3D(const int NE, const Array<real_t> &Bo_,
       // Load the element vector (components at offsets f*S) and the bases.
       MFEM_FOREACH_THREAD(i,x,ND)
       {
-         const int f = i/NC;
-         s0[f*S + i - f*NC] = x(i,e);
+         const int f = i/NC, j = i - f*NC;
+         const int nx = FieldSize(f,0,D1D), ny = FieldSize(f,1,D1D);
+         const int k = f == 0 ? j%nx : (f == 1 ? (j/nx)%ny : j/(nx*ny));
+         s0[f*S + j] = IsConstrained(mask, f, k, P) ? 0.0 : x(i,e);
       }
       MFEM_FOREACH_THREAD(i,x,D1D*Q1D)
       {
@@ -453,7 +470,7 @@ static void BrokenHdivApply3D(const int NE, const Array<real_t> &Bo_,
          real_t div = 0.0;
          if (k > 0) { div += R[r - s]; }
          if (k < P) { div -= R[r]; }
-         y(i,e) = s0[f*S + j] + div;
+         y(i,e) = IsConstrained(mask, f, k, P) ? x(i,e) : s0[f*S + j] + div;
       }
    });
 }
@@ -516,30 +533,37 @@ BrokenHdivOperator::BrokenHdivOperator(const FiniteElementSpace &fes,
    }
 }
 
+void BrokenHdivOperator::SetEssentialDofs(const FiniteElementSpace &fes,
+                                          const Array<int> &ess_dofs)
+{
+   GetConstrainedFaceMasks(fes, ess_dofs, masks);
+}
+
 void BrokenHdivOperator::Mult(const Vector &x, Vector &y) const
 {
    MFEM_ASSERT(x.Size() == width && y.Size() == height, "Invalid vector size.");
+   const int *d_masks = masks.Size() ? masks.Read() : nullptr;
    const int id = (d1d << 4) | q1d;
    if (dim == 3)
    {
       switch (id)
       {
-         case 0x23: return BrokenHdivApply3D<2,3>(ne, *Bo, *Bc, qdata, x, y);
-         case 0x34: return BrokenHdivApply3D<3,4>(ne, *Bo, *Bc, qdata, x, y);
-         case 0x45: return BrokenHdivApply3D<4,5>(ne, *Bo, *Bc, qdata, x, y);
-         case 0x56: return BrokenHdivApply3D<5,6>(ne, *Bo, *Bc, qdata, x, y);
+         case 0x23: return BrokenHdivApply3D<2,3>(ne, *Bo, *Bc, qdata, x, y, d_masks);
+         case 0x34: return BrokenHdivApply3D<3,4>(ne, *Bo, *Bc, qdata, x, y, d_masks);
+         case 0x45: return BrokenHdivApply3D<4,5>(ne, *Bo, *Bc, qdata, x, y, d_masks);
+         case 0x56: return BrokenHdivApply3D<5,6>(ne, *Bo, *Bc, qdata, x, y, d_masks);
          default:
-            return BrokenHdivApply3D(ne, *Bo, *Bc, qdata, x, y, d1d, q1d);
+            return BrokenHdivApply3D(ne, *Bo, *Bc, qdata, x, y, d_masks, d1d, q1d);
       }
    }
    switch (id)
    {
-      case 0x22: return BrokenHdivApply2D<2,2>(ne, *Bo, *Bc, qdata, x, y);
-      case 0x33: return BrokenHdivApply2D<3,3>(ne, *Bo, *Bc, qdata, x, y);
-      case 0x44: return BrokenHdivApply2D<4,4>(ne, *Bo, *Bc, qdata, x, y);
-      case 0x55: return BrokenHdivApply2D<5,5>(ne, *Bo, *Bc, qdata, x, y);
+      case 0x22: return BrokenHdivApply2D<2,2>(ne, *Bo, *Bc, qdata, x, y, d_masks);
+      case 0x33: return BrokenHdivApply2D<3,3>(ne, *Bo, *Bc, qdata, x, y, d_masks);
+      case 0x44: return BrokenHdivApply2D<4,4>(ne, *Bo, *Bc, qdata, x, y, d_masks);
+      case 0x55: return BrokenHdivApply2D<5,5>(ne, *Bo, *Bc, qdata, x, y, d_masks);
       default:
-         return BrokenHdivApply2D(ne, *Bo, *Bc, qdata, x, y, d1d, q1d);
+         return BrokenHdivApply2D(ne, *Bo, *Bc, qdata, x, y, d_masks, d1d, q1d);
    }
 }
 
