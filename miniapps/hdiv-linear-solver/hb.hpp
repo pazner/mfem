@@ -14,12 +14,13 @@
 
 #include "discrete_divergence.hpp"
 #include "fast_diag.hpp"
+#include "general/scan.hpp"
 #include <vector>
 
 namespace mfem
 {
 
-inline real_t Sign(int d) { return d < 0 ? -1.0 : 1.0; }
+inline MFEM_HOST_DEVICE real_t Sign(int d) { return d < 0 ? -1.0 : 1.0; }
 
 enum SolverType { AMG, DIRECT };
 
@@ -46,15 +47,108 @@ inline std::unique_ptr<SparseMatrix> DiagonalSparseMatrix(const Vector &d)
    return D;
 }
 
-/// Scale row i of the finalized matrix A by s(i), on the device.
-inline void ScaleRowsDevice(SparseMatrix &A, const Vector &s)
+/// Set idx to the indices i with flags(i) != 0, compacted on the device.
+inline void FlaggedIndices(const Vector &flags, Array<int> &idx)
 {
-   const int *I = A.ReadI();
-   const real_t *d_s = s.Read();
-   real_t *data = A.ReadWriteData();
-   mfem::forall(A.Height(), [=] MFEM_HOST_DEVICE (int row)
+   const int n = flags.Size();
+   Array<int> iota(n), count(1);
+   int *d_iota = iota.Write();
+   mfem::forall(n, [=] MFEM_HOST_DEVICE (int i) { d_iota[i] = i; });
+   idx.SetSize(n);
+   CopyFlagged(true, iota.Read(), flags.Read(), idx.Write(), count.Write(), n);
+   idx.SetSize(count.HostRead()[0]);
+}
+
+/// Replace each positive count c by 1/c, and nonpositive counts by one.
+inline void InvertCounts(Vector &counts)
+{
+   real_t *d_c = counts.ReadWrite();
+   mfem::forall(counts.Size(), [=] MFEM_HOST_DEVICE (int i)
+   { d_c[i] = d_c[i] > 0.0 ? 1.0/d_c[i] : 1.0; });
+}
+
+/// For i < n, set flags(i) to one where map[i] < 0, and zero otherwise.
+inline void FlagNegative(const Array<int> &map, int n, Vector &flags)
+{
+   flags.SetSize(n);
+   const int *d_map = map.Read();
+   real_t *d_flags = flags.Write();
+   mfem::forall(n, [=] MFEM_HOST_DEVICE (int i)
+   { d_flags[i] = d_map[i] < 0 ? 1.0 : 0.0; });
+}
+
+/// Form the local constraint transpose on the device. Row i couples broken DOF
+/// i to the trace DOF |dofs[i]| with a unit entry when that is a face DOF
+/// (index < trace_size) on an interior face (interior >= 0); rows of other DOFs
+/// are empty. Row offsets are formed by a scan.
+inline void FormLocalConstraintTranspose(const Array<int> &dofs,
+                                         const Array<int> &interior,
+                                         int trace_size, SparseMatrix &Ct)
+{
+   const int n = dofs.Size();
+   Ct.OverrideSize(n, trace_size);
+   Ct.GetMemoryI().New(n + 1);
+   Array<int> trace_col(n), nnz(1);
    {
-      for (int k = I[row]; k < I[row+1]; ++k) { data[k] *= d_s[row]; }
+      const int *d_dofs = dofs.Read();
+      const int *d_interior = interior.Read();
+      int *I = Ct.WriteI();
+      int *col = trace_col.Write();
+      mfem::forall(n + 1, [=] MFEM_HOST_DEVICE (int i)
+      {
+         if (i == n) { I[i] = 0; return; }
+         const int td = UnsignIndex(d_dofs[i]);
+         I[i] = (td < trace_size && d_interior[td] >= 0) ? 1 : 0;
+         col[i] = td;
+      });
+      ExclusiveScan(true, I, I, n + 1, 0);
+      int *d_nnz = nnz.Write();
+      mfem::forall(1, [=] MFEM_HOST_DEVICE (int) { d_nnz[0] = I[n]; });
+   }
+   const int local_nnz = nnz.HostRead()[0];
+   Ct.GetMemoryJ().New(local_nnz);
+   Ct.GetMemoryData().New(local_nnz);
+   const int *I = Ct.ReadI();
+   const int *col = trace_col.Read();
+   int *J = Ct.WriteJ();
+   real_t *A = Ct.WriteData();
+   mfem::forall(n, [=] MFEM_HOST_DEVICE (int i)
+   {
+      if (I[i+1] > I[i]) { J[I[i]] = col[i]; A[I[i]] = 1.0; }
+   });
+}
+
+/// Form D_hat M^{-1} on the device, where D_hat is the broken divergence
+/// mapping native broken RT DOFs to the element-wise L2 subcells e*nvol+i, and
+/// M^{-1} is the diagonal inverse_mass. Each row has exactly 2*dim entries.
+inline void FormBrokenDivergence(const Array<int> &element2face,
+                                 const Array<int> &dof_map, int dim, int ne,
+                                 const Vector &inverse_mass, SparseMatrix &D)
+{
+   const int two_dim = 2*dim;
+   const int nvol = element2face.Size()/two_dim;
+   const int nd = dof_map.Size();
+   const int nrows = ne*nvol, nnz = nrows*two_dim;
+   D.OverrideSize(nrows, ne*nd);
+   D.GetMemoryI().New(nrows + 1);
+   D.GetMemoryJ().New(nnz);
+   D.GetMemoryData().New(nnz);
+   int *I = D.WriteI();
+   int *J = D.WriteJ();
+   real_t *V = D.WriteData();
+   const int *e2f = element2face.Read();
+   const int *map = dof_map.Read();
+   const real_t *inv = inverse_mass.Read();
+   mfem::forall(nrows + 1, [=] MFEM_HOST_DEVICE (int i) { I[i] = two_dim*i; });
+   mfem::forall(nnz, [=] MFEM_HOST_DEVICE (int ii)
+   {
+      const int k = ii%two_dim, row = ii/two_dim;
+      const int i = row%nvol, e = row/nvol;
+      const int d = e2f[k+two_dim*i];
+      const int mapped = map[UnsignIndex(d)];
+      const int col = e*nd+UnsignIndex(mapped);
+      J[ii] = col;
+      V[ii] = Sign(d)*Sign(mapped)*inv[col];
    });
 }
 
@@ -84,11 +178,9 @@ class BrokenSpace
    const Operator &prolongation;
    const int nd;
    const Array<int> &dofs;
-   HYPRE_BigInt num_global_flux_dofs, num_global_trace_dofs;
-   Array<int> multiplicity, trace_local, inactive_trace;
+   Array<int> inactive_trace;
    // Inverse multiplicity of each true DOF (one where it is not shared).
    Vector inverse_multiplicity;
-   Array<HYPRE_BigInt> trace_global;
    const HypreParMatrix &trace_prolongation;
    std::unique_ptr<HypreParMatrix> Ct;
    std::unique_ptr<HypreParMatrix> C;
@@ -101,35 +193,32 @@ public:
                        *fes.GetElementRestriction(ElementDofOrdering::NATIVE))),
         prolongation(*fes.GetProlongationMatrix()),
         nd(fes.GetTypicalFE()->GetDof()), dofs(restriction.GatherMap()),
-        multiplicity(fes.GetVSize()), trace_local(trace_fes.GetVSize()),
-        trace_global(trace_fes.GetVSize()),
         trace_prolongation(*trace_fes.Dof_TrueDof_Matrix())
    {
       const MPI_Comm comm = fes.GetComm();
-      const Array<int> &offsets = restriction.Offsets();
-      for (int d = 0; d < fes.GetVSize(); ++d)
+      const int n_broken = restriction.Height();
+
+      // Count the element copies of each true DOF over all ranks. The
+      // restriction is applied without RT orientation signs; the prolongation
+      // is boolean.
       {
-         multiplicity[d] = offsets[d+1]-offsets[d];
+         Vector ones(n_broken), local_count(fes.GetVSize());
+         ones.UseDevice(true);
+         local_count.UseDevice(true);
+         ones = 1.0;
+         restriction.AbsMultTranspose(ones, local_count);
+         inverse_multiplicity.SetSize(fes.GetTrueVSize());
+         inverse_multiplicity.UseDevice(true);
+         prolongation.MultTranspose(local_count, inverse_multiplicity);
+         InvertCounts(inverse_multiplicity);
       }
-      fes.GroupComm().Reduce<int>(multiplicity, GroupCommunicator::Sum);
-      fes.GroupComm().Bcast(multiplicity);
-      // Filled on the host from the host-side DOF maps, then used on device.
-      inverse_multiplicity.SetSize(fes.GetTrueVSize());
-      inverse_multiplicity = 1.0;
-      for (int d = 0; d < multiplicity.Size(); ++d)
-      {
-         const int tdof = fes.GetLocalTDofNumber(d);
-         if (tdof >= 0 && multiplicity[d])
-         { inverse_multiplicity(tdof) = 1.0/multiplicity[d]; }
-      }
-      inverse_multiplicity.UseDevice(true);
 
       // Compute offsets for the broken space.
-      HYPRE_BigInt size = restriction.Height();
+      HYPRE_BigInt size = n_broken;
       Array<HYPRE_BigInt> flux_offsets;
       Array<HYPRE_BigInt> *partitions[] = { &flux_offsets };
       fes.GetParMesh()->GenerateOffsets(1, &size, partitions);
-      num_global_flux_dofs = flux_offsets[2];
+      const HYPRE_BigInt num_global_flux_dofs = flux_offsets[2];
 
       // Same-order RT and DG interface spaces share local face DOF numbering:
       // the RT element-interior DOFs follow this common prefix. The interface
@@ -141,34 +230,23 @@ public:
                                           FaceType::Interior));
       const Array<int> &interior = face_restriction.GatherMap();
       const int trace_size = trace_fes.GetVSize();
+      // The gather map may extend past the local DOFs (face neighbors).
+      MFEM_VERIFY(interior.Size() >= trace_size, "Unexpected trace gather map.");
 
-      // Keep all interface true DOFs. Inactive boundary multipliers are
-      // eliminated from the system by replacing the equations with identity.
-      num_global_trace_dofs = trace_prolongation.GetGlobalNumCols();
-      trace_global = -1;
-      for (int d = 0; d < trace_size; ++d)
+      // Keep all interface true DOFs. Owned multipliers on non-interior
+      // (boundary) faces are inactive, and their equations are replaced with
+      // identity.
       {
-         const int owned = trace_fes.GetLocalTDofNumber(d);
-         trace_local[d] = owned;
-         if (interior[d] >= 0)
-         {
-            trace_global[d] = trace_fes.GetGlobalTDofNumber(d);
-         }
-         else if (owned >= 0) { inactive_trace.Append(owned); }
+         Vector boundary(trace_size), owned_boundary(trace_fes.GetTrueVSize());
+         boundary.UseDevice(true);
+         owned_boundary.UseDevice(true);
+         FlagNegative(interior, trace_size, boundary);
+         trace_fes.GetRestrictionOperator()->Mult(boundary, owned_boundary);
+         FlaggedIndices(owned_boundary, inactive_trace);
       }
 
-      // The gather map may already have been used on the device.
-      const int *h_dofs = dofs.HostRead();
-      SparseMatrix local_Ct(dofs.Size(), trace_fes.GetVSize());
-      for (int i = 0; i < dofs.Size(); ++i)
-      {
-         const int td = UnsignIndex(h_dofs[i]);
-         if (td < trace_size && interior[td] >= 0)
-         {
-            local_Ct.Add(i, td, 1.0);
-         }
-      }
-      local_Ct.Finalize();
+      SparseMatrix local_Ct;
+      FormLocalConstraintTranspose(dofs, interior, trace_size, local_Ct);
       HypreParMatrix parallel_Ct(comm, num_global_flux_dofs,
                                  trace_fes.GlobalVSize(), flux_offsets.GetData(),
                                  trace_fes.GetDofOffsets(), &local_Ct);
@@ -232,13 +310,7 @@ public:
       essential = 0.0;
       essential.SetSubVector(ess_tdofs, 1.0);
       Prolongate(essential, broken_essential);
-      // The index list is built on the host, where its consumers use it.
-      const real_t *marked = broken_essential.HostRead();
-      ess_broken_dofs.SetSize(0);
-      for (int i = 0; i < broken_essential.Size(); ++i)
-      {
-         if (marked[i] != 0.0) { ess_broken_dofs.Append(i); }
-      }
+      FlaggedIndices(broken_essential, ess_broken_dofs);
    }
 
    void Assemble(const Vector &broken, Vector &x) const
@@ -343,9 +415,9 @@ public:
       mass.AssembleDiagonalPA(diagonal_lex);
 
       // Convert from lexicographic to native ordering
-      const Array<int> &dof_map = dynamic_cast<const TensorBasisElement&>(
-                                     *fes_rt.GetTypicalFE()).GetDofMap();
-      const int ndof_per_el = fes_hat.GetNumDofsPerElem();
+      // Copy the DOF map for device use: the element reads its own on the host.
+      const Array<int> dof_map(dynamic_cast<const TensorBasisElement&>(
+                                  *fes_rt.GetTypicalFE()).GetDofMap());
       const int n_broken = fes_hat.GetNumBrokenDofs();
       Vector inverse_mass(n_broken);
       inverse_mass.UseDevice(true);
@@ -361,35 +433,20 @@ public:
       const int order = fes_rt.GetMaxElementOrder();
       Array<int> element2face;
       FormElementToFace(dim, order, element2face);
-      const int nvol_per_el = element2face.Size()/(2*dim);
       L2_FECollection scalar_fec(order-1, dim, BasisType::IntegratedGLL,
                                  FiniteElement::INTEGRAL);
       ParFiniteElementSpace scalar_fes(fes_rt.GetParMesh(), &scalar_fec);
 
-      // Form M_b^{-1} D_hat^T in native broken coordinates. The signed pattern
-      // is built on the host; the rows are scaled by M_b^{-1} on the device.
-      SparseMatrix Dt_mass(n_broken, scalar_fes.GetVSize());
-      const int *h_map = dof_map.HostRead();
-      for (int e = 0; e < fes_rt.GetNE(); ++e)
-      {
-         for (int i = 0; i < nvol_per_el; ++i)
-         {
-            for (int k = 0; k < 2*dim; ++k)
-            {
-               const int d = element2face[k+2*dim*i];
-               const int mapped = h_map[UnsignIndex(d)];
-               const int row = e*ndof_per_el+UnsignIndex(mapped);
-               Dt_mass.Add(row, e*nvol_per_el+i, Sign(d)*Sign(mapped));
-            }
-         }
-      }
-      Dt_mass.Finalize();
-      ScaleRowsDevice(Dt_mass, inverse_mass);
+      // Form F^{-1} E^T = F^{-1} C (D_hat M_b^{-1})^T (multipliers by L2 subcells).
+      SparseMatrix D_local;
+      FormBrokenDivergence(element2face, dof_map, dim, fes_rt.GetNE(),
+                           inverse_mass, D_local);
       HypreParMatrix &Ct = fes_hat.GetCt();
-      HypreParMatrix Dt_par(fes_rt.GetComm(), Ct.GetGlobalNumRows(),
-                            scalar_fes.GlobalVSize(), Ct.GetRowStarts(),
-                            scalar_fes.GetDofOffsets(), &Dt_mass);
-      F_inverse_Et.reset(ParMult(&fes_hat.GetC(), &Dt_par, true));
+      HypreParMatrix D_par(fes_rt.GetComm(), scalar_fes.GlobalVSize(),
+                           Ct.GetGlobalNumRows(), scalar_fes.GetDofOffsets(),
+                           Ct.GetRowStarts(), &D_local);
+      std::unique_ptr<HypreParMatrix> Dt(D_par.Transpose());
+      F_inverse_Et.reset(ParMult(&fes_hat.GetC(), Dt.get(), true));
       F_inverse_Et->ScaleRows(F_inverse);
 
       S.reset(AssembleGraphLaplacian(fes_rt, scalar_fes, ess_rt_dofs, alpha,
@@ -433,7 +490,8 @@ public:
 class BrokenElementPAOperator : public Operator
 {
    const Array<BilinearFormIntegrator*> &integrators;
-   const Array<int> &dof_map;
+   // A copy for device use: the element reads its own DOF map on the host.
+   const Array<int> dof_map;
    mutable Vector x_lex, y_lex;
 
 public:
