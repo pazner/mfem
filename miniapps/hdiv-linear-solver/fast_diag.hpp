@@ -38,27 +38,25 @@ inline const IntegrationRule *GetCoefficientRule(Coefficient *coeff)
     SPD preconditioner otherwise. The coefficients alpha (mass) and beta (div)
     default to one when null. Requires LAPACK, uniform order,
     GaussLobatto/IntegratedGLL bases, positive Jacobians, alpha > 0 and
-    beta >= 0. Essential DOFs must be unions of complete element faces, in
-    broken numbering; their equations are identity. Setup is on the host, and
-    Mult uses host tensor contractions. Reconstruct the solver after changing
-    the mesh or coefficients. */
+    beta >= 0, and order + 1 at most the H(div) limit HDIV_MAX_D1D of the
+    configured device. Essential DOFs must be unions of complete element faces,
+    in broken numbering; their equations are identity. Setup is on the host. Mult runs on the device with one thread
+    block per element, holding the element vector in shared memory. Reconstruct
+    the solver after changing the mesh or coefficients. */
 class FastDiagonalizationSolver : public Solver
 {
-   struct Basis
-   {
-      // Pad constrained closed spaces with zeros to retain the RT layout.
-      DenseMatrix closed, open;
-      Vector sigma;
-   } basis[4]; // Bits select constrained left/right endpoints.
-
    int dim, p, nd, ne;
    Array<int> dof_map;
-   Array2D<int> masks;
+   /// Constraint mask of each element and direction, at index e*dim+a. Bits
+   /// select constrained left/right endpoints.
+   Array<int> masks;
+   /// 1D bases for each of the 4 masks, each laid out as the column-major
+   /// closed (p+1)x(p+1) and open pxp transforms followed by the p singular
+   /// values. Constrained closed spaces are padded with zeros to retain the RT
+   /// layout.
+   Vector basis;
    DenseMatrix mass_inverse;
    Vector div_scale;
-   mutable Vector work, scratch;
-
-   void Transform(int e, bool transpose) const;
 
 public:
    FastDiagonalizationSolver(FiniteElementSpace &fes,

@@ -42,7 +42,7 @@ FastDiagonalizationSolver::FastDiagonalizationSolver(
    Coefficient *alpha, Coefficient *beta)
    : Solver(0), dim(fes.GetMesh()->Dimension()), p(fes.GetMaxElementOrder()),
      nd(fes.GetTypicalFE()->GetDof()), ne(fes.GetNE()),
-     masks(ne, dim), mass_inverse(dim, ne), div_scale(ne), work(nd), scratch(nd)
+     masks(ne*dim), mass_inverse(dim, ne), div_scale(ne)
 {
 #ifndef MFEM_USE_LAPACK
    MFEM_ABORT("FastDiagonalizationSolver requires MFEM_USE_LAPACK.");
@@ -54,6 +54,8 @@ FastDiagonalizationSolver::FastDiagonalizationSolver(
    MFEM_VERIFY((dim == 2 || dim == 3) && fes.GetVDim() == 1 &&
                fes.GetMesh()->SpaceDimension() == dim && !fes.IsVariableOrder(),
                "Expected a uniform-order 2D or 3D RT space.");
+   MFEM_VERIFY(p+1 <= DeviceDofQuadLimits::Get().HDIV_MAX_D1D,
+               "Order exceeds the H(div) limit HDIV_MAX_D1D.");
    const auto geom = Geometry::TensorProductGeometry(dim);
    MFEM_VERIFY(fes.GetTypicalFE()->GetGeomType() == geom,
                "Expected quadrilateral or hexahedral elements.");
@@ -96,7 +98,7 @@ FastDiagonalizationSolver::FastDiagonalizationSolver(
          {
             MFEM_VERIFY(count[side] == 0 || count[side] == nc/(p+1),
                         "Essential DOFs must cover complete element faces.");
-            if (count[side]) { masks(e,c) |= 1 << side; }
+            if (count[side]) { masks[e*dim+c] |= 1 << side; }
          }
          stride *= p;
       }
@@ -121,9 +123,15 @@ FastDiagonalizationSolver::FastDiagonalizationSolver(
    DenseMatrix Lo(Mo);
    CholeskyFactors lo(Lo.Data());
    MFEM_VERIFY(lo.Factor(p), "Invalid open mass matrix.");
+   struct Basis
+   {
+      // Pad constrained closed spaces with zeros to retain the RT layout.
+      DenseMatrix closed, open;
+      Vector sigma;
+   } bases[4]; // Bits select constrained left/right endpoints.
    for (int mask = 0; mask < 4; ++mask)
    {
-      Basis &b = basis[mask];
+      Basis &b = bases[mask];
       b.closed.SetSize(p+1);
       b.closed = 0.0;
       b.sigma.SetSize(p);
@@ -160,6 +168,20 @@ FastDiagonalizationSolver::FastDiagonalizationSolver(
          { b.sigma(i) = svd.Singularvalue(i); }
       }
       lo.USolve(p, p, b.open.Data());
+   }
+
+   // Pack the bases for device access.
+   const int nb = (p+1)*(p+1) + p*p + p;
+   basis.SetSize(4*nb);
+   real_t *h_basis = basis.HostWrite();
+   for (int mask = 0; mask < 4; ++mask)
+   {
+      real_t *data = h_basis + mask*nb;
+      const Basis &b = bases[mask];
+      std::copy(b.closed.Data(), b.closed.Data() + (p+1)*(p+1), data);
+      std::copy(b.open.Data(), b.open.Data() + p*p, data + (p+1)*(p+1));
+      std::copy(b.sigma.GetData(), b.sigma.GetData() + p,
+                data + (p+1)*(p+1) + p*p);
    }
 
    // Average the diagonal of alpha J^T J/det J and beta/det J using
@@ -222,37 +244,36 @@ FastDiagonalizationSolver::FastDiagonalizationSolver(
 #endif
 }
 
-void FastDiagonalizationSolver::Transform(int e, bool transpose) const
+/// Apply the 1D transforms selected by the element's direction masks
+/// (transposed if @a transpose) in each direction to all components of the
+/// lexicographic element vector u, using v as scratch. The pointers are
+/// swapped so that u holds the result.
+MFEM_HOST_DEVICE static inline void Transform(
+   int dim, int p, int nd, const int *mask, const real_t *basis, int nb,
+   bool transpose, real_t *&u, real_t *&v)
 {
    const int nc = nd/dim;
-   for (int c = 0; c < dim; ++c)
+   for (int a = 0; a < dim; ++a)
    {
-      int stride = 1;
-      for (int a = 0; a < dim; ++a)
+      MFEM_FOREACH_THREAD(j, x, nd)
       {
-         const auto &b = basis[masks(e,a)];
-         const DenseMatrix &Q = a == c ? b.closed : b.open;
-         const int n = Q.Height();
-         for (int outer = 0; outer < nc; outer += n*stride)
+         // Component c has size p+1 in direction c and p in the others.
+         const int c = j/nc, jc = j%nc;
+         int stride = 1;
+         for (int b = 0; b < a; ++b) { stride *= b == c ? p+1 : p; }
+         const int n = a == c ? p+1 : p;
+         const int i = (jc/stride)%n;
+         const int base = c*nc + jc - i*stride;
+         const real_t *Q = basis + mask[a]*nb + (a == c ? 0 : (p+1)*(p+1));
+         real_t sum = 0.0;
+         for (int k = 0; k < n; ++k)
          {
-            for (int inner = 0; inner < stride; ++inner)
-            {
-               for (int i = 0; i < n; ++i)
-               {
-                  real_t sum = 0.0;
-                  for (int j = 0; j < n; ++j)
-                  {
-                     sum += (transpose ? Q(j,i) : Q(i,j))*
-                            work(c*nc+outer+j*stride+inner);
-                  }
-                  scratch(c*nc+outer+i*stride+inner) = sum;
-               }
-            }
+            sum += (transpose ? Q[k+i*n] : Q[i+k*n])*u[base+k*stride];
          }
-         std::copy(scratch.GetData()+c*nc, scratch.GetData()+(c+1)*nc,
-                   work.GetData()+c*nc);
-         stride *= n;
+         v[j] = sum;
       }
+      MFEM_SYNC_THREAD;
+      real_t *t = u; u = v; v = t;
    }
 }
 
@@ -260,23 +281,39 @@ void FastDiagonalizationSolver::Mult(const Vector &x, Vector &y) const
 {
    MFEM_ASSERT(x.Size() == height, "Invalid vector size.");
    y = x; // Also preserves identity equations and permits in-place application.
-   real_t *output = y.HostReadWrite();
+   const int dim = this->dim, p = this->p, nd = this->nd;
    const int nc = nd/dim;
    const int nvol = nc*p/(p+1);
-   for (int e = 0; e < ne; ++e)
+   const int nb = (p+1)*(p+1) + p*p + p;
+   const int sigma_offset = (p+1)*(p+1) + p*p;
+   const int *map = dof_map.Read();
+   const int *d_masks = masks.Read();
+   const real_t *d_basis = basis.Read();
+   const real_t *m_inv = mass_inverse.Read();
+   const real_t *d_div = div_scale.Read();
+   real_t *Y = y.ReadWrite();
+   mfem::forall_2D(ne, std::min(nd, 256), 1, [=] MFEM_HOST_DEVICE (int e)
    {
-      for (int j = 0; j < nd; ++j)
+      // Size for 3D elements at the H(div) limit of this compilation pass.
+      constexpr int MD1D = DofQuadLimits::HDIV_MAX_D1D;
+      constexpr int MAX_ND = 3*MD1D*(MD1D-1)*(MD1D-1);
+      MFEM_SHARED real_t s_u[MAX_ND], s_v[MAX_ND];
+      real_t *u = s_u, *v = s_v;
+      const int *mask = d_masks + e*dim;
+      const real_t *mi = m_inv + e*dim;
+      real_t *ye = Y + e*nd;
+
+      MFEM_FOREACH_THREAD(j, x, nd)
       {
-         const int d = dof_map[j];
-         work(j) = (d < 0 ? -1.0 : 1.0)*output[e*nd+UnsignIndex(d)];
+         const int d = map[j];
+         u[j] = (d < 0 ? -1.0 : 1.0)*ye[UnsignIndex(d)];
       }
-      Transform(e, true);
-      for (int c = 0; c < dim; ++c)
-      {
-         for (int j = 0; j < nc; ++j) { work(c*nc+j) *= mass_inverse(c,e); }
-      }
+      MFEM_SYNC_THREAD;
+      Transform(dim, p, nd, mask, d_basis, nb, true, u, v);
+      MFEM_FOREACH_THREAD(j, x, nd) { u[j] *= mi[j/nc]; }
+      MFEM_SYNC_THREAD;
       // Sherman-Morrison for diag(m_c) + beta/det(J) s s^T per scalar mode.
-      for (int k = 0; k < nvol; ++k)
+      MFEM_FOREACH_THREAD(k, x, nvol)
       {
          int index[3], stride = 1;
          real_t s[3], dot = 0.0, norm = 0.0;
@@ -284,25 +321,25 @@ void FastDiagonalizationSolver::Mult(const Vector &x, Vector &y) const
          {
             const int mode = (k/stride)%p;
             index[c] = c*nc + k + (k/(stride*p))*stride;
-            s[c] = basis[masks(e,c)].sigma(mode);
-            dot += s[c]*work(index[c]);
-            norm += s[c]*s[c]*mass_inverse(c,e);
+            s[c] = d_basis[mask[c]*nb + sigma_offset + mode];
+            dot += s[c]*u[index[c]];
+            norm += s[c]*s[c]*mi[c];
             stride *= p;
          }
-         const real_t correction = div_scale(e)*dot/(1.0+div_scale(e)*norm);
-         for (int c = 0; c < dim; ++c)
-         { work(index[c]) -= mass_inverse(c,e)*s[c]*correction; }
+         const real_t correction = d_div[e]*dot/(1.0+d_div[e]*norm);
+         for (int c = 0; c < dim; ++c) { u[index[c]] -= mi[c]*s[c]*correction; }
       }
-      Transform(e, false);
-      for (int j = 0; j < nd; ++j)
+      MFEM_SYNC_THREAD;
+      Transform(dim, p, nd, mask, d_basis, nb, false, u, v);
+      MFEM_FOREACH_THREAD(j, x, nd)
       {
          const int c = j/nc, stride = c == 0 ? 1 : (c == 1 ? p : p*p);
-         const int k = ((j%nc)/stride)%(p+1), mask = masks(e,c);
-         if ((k == 0 && (mask & 1)) || (k == p && (mask & 2))) { continue; }
-         const int d = dof_map[j];
-         output[e*nd+UnsignIndex(d)] = (d < 0 ? -1.0 : 1.0)*work(j);
+         const int k = ((j%nc)/stride)%(p+1), m = mask[c];
+         if ((k == 0 && (m & 1)) || (k == p && (m & 2))) { continue; }
+         const int d = map[j];
+         ye[UnsignIndex(d)] = (d < 0 ? -1.0 : 1.0)*u[j];
       }
-   }
+   });
 }
 
 } // namespace mfem
