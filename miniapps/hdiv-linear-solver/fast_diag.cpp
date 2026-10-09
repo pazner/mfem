@@ -15,12 +15,14 @@
 namespace mfem
 {
 
-/// Evaluate coeff (one if null) at the points of the rule it is integrated on,
-/// in element-contiguous order, and return that rule.
+/// Evaluate coeff at the points of the rule it is integrated on, in
+/// element-contiguous order, and return that rule. For a null coefficient
+/// (one), values is left empty.
 static const IntegrationRule &EvalCoefficient(
    Mesh &mesh, Coefficient *coeff, const IntegrationRule &default_rule,
    Vector &values)
 {
+   values.UseDevice(true);
    if (const IntegrationRule *rule = GetCoefficientRule(coeff))
    {
       const auto &qf =
@@ -29,12 +31,106 @@ static const IntegrationRule &EvalCoefficient(
       values = qf;
       return *rule;
    }
-   QuadratureSpace qs(mesh, default_rule);
-   QuadratureFunction qf(qs);
-   if (coeff) { coeff->Project(qf); }
-   else { qf = 1.0; }
-   values = qf;
+   values.SetSize(0);
+   if (coeff)
+   {
+      QuadratureSpace qs(mesh, default_rule);
+      QuadratureFunction qf(qs);
+      qf.UseDevice(true);
+      coeff->Project(qf);
+      values = qf;
+   }
    return default_rule;
+}
+
+/// Sum of the point weights of rule. (The cached GetWeights() array may be
+/// valid only on the device.)
+static real_t WeightSum(const IntegrationRule &rule)
+{
+   real_t sum = 0.0;
+   for (int q = 0; q < rule.GetNPoints(); ++q) { sum += rule.IntPoint(q).weight; }
+   return sum;
+}
+
+/// Average the diagonal of alpha J^T J/det J and beta/det J over each element
+/// on the device, using reference quadrature weights, and set
+/// mass_inverse(c,e) and div_scale(e) from them. The Jacobians J and
+/// determinants det_a are on alpha_rule, det_b on beta_rule; empty value
+/// vectors mean coefficient one. Elements with nonpositive Jacobians are
+/// counted in errors[0], and elements with invalid averages in errors[1].
+static void AverageElementGeometry(
+   const int dim, const int ne,
+   const IntegrationRule &alpha_rule, const Vector &J_, const Vector &det_a_,
+   const Vector &alpha_values,
+   const IntegrationRule &beta_rule, const Vector &det_b_,
+   const Vector &beta_values,
+   DenseMatrix &mass_inverse, Vector &div_scale, Array<int> &errors)
+{
+   constexpr int NT = 64; // threads per element
+   const int nqa = alpha_rule.GetNPoints(), nqb = beta_rule.GetNPoints();
+   const real_t alpha_weight_sum = WeightSum(alpha_rule);
+   const real_t beta_weight_sum = WeightSum(beta_rule);
+   const real_t *wa = alpha_rule.GetWeights().Read();
+   const real_t *wb = beta_rule.GetWeights().Read();
+   const auto J = Reshape(J_.Read(), nqa, dim, dim, ne);
+   const auto det_a = Reshape(det_a_.Read(), nqa, ne);
+   const auto det_b = Reshape(det_b_.Read(), nqb, ne);
+   const real_t *a_val = alpha_values.Size() ? alpha_values.Read() : nullptr;
+   const real_t *b_val = beta_values.Size() ? beta_values.Read() : nullptr;
+   auto m_inv = Reshape(mass_inverse.Write(), dim, ne);
+   real_t *d_scale = div_scale.Write();
+   int *err = errors.ReadWrite();
+   mfem::forall_2D(ne, NT, 1, [=] MFEM_HOST_DEVICE (int e)
+   {
+      MFEM_SHARED real_t partial[4][NT];
+      MFEM_FOREACH_THREAD(t,x,NT)
+      {
+         real_t mass[3] = {0.0, 0.0, 0.0}, div = 0.0;
+         bool bad = false;
+         for (int q = t; q < nqa; q += NT)
+         {
+            bad = bad || !(det_a(q,e) > 0.0);
+            const real_t w = wa[q]*(a_val ? a_val[q + nqa*e] : 1.0)/det_a(q,e);
+            for (int c = 0; c < dim; ++c)
+            {
+               for (int a = 0; a < dim; ++a) { mass[c] += w*J(q,a,c,e)*J(q,a,c,e); }
+            }
+         }
+         for (int q = t; q < nqb; q += NT)
+         {
+            bad = bad || !(det_b(q,e) > 0.0);
+            div += wb[q]*(b_val ? b_val[q + nqb*e] : 1.0)/det_b(q,e);
+         }
+         if (bad) { AtomicAdd(err[0], 1); }
+         for (int c = 0; c < 3; ++c) { partial[c][t] = mass[c]; }
+         partial[3][t] = div;
+      }
+      MFEM_SYNC_THREAD;
+      if (MFEM_THREAD_ID(x) == 0)
+      {
+         real_t mass[3] = {0.0, 0.0, 0.0}, div = 0.0;
+         for (int t = 0; t < NT; ++t)
+         {
+            for (int c = 0; c < 3; ++c) { mass[c] += partial[c][t]; }
+            div += partial[3][t];
+         }
+         bool bad = !(div >= 0.0);
+         for (int c = 0; c < dim; ++c)
+         {
+            bad = bad || !(mass[c] > 0.0);
+            m_inv(c,e) = alpha_weight_sum/mass[c];
+         }
+         d_scale[e] = div/beta_weight_sum;
+         if (bad) { AtomicAdd(err[1], 1); }
+      }
+   });
+}
+
+/// Zero the n entries of a, on the device.
+static void ZeroDevice(Array<int> &a)
+{
+   int *d_a = a.Write();
+   mfem::forall(a.Size(), [=] MFEM_HOST_DEVICE (int i) { d_a[i] = 0; });
 }
 
 void GetConstrainedFaceMasks(const FiniteElementSpace &fes,
@@ -45,44 +141,63 @@ void GetConstrainedFaceMasks(const FiniteElementSpace &fes,
    const int nd = fes.GetTypicalFE()->GetDof();
    const int ne = fes.GetNE();
    const int height = ne*nd;
-
-   // Identify complete constrained faces. Interior/partial-face constraints
-   // do not admit the tensor-product structure.
-   Array<int> constrained(height);
-   constrained = 0;
-   // The essential DOF list may already have been used on the device.
-   const int *h_ess = ess_dofs.HostRead();
-   for (int k = 0; k < ess_dofs.Size(); ++k)
-   {
-      const int d = h_ess[k];
-      MFEM_VERIFY(d >= 0 && d < height, "Invalid essential broken DOF.");
-      constrained[d] = 1;
-   }
    masks.SetSize(ne*dim);
-   masks = 0;
-   const int nc = nd/dim;
-   for (int e = 0; e < ne; ++e)
+   ZeroDevice(masks);
+   const int n_ess = ess_dofs.Size();
+   if (n_ess == 0) { return; }
+
+   // Mark the essential DOFs, then count them on the two end faces of each
+   // element and direction. Interior/partial-face constraints do not admit
+   // the tensor-product structure; they are counted in errors[1] and [2].
+   Array<int> constrained(height), errors(3);
+   ZeroDevice(constrained);
+   ZeroDevice(errors);
    {
-      int stride = 1;
-      for (int c = 0; c < dim; ++c)
+      const int *ess = ess_dofs.Read();
+      int *marker = constrained.ReadWrite();
+      int *err = errors.ReadWrite();
+      mfem::forall(n_ess, [=] MFEM_HOST_DEVICE (int k)
       {
+         const int d = ess[k];
+         if (d < 0 || d >= height) { AtomicAdd(err[0], 1); }
+         else { marker[d] = 1; }
+      });
+   }
+   {
+      const int nc = nd/dim;
+      const int *marker = constrained.Read();
+      int *m = masks.ReadWrite();
+      int *err = errors.ReadWrite();
+      mfem::forall(ne*dim, [=] MFEM_HOST_DEVICE (int i)
+      {
+         const int e = i/dim, c = i%dim;
+         int stride = 1;
+         for (int b = 0; b < c; ++b) { stride *= p; }
          int count[2] = {0, 0};
+         bool interior = false;
          for (int j = 0; j < nc; ++j)
          {
-            if (!constrained[e*nd+c*nc+j]) { continue; }
+            if (!marker[e*nd+c*nc+j]) { continue; }
             const int k = (j/stride)%(p+1);
-            MFEM_VERIFY(k == 0 || k == p, "Cannot constrain interior DOFs.");
-            ++count[k == p];
+            if (k == 0) { ++count[0]; }
+            else if (k == p) { ++count[1]; }
+            else { interior = true; }
          }
+         if (interior) { AtomicAdd(err[1], 1); }
+         int mask = 0;
          for (int side = 0; side < 2; ++side)
          {
-            MFEM_VERIFY(count[side] == 0 || count[side] == nc/(p+1),
-                        "Essential DOFs must cover complete element faces.");
-            if (count[side]) { masks[e*dim+c] |= 1 << side; }
+            if (count[side] != 0 && count[side] != nc/(p+1)) { AtomicAdd(err[2], 1); }
+            if (count[side]) { mask |= 1 << side; }
          }
-         stride *= p;
-      }
+         m[i] = mask;
+      });
    }
+   const int *h_err = errors.HostRead();
+   MFEM_VERIFY(h_err[0] == 0, "Invalid essential broken DOF.");
+   MFEM_VERIFY(h_err[1] == 0, "Cannot constrain interior DOFs.");
+   MFEM_VERIFY(h_err[2] == 0,
+               "Essential DOFs must cover complete element faces.");
 }
 
 FastDiagonalizationSolver::FastDiagonalizationSolver(
@@ -109,11 +224,8 @@ FastDiagonalizationSolver::FastDiagonalizationSolver(
                "Expected quadrilateral or hexahedral elements.");
    height = width = ne*nd;
 
-   for (int e = 0; e < ne; ++e)
-   {
-      MFEM_VERIFY(fes.GetFE(e)->GetGeomType() == geom,
-                  "Expected quadrilateral or hexahedral elements.");
-   }
+   MFEM_VERIFY(fes.GetMesh()->GetNumGeometries(dim) <= 1,
+               "Expected quadrilateral or hexahedral elements only.");
    GetConstrainedFaceMasks(fes, ess_dofs, masks);
 
    DenseMatrix Mc(p+1), Mo(p);
@@ -211,48 +323,15 @@ FastDiagonalizationSolver::FastDiagonalizationSolver(
    const int flags = GeometricFactors::JACOBIANS | GeometricFactors::DETERMINANTS;
    const auto *alpha_factors = mesh.GetGeometricFactors(alpha_rule, flags);
    const auto *beta_factors = mesh.GetGeometricFactors(beta_rule, flags);
-   const int nqa = alpha_rule.GetNPoints(), nqb = beta_rule.GetNPoints();
-   const auto J = Reshape(alpha_factors->J.HostRead(), nqa, dim, dim, ne);
-   const auto det_a = Reshape(alpha_factors->detJ.HostRead(), nqa, ne);
-   const auto det_b = Reshape(beta_factors->detJ.HostRead(), nqb, ne);
-   const auto a_val = Reshape(alpha_values.HostRead(), nqa, ne);
-   const auto b_val = Reshape(beta_values.HostRead(), nqb, ne);
-   // Sum the point weights directly: the cached GetWeights() array may be
-   // valid only on the device.
-   auto weight_sum = [](const IntegrationRule &rule)
-   {
-      real_t sum = 0.0;
-      for (int q = 0; q < rule.GetNPoints(); ++q) { sum += rule.IntPoint(q).weight; }
-      return sum;
-   };
-   const real_t alpha_weight_sum = weight_sum(alpha_rule);
-   const real_t beta_weight_sum = weight_sum(beta_rule);
-   for (int e = 0; e < ne; ++e)
-   {
-      real_t mass[3] = {}, div = 0.0;
-      for (int q = 0; q < nqa; ++q)
-      {
-         MFEM_VERIFY(det_a(q,e) > 0.0, "Nonpositive element Jacobian.");
-         const real_t w = alpha_rule.IntPoint(q).weight*a_val(q,e)/det_a(q,e);
-         for (int c = 0; c < dim; ++c)
-         {
-            for (int a = 0; a < dim; ++a)
-            { mass[c] += w*J(q,a,c,e)*J(q,a,c,e); }
-         }
-      }
-      for (int q = 0; q < nqb; ++q)
-      {
-         MFEM_VERIFY(det_b(q,e) > 0.0, "Nonpositive element Jacobian.");
-         div += beta_rule.IntPoint(q).weight*b_val(q,e)/det_b(q,e);
-      }
-      MFEM_VERIFY(div >= 0.0, "Invalid coefficients.");
-      for (int c = 0; c < dim; ++c)
-      {
-         MFEM_VERIFY(mass[c] > 0.0, "Invalid coefficients.");
-         mass_inverse(c,e) = alpha_weight_sum/mass[c];
-      }
-      div_scale(e) = div/beta_weight_sum;
-   }
+   Array<int> errors(2);
+   ZeroDevice(errors);
+   AverageElementGeometry(dim, ne, alpha_rule, alpha_factors->J,
+                          alpha_factors->detJ, alpha_values, beta_rule,
+                          beta_factors->detJ, beta_values, mass_inverse,
+                          div_scale, errors);
+   const int *h_err = errors.HostRead();
+   MFEM_VERIFY(h_err[0] == 0, "Nonpositive element Jacobian.");
+   MFEM_VERIFY(h_err[1] == 0, "Invalid coefficients.");
 #endif
 }
 
