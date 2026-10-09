@@ -47,6 +47,62 @@ inline std::unique_ptr<SparseMatrix> DiagonalSparseMatrix(const Vector &d)
    return D;
 }
 
+/// Lexicographic DOF map of the typical (tensor-product) element of fes.
+inline const Array<int> &GetDofMap(const FiniteElementSpace &fes)
+{
+   return dynamic_cast<const TensorBasisElement&>(*fes.GetTypicalFE())
+          .GetDofMap();
+}
+
+/// Convert a native element matrix to the lexicographic broken coordinates,
+/// u_lex(j) = sign(dof_map[j]) u(|dof_map[j]|), as A_lex = P A P^T.
+inline void NativeToLexicographic(const Array<int> &dof_map,
+                                  const DenseMatrix &A, DenseMatrix &A_lex)
+{
+   const int nd = dof_map.Size();
+   const int *map = dof_map.HostRead();
+   A_lex.SetSize(nd);
+   for (int k = 0; k < nd; ++k)
+   {
+      for (int j = 0; j < nd; ++j)
+      {
+         A_lex(j,k) = Sign(map[j])*Sign(map[k])*
+                      A(UnsignIndex(map[j]), UnsignIndex(map[k]));
+      }
+   }
+}
+
+/// Convert the rows of a native broken matrix (rows e*nd + i) to the
+/// lexicographic broken coordinates, returning P A.
+inline std::unique_ptr<SparseMatrix> NativeToLexicographicRows(
+   const Array<int> &dof_map, const SparseMatrix &A)
+{
+   const int nd = dof_map.Size();
+   const int n = A.Height();
+   const int *map = dof_map.HostRead();
+   SparseMatrix P(n, n);
+   for (int i = 0; i < n; ++i)
+   {
+      const int d = map[i%nd];
+      P.Set(i, (i/nd)*nd + UnsignIndex(d), Sign(d));
+   }
+   P.Finalize();
+   return std::unique_ptr<SparseMatrix>(Mult(P, A));
+}
+
+/// Set y(i) = sign(dof_map[i % nd]) x(i), on the device.
+inline void MultiplyDofMapSigns(const Array<int> &dof_map, const Vector &x,
+                                Vector &y)
+{
+   const int nd = dof_map.Size();
+   const int *map = dof_map.Read();
+   const real_t *d_x = x.Read();
+   y.SetSize(x.Size());
+   real_t *d_y = y.Write();
+   mfem::forall(x.Size(), [=] MFEM_HOST_DEVICE (int i)
+   { d_y[i] = Sign(map[i%nd])*d_x[i]; });
+}
+
 /// Set idx to the indices i with flags(i) != 0, compacted on the device.
 inline void FlaggedIndices(const Vector &flags, Array<int> &idx)
 {
@@ -77,15 +133,18 @@ inline void FlagNegative(const Array<int> &map, int n, Vector &flags)
    { d_flags[i] = d_map[i] < 0 ? 1.0 : 0.0; });
 }
 
-/// Form the local constraint transpose on the device. Row i couples broken DOF
-/// i to the trace DOF |dofs[i]| with a unit entry when that is a face DOF
-/// (index < trace_size) on an interior face (interior >= 0); rows of other DOFs
-/// are empty. Row offsets are formed by a scan.
+/// Form the local constraint transpose on the device. Row i of the
+/// lexicographic broken space couples to the trace DOF |dofs[i]| when that is a
+/// face DOF (index < trace_size) on an interior face (interior >= 0), with
+/// entry sign(dof_map[i % nd]) (unit in native element coordinates); rows of
+/// other DOFs are empty. Row offsets are formed by a scan.
 inline void FormLocalConstraintTranspose(const Array<int> &dofs,
+                                         const Array<int> &dof_map,
                                          const Array<int> &interior,
                                          int trace_size, SparseMatrix &Ct)
 {
    const int n = dofs.Size();
+   const int nd = dof_map.Size();
    Ct.OverrideSize(n, trace_size);
    Ct.GetMemoryI().New(n + 1);
    Array<int> trace_col(n), nnz(1);
@@ -110,24 +169,25 @@ inline void FormLocalConstraintTranspose(const Array<int> &dofs,
    Ct.GetMemoryData().New(local_nnz);
    const int *I = Ct.ReadI();
    const int *col = trace_col.Read();
+   const int *map = dof_map.Read();
    int *J = Ct.WriteJ();
    real_t *A = Ct.WriteData();
    mfem::forall(n, [=] MFEM_HOST_DEVICE (int i)
    {
-      if (I[i+1] > I[i]) { J[I[i]] = col[i]; A[I[i]] = 1.0; }
+      if (I[i+1] > I[i]) { J[I[i]] = col[i]; A[I[i]] = Sign(map[i%nd]); }
    });
 }
 
 /// Form D_hat M^{-1} on the device, where D_hat is the broken divergence
-/// mapping native broken RT DOFs to the element-wise L2 subcells e*nvol+i, and
-/// M^{-1} is the diagonal inverse_mass. Each row has exactly 2*dim entries.
-inline void FormBrokenDivergence(const Array<int> &element2face,
-                                 const Array<int> &dof_map, int dim, int ne,
-                                 const Vector &inverse_mass, SparseMatrix &D)
+/// mapping lexicographic broken RT DOFs (nd per element) to the element-wise L2
+/// subcells e*nvol+i, and M^{-1} is the diagonal inverse_mass. Each row has
+/// exactly 2*dim entries.
+inline void FormBrokenDivergence(const Array<int> &element2face, int nd,
+                                 int dim, int ne, const Vector &inverse_mass,
+                                 SparseMatrix &D)
 {
    const int two_dim = 2*dim;
    const int nvol = element2face.Size()/two_dim;
-   const int nd = dof_map.Size();
    const int nrows = ne*nvol, nnz = nrows*two_dim;
    D.OverrideSize(nrows, ne*nd);
    D.GetMemoryI().New(nrows + 1);
@@ -137,7 +197,6 @@ inline void FormBrokenDivergence(const Array<int> &element2face,
    int *J = D.WriteJ();
    real_t *V = D.WriteData();
    const int *e2f = element2face.Read();
-   const int *map = dof_map.Read();
    const real_t *inv = inverse_mass.Read();
    mfem::forall(nrows + 1, [=] MFEM_HOST_DEVICE (int i) { I[i] = two_dim*i; });
    mfem::forall(nnz, [=] MFEM_HOST_DEVICE (int ii)
@@ -145,28 +204,15 @@ inline void FormBrokenDivergence(const Array<int> &element2face,
       const int k = ii%two_dim, row = ii/two_dim;
       const int i = row%nvol, e = row/nvol;
       const int d = e2f[k+two_dim*i];
-      const int mapped = map[UnsignIndex(d)];
-      const int col = e*nd+UnsignIndex(mapped);
+      const int col = e*nd+UnsignIndex(d);
       J[ii] = col;
-      V[ii] = Sign(d)*Sign(mapped)*inv[col];
+      V[ii] = Sign(d)*inv[col];
    });
 }
 
-/// Invert the lexicographic element diagonal d_lex into native broken order.
-inline void InvertLexDiagonal(const Array<int> &dof_map, const Vector &d_lex,
-                              Vector &inverse)
-{
-   const int nd = dof_map.Size();
-   const int *map = dof_map.Read();
-   const real_t *d = d_lex.Read();
-   real_t *inv = inverse.Write();
-   mfem::forall(d_lex.Size(), [=] MFEM_HOST_DEVICE (int j)
-   {
-      const int e = j/nd, i = j%nd;
-      inv[e*nd+UnsignIndex(map[i])] = 1.0/d[j];
-   });
-}
-
+/// Broken RT space in lexicographic, element-contiguous coordinates: the
+/// E-vector layout of MFEM's lexicographic element restriction, including the
+/// orientation and DOF map signs, as consumed by partial assembly kernels.
 class BrokenSpace
 {
    ParFiniteElementSpace &fes;
@@ -190,7 +236,8 @@ public:
       : fes(fes_), trace_fec(fes.GetMaxElementOrder()-1, fes.GetMesh()->Dimension()),
         trace_fes(fes.GetParMesh(), &trace_fec),
         restriction(dynamic_cast<const ElementRestriction&>(
-                       *fes.GetElementRestriction(ElementDofOrdering::NATIVE))),
+                       *fes.GetElementRestriction(
+                          ElementDofOrdering::LEXICOGRAPHIC))),
         prolongation(*fes.GetProlongationMatrix()),
         nd(fes.GetTypicalFE()->GetDof()), dofs(restriction.GatherMap()),
         trace_prolongation(*trace_fes.Dof_TrueDof_Matrix())
@@ -246,7 +293,10 @@ public:
       }
 
       SparseMatrix local_Ct;
-      FormLocalConstraintTranspose(dofs, interior, trace_size, local_Ct);
+      // Copy the DOF map for device use: the element reads its own on the host.
+      const Array<int> dof_map(GetDofMap(fes));
+      FormLocalConstraintTranspose(dofs, dof_map, interior, trace_size,
+                                   local_Ct);
       HypreParMatrix parallel_Ct(comm, num_global_flux_dofs,
                                  trace_fes.GlobalVSize(), flux_offsets.GetData(),
                                  trace_fes.GetDofOffsets(), &local_Ct);
@@ -300,7 +350,7 @@ public:
       LocalProlongate(conforming, broken);
    }
 
-   /// Map conforming essential true DOFs to native broken DOF indices.
+   /// Map conforming essential true DOFs to broken DOF indices.
    void GetBrokenEssentialDofs(const Array<int> &ess_tdofs,
                                Array<int> &ess_broken_dofs) const
    {
@@ -414,17 +464,22 @@ public:
       mass.AssemblePA(fes_rt);
       mass.AssembleDiagonalPA(diagonal_lex);
 
-      // Convert from lexicographic to native ordering
-      // Copy the DOF map for device use: the element reads its own on the host.
-      const Array<int> dof_map(dynamic_cast<const TensorBasisElement&>(
-                                  *fes_rt.GetTypicalFE()).GetDofMap());
-      const int n_broken = fes_hat.GetNumBrokenDofs();
-      Vector inverse_mass(n_broken);
-      inverse_mass.UseDevice(true);
-      InvertLexDiagonal(dof_map, diagonal_lex, inverse_mass);
+      // The PA diagonal is in the lexicographic broken coordinates.
+      Vector &inverse_mass = diagonal_lex;
+      inverse_mass.Reciprocal();
 
-      // Each broken flux DOF couples to at most one multiplier, with value 1.
-      fes_hat.GetC().Mult(inverse_mass, F_inverse);
+      // F = C M^{-1} C^T is diagonal: each broken flux DOF couples to at most
+      // one multiplier, with entry sign(dof_map) (see BrokenSpace). Weighting
+      // by these signs makes C sum |C| M^{-1}.
+      {
+         // Copy the DOF map for device use: the element reads its own on the
+         // host.
+         const Array<int> dof_map(GetDofMap(fes_rt));
+         Vector signed_inverse_mass;
+         signed_inverse_mass.UseDevice(true);
+         MultiplyDofMapSigns(dof_map, inverse_mass, signed_inverse_mass);
+         fes_hat.GetC().Mult(signed_inverse_mass, F_inverse);
+      }
       // Inactive multipliers have identity equations in the constrained system.
       F_inverse.SetSubVector(fes_hat.GetInactiveTraceDofs(), 1.0);
       F_inverse.Reciprocal();
@@ -439,8 +494,8 @@ public:
 
       // Form F^{-1} E^T = F^{-1} C (D_hat M_b^{-1})^T (multipliers by L2 subcells).
       SparseMatrix D_local;
-      FormBrokenDivergence(element2face, dof_map, dim, fes_rt.GetNE(),
-                           inverse_mass, D_local);
+      FormBrokenDivergence(element2face, fes_hat.GetNumDofsPerElem(), dim,
+                           fes_rt.GetNE(), inverse_mass, D_local);
       HypreParMatrix &Ct = fes_hat.GetCt();
       HypreParMatrix D_par(fes_rt.GetComm(), scalar_fes.GlobalVSize(),
                            Ct.GetGlobalNumRows(), scalar_fes.GetDofOffsets(),
@@ -486,53 +541,32 @@ public:
    }
 };
 
-/// Apply unmarked domain integrators using PA in native broken RT coordinates.
+/// Apply unmarked domain integrators using PA in the lexicographic broken RT
+/// coordinates of BrokenSpace (the PA E-vector layout).
 class BrokenElementPAOperator : public Operator
 {
    const Array<BilinearFormIntegrator*> &integrators;
-   // A copy for device use: the element reads its own DOF map on the host.
-   const Array<int> dof_map;
-   mutable Vector x_lex, y_lex;
 
 public:
    BrokenElementPAOperator(BilinearForm &a)
       : Operator(a.FESpace()->GetNE()*a.FESpace()->GetTypicalFE()->GetDof()),
-        integrators(*a.GetDBFI()),
-        dof_map(dynamic_cast<const TensorBasisElement&>(
-                   *a.FESpace()->GetTypicalFE()).GetDofMap()),
-        x_lex(height), y_lex(height)
+        integrators(*a.GetDBFI())
    {
-      x_lex.UseDevice(true);
-      y_lex.UseDevice(true);
       for (auto *integrator : integrators) { integrator->AssemblePA(*a.FESpace()); }
    }
 
    void Mult(const Vector &x, Vector &y) const override
    {
-      const int nd = dof_map.Size();
-      const int *map = dof_map.Read();
-      const real_t *input = x.Read();
-      real_t *lex_input = x_lex.Write();
-      MFEM_FORALL(i, height,
-      {
-         const int d = map[i%nd];
-         lex_input[i] = (d < 0 ? -1.0 : 1.0)*input[(i/nd)*nd+UnsignIndex(d)];
-      });
-      y_lex = 0.0;
-      for (auto *integrator : integrators) { integrator->AddMultPA(x_lex, y_lex); }
       y.SetSize(height);
-      const real_t *lex_output = y_lex.Read();
-      real_t *output = y.Write();
-      MFEM_FORALL(i, height,
-      {
-         const int d = map[i%nd];
-         output[(i/nd)*nd+UnsignIndex(d)] = (d < 0 ? -1.0 : 1.0)*lex_output[i];
-      });
+      y = 0.0;
+      for (auto *integrator : integrators) { integrator->AddMultPA(x, y); }
    }
 };
 
-/// Apply element inverses in native, element-contiguous broken coordinates.
-/// Essential DOFs use the same broken numbering and are constrained before LU.
+/// Apply element inverses in the lexicographic broken coordinates of
+/// BrokenSpace. The native element matrices of the form are converted to these
+/// coordinates. Essential DOFs use the same broken numbering and are
+/// constrained before LU.
 class BrokenElementSolver : public Solver
 {
    DenseTensor lu;
@@ -547,6 +581,14 @@ public:
    {
       const int nd = lu.SizeI();
       height = width = nd*lu.SizeK();
+      const Array<int> &dof_map = GetDofMap(*a.FESpace());
+      DenseMatrix lex;
+      for (int e = 0; e < lu.SizeK(); ++e)
+      {
+         DenseMatrix native(lu.GetData(e), nd, nd);
+         NativeToLexicographic(dof_map, native, lex);
+         native = lex;
+      }
       // The essential DOF list may already have been used on the device.
       const int *h_ess = ess_dofs.HostRead();
       for (int k = 0; k < ess_dofs.Size(); ++k)
@@ -713,14 +755,17 @@ public:
       hybridization.SetConstraintIntegrator(new NormalTraceJumpIntegrator);
       ess_tdofs.HostRead(); // Init reads the list on the host.
       hybridization.Init(ess_tdofs);
+      // The hybridization constraint has native element rows; convert them to
+      // the lexicographic broken coordinates of BrokenSpace.
       SparseMatrix &local_Ct = hybridization.GetConstraintTranspose();
+      auto local_Ct_lex = NativeToLexicographicRows(GetDofMap(fes), local_Ct);
       HYPRE_BigInt size = local_Ct.Height();
       Array<HYPRE_BigInt> flux_offsets;
       Array<HYPRE_BigInt> *partitions[] = { &flux_offsets };
       fes.GetParMesh()->GenerateOffsets(1, &size, partitions);
       HypreParMatrix parallel_Ct(fes.GetComm(), flux_offsets.Last(),
                                  trace_fes.GlobalVSize(), flux_offsets.GetData(),
-                                 trace_fes.GetDofOffsets(), &local_Ct);
+                                 trace_fes.GetDofOffsets(), local_Ct_lex.get());
       Ct.reset(ParMult(&parallel_Ct, trace_fes.Dof_TrueDof_Matrix(), true));
       height = width = trace_fes.GetTrueVSize();
       if (amode == ACTUAL)

@@ -186,14 +186,16 @@ int main(int argc, char *argv[])
    else
    {
       auto assembled = make_unique<SparseMatrix>(offsets[1]);
-      DenseMatrix element_matrix;
+      DenseMatrix element_matrix, element_matrix_lex;
+      const Array<int> &dof_map = GetDofMap(fes_rt);
       const int nd = fes_hat.GetNumDofsPerElem();
       Array<int> element_dofs(nd);
       for (int e = 0; e < fes_rt.GetNE(); ++e)
       {
          a.ComputeElementMatrix(e, element_matrix);
+         NativeToLexicographic(dof_map, element_matrix, element_matrix_lex);
          for (int i = 0; i < nd; ++i) { element_dofs[i] = e*nd+i; }
-         assembled->AddSubMatrix(element_dofs, element_dofs, element_matrix);
+         assembled->AddSubMatrix(element_dofs, element_dofs, element_matrix_lex);
       }
       assembled->Finalize();
       A_hat = std::move(assembled);
@@ -302,7 +304,7 @@ int main(int argc, char *argv[])
       minres.SetRelTol(1e-12);
       minres.SetAbsTol(0.0);
       minres.SetMaxIter(1000);
-      minres.SetPrintLevel(1);
+      minres.SetPrintLevel(3);
       minres.Mult(rhs, solution);
    }
 
