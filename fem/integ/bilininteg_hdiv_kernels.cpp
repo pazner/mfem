@@ -33,9 +33,12 @@ void PAHdivMassSetup2D(const int Q1D,
    auto C = Reshape(coeff_.Read(), coeffDim, NQ, NE);
    auto y = Reshape(op.Write(), NQ, symmetric ? 3 : 4, NE);
 
-   mfem::forall(NE, [=] MFEM_HOST_DEVICE (int e)
+   // One thread per quadrature point, so that consecutive threads access
+   // consecutive entries of J and y.
+   mfem::forall(NE*NQ, [=] MFEM_HOST_DEVICE (int i)
    {
-      for (int q = 0; q < NQ; ++q)
+      const int q = i % NQ;
+      const int e = i / NQ;
       {
          const real_t J11 = J(q,0,0,e);
          const real_t J21 = J(q,1,0,e);
@@ -95,73 +98,73 @@ void PAHdivMassSetup3D(const int Q1D,
    auto C = Reshape(coeff_.Read(), coeffDim, NQ, NE);
    auto y = Reshape(op.Write(), NQ, symmetric ? 6 : 9, NE);
 
-   mfem::forall(NE, [=] MFEM_HOST_DEVICE (int e)
+   // One thread per quadrature point, so that consecutive threads access
+   // consecutive entries of J and y. The entries are accumulated in registers.
+   mfem::forall(NE*NQ, [=] MFEM_HOST_DEVICE (int i)
    {
-      for (int q = 0; q < NQ; ++q)
+      const int q = i % NQ;
+      const int e = i / NQ;
+      real_t Jq[3][3];
+      for (int r = 0; r < 3; ++r)
       {
-         const real_t J11 = J(q,0,0,e);
-         const real_t J21 = J(q,1,0,e);
-         const real_t J31 = J(q,2,0,e);
-         const real_t J12 = J(q,0,1,e);
-         const real_t J22 = J(q,1,1,e);
-         const real_t J32 = J(q,2,1,e);
-         const real_t J13 = J(q,0,2,e);
-         const real_t J23 = J(q,1,2,e);
-         const real_t J33 = J(q,2,2,e);
-         const real_t detJ = J11 * (J22 * J33 - J32 * J23) -
-                             J21 * (J12 * J33 - J32 * J13) +
-                             J31 * (J12 * J23 - J22 * J13);
-         const real_t c_detJ = W[q] / detJ;
+         for (int c = 0; c < 3; ++c) { Jq[r][c] = J(q,r,c,e); }
+      }
+      const real_t detJ = Jq[0][0]*(Jq[1][1]*Jq[2][2] - Jq[2][1]*Jq[1][2]) -
+                          Jq[1][0]*(Jq[0][1]*Jq[2][2] - Jq[2][1]*Jq[0][2]) +
+                          Jq[2][0]*(Jq[0][1]*Jq[1][2] - Jq[1][1]*Jq[0][2]);
+      const real_t c_detJ = W[q] / detJ;
 
-         // (1/detJ) J^T C J
-         if (coeffDim == 6 || coeffDim == 9) // Matrix coefficient version
+      // (1/detJ) J^T C J
+      if (coeffDim == 6 || coeffDim == 9) // Matrix coefficient version
+      {
+         real_t M[3][3];
+         M[0][0] = C(0, q, e);
+         M[0][1] = C(1, q, e);
+         M[0][2] = C(2, q, e);
+         M[1][0] = (!symmetric) ? C(3, q, e) : M[0][1];
+         M[1][1] = (!symmetric) ? C(4, q, e) : C(3, q, e);
+         M[1][2] = (!symmetric) ? C(5, q, e) : C(4, q, e);
+         M[2][0] = (!symmetric) ? C(6, q, e) : M[0][2];
+         M[2][1] = (!symmetric) ? C(7, q, e) : M[1][2];
+         M[2][2] = (!symmetric) ? C(8, q, e) : C(5, q, e);
+
+         int idx = 0;
+         for (int a = 0; a < 3; ++a)
          {
-            real_t M[3][3];
-            M[0][0] = C(0, q, e);
-            M[0][1] = C(1, q, e);
-            M[0][2] = C(2, q, e);
-            M[1][0] = (!symmetric) ? C(3, q, e) : M[0][1];
-            M[1][1] = (!symmetric) ? C(4, q, e) : C(3, q, e);
-            M[1][2] = (!symmetric) ? C(5, q, e) : C(4, q, e);
-            M[2][0] = (!symmetric) ? C(6, q, e) : M[0][2];
-            M[2][1] = (!symmetric) ? C(7, q, e) : M[1][2];
-            M[2][2] = (!symmetric) ? C(8, q, e) : C(5, q, e);
-
-            int idx = 0;
-            for (int i=0; i<3; ++i)
-               for (int j = (symmetric ? i : 0); j<3; ++j)
+            for (int b = (symmetric ? a : 0); b < 3; ++b)
+            {
+               real_t y_ab = 0.0;
+               for (int k = 0; k < 3; ++k)
                {
-                  y(q,idx,e) = 0.0;
-                  for (int k=0; k<3; ++k)
+                  real_t MJ_kb = 0.0;
+                  for (int l = 0; l < 3; ++l)
                   {
-                     real_t MJ_kj = 0.0;
-                     for (int l=0; l<3; ++l)
-                     {
-                        MJ_kj += M[k][l] * J(q,l,j,e);
-                     }
-
-                     y(q,idx,e) += J(q,k,i,e) * MJ_kj;
+                     MJ_kb += M[k][l] * Jq[l][b];
                   }
-
-                  y(q,idx,e) *= c_detJ;
-                  idx++;
+                  y_ab += Jq[k][a] * MJ_kb;
                }
+               y(q,idx,e) = y_ab * c_detJ;
+               idx++;
+            }
          }
-         else  // Vector or scalar coefficient version
+      }
+      else  // Vector or scalar coefficient version
+      {
+         real_t Cq[3];
+         for (int k = 0; k < 3; ++k) { Cq[k] = C(coeffDim == 3 ? k : 0, q, e); }
+         int idx = 0;
+         for (int a = 0; a < 3; ++a)
          {
-            int idx = 0;
-            for (int i=0; i<3; ++i)
-               for (int j=i; j<3; ++j)
+            for (int b = a; b < 3; ++b)
+            {
+               real_t y_ab = 0.0;
+               for (int k = 0; k < 3; ++k)
                {
-                  y(q,idx,e) = 0.0;
-                  for (int k=0; k<3; ++k)
-                  {
-                     y(q,idx,e) += J(q,k,i,e) * C(coeffDim == 3 ? k : 0, q, e) * J(q,k,j,e);
-                  }
-
-                  y(q,idx,e) *= c_detJ;
-                  idx++;
+                  y_ab += Jq[k][a] * Cq[k] * Jq[k][b];
                }
+               y(q,idx,e) = y_ab * c_detJ;
+               idx++;
+            }
          }
       }
    });
