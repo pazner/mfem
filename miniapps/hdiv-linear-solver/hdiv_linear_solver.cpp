@@ -257,6 +257,15 @@ void HdivSaddlePointSolver::Setup()
    // Reassemble the preconditioners
    R_inv.reset(new OperatorJacobiSmoother(mass_rt, ess_rt_dofs));
    S_inv.SetOperator(*S);
+   {
+      // Set up AMG now, rather than on its first application.
+      Vector b(S->Height()), x(S->Height());
+      b.UseDevice(true);
+      x.UseDevice(true);
+      b = 0.0;
+      x = 0.0;
+      S_inv.Setup(b, x);
+   }
 
    // Set up the block operators
    A_block.reset(new BlockOperator(offsets));

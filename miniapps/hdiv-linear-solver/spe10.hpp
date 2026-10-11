@@ -127,6 +127,90 @@ inline ParMesh MakeSPE10Mesh(int &nx, int &ny, int &nz, int ref_par)
    return mesh;
 }
 
+/// Set u to the interpolant of the constant vector field g in its RT space, on
+/// the device. Requires an affine hexahedral mesh and tensor-product RT
+/// elements of uniform order (as for SPE10): the Piola pullback adj(J) g of g
+/// is then constant on each element, so the element DOFs are combinations of
+/// the reference interpolants of the unit vectors, which are computed once on
+/// the host. Agrees with ProjectCoefficient (which runs on the host, element
+/// by element) up to roundoff.
+inline void ProjectConstantFlux(const Vector &g, ParGridFunction &u)
+{
+   ParFiniteElementSpace &fes = *u.ParFESpace();
+   Mesh &mesh = *fes.GetMesh();
+   const FiniteElement &fe = *fes.GetTypicalFE();
+   const auto *tensor_fe = dynamic_cast<const TensorBasisElement*>(&fe);
+   MFEM_VERIFY(mesh.Dimension() == 3 && g.Size() == 3 &&
+               mesh.GetNumGeometries(3) <= 1 &&
+               fe.GetGeomType() == Geometry::CUBE && tensor_fe,
+               "Expected a 3D mesh with tensor-product hexahedral elements.");
+   const int nd = fe.GetDof();
+   const int ne = mesh.GetNE();
+
+   // Reference interpolants of the unit vectors, in the lexicographic element
+   // ordering, with the DOF map signs (as applied by the element restriction).
+   Vector ref(3*nd);
+   ref.UseDevice(true);
+   {
+      const Array<int> &dof_map = tensor_fe->GetDofMap();
+      const int *h_dof_map = dof_map.HostRead();
+      IsoparametricTransformation T;
+      T.SetIdentityTransformation(Geometry::CUBE);
+      Vector unit(3), native(nd);
+      real_t *h_ref = ref.HostWrite();
+      for (int c = 0; c < 3; ++c)
+      {
+         unit = 0.0;
+         unit(c) = 1.0;
+         VectorConstantCoefficient unit_coeff(unit);
+         fe.Project(unit_coeff, T, native);
+         for (int i = 0; i < nd; ++i)
+         {
+            const int j = dof_map.Size() ? h_dof_map[i] : i;
+            h_ref[c*nd + i] = (j >= 0) ? native(j) : -native(-1-j);
+         }
+      }
+   }
+
+   // The (constant) Jacobian of each element, at a single point.
+   const IntegrationRule &ir = IntRules.Get(Geometry::CUBE, 0);
+   const int nq = ir.GetNPoints();
+   const GeometricFactors *geom =
+      mesh.GetGeometricFactors(ir, GeometricFactors::JACOBIANS);
+
+   const real_t *h_g = g.HostRead();
+   const real_t g0 = h_g[0], g1 = h_g[1], g2 = h_g[2];
+   const auto J = Reshape(geom->J.Read(), nq, 3, 3, ne);
+   const auto R = Reshape(ref.Read(), nd, 3);
+   Vector u_elem(nd*ne);
+   u_elem.UseDevice(true);
+   auto U = Reshape(u_elem.Write(), nd, ne);
+   mfem::forall(nd*ne, [=] MFEM_HOST_DEVICE (int i)
+   {
+      const int d = i % nd;
+      const int e = i / nd;
+      // Row a of adj(J) is the cross product of columns a+1 and a+2 of J.
+      real_t value = 0.0;
+      for (int a = 0; a < 3; ++a)
+      {
+         const int b = (a+1)%3, c = (a+2)%3;
+         const real_t n0 = J(0,1,b,e)*J(0,2,c,e) - J(0,2,b,e)*J(0,1,c,e);
+         const real_t n1 = J(0,2,b,e)*J(0,0,c,e) - J(0,0,b,e)*J(0,2,c,e);
+         const real_t n2 = J(0,0,b,e)*J(0,1,c,e) - J(0,1,b,e)*J(0,0,c,e);
+         value += (n0*g0 + n1*g1 + n2*g2)*R(d,a);
+      }
+      U(d,e) = value;
+   });
+
+   // The interpolant is continuous, so the value from any element will do.
+   const auto *restriction = dynamic_cast<const ElementRestriction*>(
+                                fes.GetElementRestriction(
+                                   ElementDofOrdering::LEXICOGRAPHIC));
+   MFEM_VERIFY(restriction, "Expected an element restriction.");
+   u.UseDevice(true);
+   restriction->MultLeftInverse(u_elem, u);
+}
+
 struct ScalarSPE10Coefficient : Coefficient
 {
    SPE10Coefficient vector_coeff;

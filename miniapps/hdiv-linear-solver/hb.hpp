@@ -382,6 +382,18 @@ public:
       prolongation.MultTranspose(conforming, x);
    }
 
+   /// Assemble the true DOF diagonal of a conforming operator from the
+   /// diagonals of its element matrices (as broken DOFs), as for
+   /// ParBilinearForm::AssembleDiagonal with partial assembly.
+   void AssembleDiagonal(const Vector &broken_diag, Vector &diag) const
+   {
+      Vector conforming(fes.GetVSize());
+      conforming.UseDevice(true);
+      restriction.AbsMultTranspose(broken_diag, conforming);
+      diag.SetSize(fes.GetTrueVSize());
+      prolongation.MultTranspose(conforming, diag);
+   }
+
    void Average(const Vector &broken, Vector &x) const
    {
       Assemble(broken, x);
@@ -398,24 +410,17 @@ public:
    }
 };
 
-/// Assemble W^{-1} + D M_g^{-1} D^T, with diagonal RT and L2 masses weighted
-/// by alpha and beta (one when null). Essential RT columns are eliminated; the
-/// caller owns the returned matrix.
+/// Assemble W^{-1} + D M_g^{-1} D^T, with diagonal RT and L2 masses. The RT
+/// mass diagonal is given (as true DOFs), and the L2 mass is weighted by beta
+/// (one when null). Essential RT columns are eliminated; the caller owns the
+/// returned matrix.
 inline HypreParMatrix *AssembleGraphLaplacian(
    ParFiniteElementSpace &fes_rt, ParFiniteElementSpace &fes_l2,
-   const Array<int> &ess_rt_dofs,
-   GenericCoefficient alpha = GenericCoefficient(),
+   const Array<int> &ess_rt_dofs, const Vector &rt_mass_diag,
    Coefficient *beta = nullptr)
 {
-   ParBilinearForm mass_rt(&fes_rt);
-   mass_rt.SetAssemblyLevel(AssemblyLevel::PARTIAL);
-   auto *rt_integrator = alpha.NewIntegrator<VectorFEMassIntegrator>();
-   rt_integrator->SetIntRule(GetCoefficientRule(alpha.Q));
-   mass_rt.AddDomainIntegrator(rt_integrator);
-   mass_rt.Assemble();
-   Vector rt_mass_diag_inv(fes_rt.GetTrueVSize());
+   Vector rt_mass_diag_inv(rt_mass_diag);
    rt_mass_diag_inv.UseDevice(true);
-   mass_rt.AssembleDiagonal(rt_mass_diag_inv);
    rt_mass_diag_inv.Reciprocal();
 
    ParBilinearForm mass_l2(&fes_l2);
@@ -429,17 +434,59 @@ inline HypreParMatrix *AssembleGraphLaplacian(
    mass_l2.AssembleDiagonal(l2_mass_diag_inv);
    l2_mass_diag_inv.Reciprocal();
 
-   auto rt_diag = DiagonalSparseMatrix(rt_mass_diag_inv);
-   auto l2_diag = DiagonalSparseMatrix(l2_mass_diag_inv);
-   HypreParMatrix M_inverse(fes_rt.GetComm(), fes_rt.GlobalTrueVSize(),
-                            fes_rt.GetTrueDofOffsets(), rt_diag.get());
-   HypreParMatrix W_inverse(fes_l2.GetComm(), fes_l2.GlobalTrueVSize(),
-                            fes_l2.GetTrueDofOffsets(), l2_diag.get());
    std::unique_ptr<HypreParMatrix> D(
       FormDiscreteDivergenceMatrix(fes_rt, fes_l2, ess_rt_dofs));
-   std::unique_ptr<HypreParMatrix> Dt(D->Transpose());
-   std::unique_ptr<HypreParMatrix> laplacian(RAP(&M_inverse, Dt.get()));
-   HypreParMatrix *S = ParAdd(laplacian.get(), &W_inverse);
+   // D M^{-1} D^T as a single product, since M is diagonal.
+   std::unique_ptr<HypreParMatrix> Minv_Dt(D->Transpose());
+   Minv_Dt->ScaleRows(rt_mass_diag_inv);
+   HypreParMatrix *S = ParMult(D.get(), Minv_Dt.get(), true);
+
+   // Add W^{-1} to the diagonal in place. Each row of the local diagonal block
+   // holds its diagonal entry unless the row of D is empty (all faces of the
+   // L2 cell essential); in that case, add W^{-1} as a matrix instead.
+   S->HypreReadWrite();
+   hypre_ParCSRMatrix *S_hypre = *S;
+   hypre_CSRMatrix *S_diag = hypre_ParCSRMatrixDiag(S_hypre);
+   const int n = hypre_CSRMatrixNumRows(S_diag);
+   const auto I = S_diag->i;
+   const auto J = S_diag->j;
+   auto data = S_diag->data;
+   Vector has_diag(n);
+   has_diag.UseDevice(true);
+   {
+      auto d_has_diag = has_diag.GetMemory().Write(GetHypreMemoryClass(), n);
+      mfem::hypre_forall(n, [=] MFEM_HOST_DEVICE (int i)
+      {
+         d_has_diag[i] = 0.0;
+         for (int jj = I[i]; jj < I[i+1]; ++jj)
+         {
+            if (J[jj] == i) { d_has_diag[i] = 1.0; break; }
+         }
+      });
+   }
+   int all_diag = (n == 0 || has_diag.Min() > 0.0) ? 1 : 0;
+   MPI_Allreduce(MPI_IN_PLACE, &all_diag, 1, MPI_INT, MPI_MIN, S->GetComm());
+   if (all_diag)
+   {
+      const auto w = l2_mass_diag_inv.GetMemory().Read(GetHypreMemoryClass(),
+                                                       n);
+      mfem::hypre_forall(n, [=] MFEM_HOST_DEVICE (int i)
+      {
+         for (int jj = I[i]; jj < I[i+1]; ++jj)
+         {
+            if (J[jj] == i) { data[jj] += w[i]; break; }
+         }
+      });
+   }
+   else
+   {
+      auto l2_diag = DiagonalSparseMatrix(l2_mass_diag_inv);
+      HypreParMatrix W_inverse(fes_l2.GetComm(), fes_l2.GlobalTrueVSize(),
+                               fes_l2.GetTrueDofOffsets(), l2_diag.get());
+      HypreParMatrix *S_sum = ParAdd(S, &W_inverse);
+      delete S;
+      S = S_sum;
+   }
    S->CopyRowStarts();
    S->CopyColStarts();
    return S;
@@ -475,6 +522,10 @@ public:
       mass->SetIntRule(GetCoefficientRule(alpha.Q));
       mass->AssemblePA(fes_rt);
       mass->AssembleDiagonalPA(diagonal_lex);
+      // The conforming diagonal, for the graph Laplacian.
+      Vector rt_mass_diag;
+      rt_mass_diag.UseDevice(true);
+      fes_hat.AssembleDiagonal(diagonal_lex, rt_mass_diag);
 
       // The PA diagonal is in the lexicographic broken coordinates.
       Vector &inverse_mass = diagonal_lex;
@@ -516,8 +567,8 @@ public:
       F_inverse_Et.reset(ParMult(&fes_hat.GetC(), Dt.get(), true));
       F_inverse_Et->ScaleRows(F_inverse);
 
-      S.reset(AssembleGraphLaplacian(fes_rt, scalar_fes, ess_rt_dofs, alpha,
-                                     beta));
+      S.reset(AssembleGraphLaplacian(fes_rt, scalar_fes, ess_rt_dofs,
+                                     rt_mass_diag, beta));
 
       if (stype == AMG)
       {
@@ -525,6 +576,15 @@ public:
          // Printing the setup statistics is slow, see
          // https://github.com/hypre-space/hypre/issues/1288
          amg->SetPrintLevel(0);
+         {
+            // Set up AMG now, rather than on its first application.
+            Vector b(S->Height()), x(S->Height());
+            b.UseDevice(true);
+            x.UseDevice(true);
+            b = 0.0;
+            x = 0.0;
+            amg->Setup(b, x);
+         }
          S_inv.reset(amg);
       }
       else
@@ -930,6 +990,40 @@ public:
       CopyEntries(inactive_dofs, x1, y1);
       y0.SyncAliasMemory(y);
       y1.SyncAliasMemory(y);
+   }
+};
+
+/// The multiplier Schur complement C A^{-1} C^T + I_i of the hybridized
+/// saddle-point operator, where I_i is the identity on the inactive
+/// multipliers.
+/** A_inv must be the exact inverse of the constrained A (no inner iterations
+    are performed), e.g. FastDiagonalizationSolver on affine orthogonal meshes
+    with elementwise constant coefficients. Ct must have the structure checked
+    by VerifyConstraintStructure. The operator is then SPD, and the hybridized
+    system can be solved by CG on the multipliers. */
+class HybridSchurComplementOperator : public Operator
+{
+   const Solver &A_inv;
+   const HypreParMatrix &Ct;
+   const Array<int> &inactive_dofs;
+   mutable Vector z, w;
+
+public:
+   HybridSchurComplementOperator(const Solver &A_inv_, const HypreParMatrix &Ct_,
+                                 const Array<int> &inactive_dofs_)
+      : Operator(Ct_.Width()), A_inv(A_inv_), Ct(Ct_),
+        inactive_dofs(inactive_dofs_), z(Ct_.Height()), w(Ct_.Height())
+   {
+      z.UseDevice(true);
+      w.UseDevice(true);
+   }
+
+   void Mult(const Vector &x, Vector &y) const override
+   {
+      Ct.Mult(x, z);
+      A_inv.Mult(z, w);
+      Ct.MultTranspose(w, y);
+      CopyEntries(inactive_dofs, x, y);
    }
 };
 

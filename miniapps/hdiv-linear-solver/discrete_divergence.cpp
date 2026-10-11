@@ -255,6 +255,14 @@ HypreParMatrix *FormDiscreteDivergenceMatrix(ParFiniteElementSpace &fes_rt,
       D_diag.SetOperatorOwner(false);
       HypreStealOwnership(*D, D_local);
    }
+   else if (fes_l2.GetVSize() == fes_l2.GetTrueVSize())
+   {
+      // The L2 restriction is the identity (no shared DOFs), so only the RT
+      // prolongation is needed. This avoids a host transpose of the L2
+      // restriction and an extra sparse matrix product.
+      D = ParMult(D_diag.As<HypreParMatrix>(), fes_rt.Dof_TrueDof_Matrix(),
+                  true);
+   }
    else
    {
       OperatorHandle Rt(Transpose(*fes_l2.GetRestrictionMatrix()));

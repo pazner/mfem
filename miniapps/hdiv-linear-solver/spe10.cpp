@@ -30,6 +30,11 @@ int main(int argc, char *argv[])
 {
    Mpi::Init(argc, argv);
    Hypre::Init();
+#if defined(HYPRE_USING_GPU) && MFEM_HYPRE_VERSION >= 22100
+   // Use hypre's SpMV kernels rather than the vendor library: cuSPARSE was much
+   // slower for some of the AMG interpolation matrices.
+   HYPRE_SetSpMVUseVendor(0);
+#endif
 
    const char *device_config = "cpu";
    int order = 3;
@@ -59,6 +64,9 @@ int main(int argc, char *argv[])
    if (Mpi::Root()) { device.Print(); }
 
    ParMesh mesh = MakeSPE10Mesh(nx, ny, nz, ref_par); // handles negative ny, nz
+   // Create the mesh nodes (used for the geometric factors) up front, so that
+   // they are not included in the solver timing.
+   mesh.EnsureNodes();
    const int dim = mesh.Dimension();
    MFEM_VERIFY(dim == 2 || dim == 3, "Spatial dimension must be 2 or 3.");
 
@@ -116,9 +124,7 @@ int main(int argc, char *argv[])
       HdivSaddlePointSolver::Mode::GRAD_DIV);
 
    ParGridFunction u_bc(&fes_rt);
-   Vector g({1.0, 0.0, 0.0});
-   VectorConstantCoefficient bc_coeff(g);
-   u_bc.ProjectCoefficient(bc_coeff);
+   ProjectConstantFlux(Vector({1.0, 0.0, 0.0}), u_bc);
    Vector u_bc_tv(fes_rt.GetTrueVSize());
    u_bc.GetTrueDofs(u_bc_tv);
    saddle_point_solver.SetBC(u_bc_tv);
@@ -160,8 +166,18 @@ int main(int argc, char *argv[])
    B_block = 0.0; // zero RHS, except for BCs (eliminated in Mult)
    X_block = 0.0;
 
+   // Setup time, including the AMG setup. Synchronize the device and the
+   // ranks, so that no setup work is attributed to the solve.
+   MFEM_DEVICE_SYNC;
+   MPI_Barrier(MPI_COMM_WORLD);
+   const real_t setup_time = tic_toc.RealTime();
+
    // saddle_point_solver.GetMINRES().SetPrintLevel(1);
    saddle_point_solver.Mult(B_block, X_block);
+
+   MFEM_DEVICE_SYNC;
+   MPI_Barrier(MPI_COMM_WORLD);
+   const real_t elapsed = tic_toc.RealTime();
 
    if (Mpi::Root())
    {
@@ -176,7 +192,9 @@ int main(int argc, char *argv[])
            << "== RT DOFs: " << ndofs_rt << '\n'
            << "== L2 DOFs: " << ndofs_l2 << '\n'
            << "== Iterations: " << saddle_point_solver.GetNumIterations() << '\n'
-           << "== Elapsed: " << tic_toc.RealTime() << endl;
+           << "== Setup: " << setup_time << '\n'
+           << "== Solve: " << elapsed - setup_time << '\n'
+           << "== Elapsed: " << elapsed << endl;
    }
 
    if (visualization)
