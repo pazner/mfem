@@ -137,6 +137,8 @@ int main(int argc, char *argv[])
    solution.UseDevice(true);
    rhs = 0.0;
    solution = 0.0;
+   rhs.SyncToBlocks();
+   solution.SyncToBlocks();
    broken.AverageTranspose(f, rhs.GetBlock(0));
    broken.LocalProlongate(x, solution.GetBlock(0));
 
@@ -175,7 +177,10 @@ int main(int argc, char *argv[])
    MFEM_DEVICE_SYNC;
    MPI_Barrier(MPI_COMM_WORLD);
    const real_t setup_time = timer.RealTime();
+   rhs.SyncFromBlocks();
+   solution.SyncFromBlocks();
    minres.Mult(rhs, solution);
+   solution.SyncToBlocks();
    MFEM_DEVICE_SYNC;
    MPI_Barrier(MPI_COMM_WORLD);
    const real_t elapsed = timer.RealTime();
