@@ -128,34 +128,46 @@ void Physics()
       reversed += f;
       Check(reversed.Normlinf() < 1e-14,"conservative orientation reversal");
    }
-   // Independently check the analytic wave satisfies both acoustic equations.
-   Problem problem(medium,"wave");
-   Vector x(2), u(3), ut(3), div(3), xp(2), xm(2);
-   x(0) = .3;
-   x(1) = -.7;
-   problem.State(x,.21+eps,plus);
-   problem.State(x,.21-eps,minus);
-   ut = plus;
-   ut -= minus;
-   ut *= .5/eps;
-   div = 0.0;
-   for (int d = 0; d < 2; d++)
+   for (const std::string name : {"wave", "multimode"})
    {
-      xp = x;
-      xm = x;
-      xp(d) += eps;
-      xm(d) -= eps;
-      problem.State(xp,.21,plus);
-      problem.State(xm,.21,minus);
-      flux.ComputeFlux(plus,tr,fp);
-      flux.ComputeFlux(minus,tr,fm);
-      for (int i = 0; i < 3; i++)
+      // Independently check the analytic wave satisfies both acoustic equations.
+      Problem problem(medium,name);
+      Vector x(2), u(3), ut(3), div(3), xp(2), xm(2);
+      x(0) = .3;
+      x(1) = -.7;
+      problem.State(x,.21+eps,plus);
+      problem.State(x,.21-eps,minus);
+      ut = plus;
+      ut -= minus;
+      ut *= .5/eps;
+      div = 0.0;
+      for (int d = 0; d < 2; d++)
       {
-         div(i) += (fp(i,d)-fm(i,d))*.5/eps;
+         xp = x;
+         xm = x;
+         xp(d) += eps;
+         xm(d) -= eps;
+         problem.State(xp,.21,plus);
+         problem.State(xm,.21,minus);
+         flux.ComputeFlux(plus,tr,fp);
+         flux.ComputeFlux(minus,tr,fm);
+         for (int i = 0; i < 3; i++)
+         {
+            div(i) += (fp(i,d)-fm(i,d))*.5/eps;
+         }
+      }
+      ut += div;
+      Check(ut.Normlinf() < 2e-8,"exact acoustic problem satisfies PDE");
+      problem.State(x,.21,u);
+      for (int d = 0; d < 2; d++)
+      {
+         xp = x;
+         xp(d) += 4;
+         problem.State(xp,.21,plus);
+         plus -= u;
+         Check(plus.Normlinf() < 1e-13,"exact problem is doubly periodic");
       }
    }
-   ut += div;
-   Check(ut.Normlinf() < 2e-9,"traveling wave satisfies PDE");
 }
 void Parallel(bool triangles)
 {
@@ -235,6 +247,88 @@ void Parallel(bool triangles)
    flow.SetLinearSolver(external);
    solve(.006);
    Check(flow.Stats().setups == 5,"linear solver setter invalidates setup");
+   // Verify that every block contains all components of exactly one element.
+   // Apply an independent D or D+L in the original component ordering.
+   ConstantCoefficient shift(100.0);
+   VectorMassIntegrator mass(shift);
+   mass.SetVDim(3);
+   ParNonlinearForm stage(&fes);
+   spatial.AddIntegrators(stage);
+   stage.AddDomainIntegrator(&mass);
+   auto &matrix = dynamic_cast<HypreParMatrix &>(stage.GetGradient(u));
+   SparseMatrix processor_matrix;
+   matrix.GetDiag(processor_matrix);
+   Array<int> element_of_dof(u.Size()), dofs;
+   bool complete_blocks = true;
+   for (int e = 0; e < fes.GetNE(); e++)
+   {
+      fes.GetElementVDofs(e,dofs);
+      complete_blocks = complete_blocks && dofs.Size() == 3*fes.GetFE(e)->GetDof();
+      for (int dof : dofs)
+      {
+         element_of_dof[dof] = e;
+      }
+   }
+   Check(complete_blocks,"element block includes all three components");
+   for (const std::string type :
+        {"block-jacobi", "block-gs", "block-ilu"
+        })
+   {
+      ElementBlockPreconditioner preconditioner(fes,type);
+      preconditioner.SetOperator(matrix);
+      preconditioner.Mult(u,a);
+      if (type != "block-ilu")
+      {
+         b = 0.0;
+         for (int i = 0; i < processor_matrix.Height(); i++)
+         {
+            for (int k = processor_matrix.GetI()[i]; k < processor_matrix.GetI()[i+1]; k++)
+            {
+               const int j = processor_matrix.GetJ()[k];
+               if (element_of_dof[i] == element_of_dof[j] ||
+                   (type == "block-gs" && element_of_dof[j] < element_of_dof[i]))
+               {
+                  b(i) += processor_matrix.GetData()[k]*a(j);
+               }
+            }
+         }
+         b -= u;
+         Check(Norm(b) < 1e-10,"element block inverse in original component ordering");
+      }
+      // Every element is isolated here: block ILU must invert each complete
+      // element block exactly, despite noncontiguous component storage.
+      SparseMatrix element_diagonal(processor_matrix.Height());
+      for (int i = 0; i < processor_matrix.Height(); i++)
+      {
+         for (int k = processor_matrix.GetI()[i]; k < processor_matrix.GetI()[i+1]; k++)
+         {
+            const int j = processor_matrix.GetJ()[k];
+            if (element_of_dof[i] == element_of_dof[j])
+            {
+               element_diagonal.Add(i,j,processor_matrix.GetData()[k]);
+            }
+         }
+      }
+      element_diagonal.Finalize();
+      HypreParMatrix isolated(MPI_COMM_WORLD,fes.GlobalTrueVSize(),
+                              fes.GetTrueDofOffsets(),&element_diagonal);
+      preconditioner.SetOperator(isolated);
+      preconditioner.Mult(u,a);
+      isolated.Mult(a,b);
+      b -= u;
+      Check(Norm(b) < 1e-10,"exact solve of uncoupled full element blocks");
+
+      SolverOptions selected;
+      selected.preconditioner = type;
+      AcousticOperator evolution(spatial,selected);
+      evolution.ImplicitSolve(.01,u,a);
+      spatial.Mult(a,b);
+      a -= u;
+      spatial.Mass().Mult(a,c);
+      b.Add(100.0,c);
+      Check(Norm(b) < 1e-9,"implicit solve with each element preconditioner");
+   }
+
    Problem constant(medium,"constant");
    ParGridFunction gf(&fes);
    VectorFunctionCoefficient coefficient(3,[&](const Vector &x, Vector &value)
@@ -264,6 +358,26 @@ void Parallel(bool triangles)
       value -= u;
       Check(Norm(value) < 1e-10,"constant preservation for every time integrator");
    }
+   // Direct algebraic solves share the stage setup but do not multiply by M/a.
+   Vector rhs, repeated;
+   RandomRightHandSide(fes,rhs);
+   RandomRightHandSide(fes,repeated);
+   repeated -= rhs;
+   Check(Norm(repeated) == 0 && std::abs(Norm(rhs)-1) < 1e-14,
+         "random RHS is reproducible and normalized");
+   AcousticOperator algebraic(spatial,opts);
+   for (real_t dt : {real_t(.01), real_t(.01), real_t(.006)})
+   {
+      algebraic.SolveSystem(dt,rhs,state);
+      spatial.Mult(state,a);
+      spatial.Mass().Mult(state,b);
+      a.Add(1/dt,b);
+      a -= rhs;
+      Check(Norm(a) < 1e-10,"direct solve satisfies shifted system with raw RHS");
+   }
+   Check(algebraic.Stats().stages == 3 && algebraic.Stats().setups == 2,
+         "direct solve reuses and rebuilds the cached setup");
+
    // Pressure perturbations need not be positive, and zero RHS must converge.
    u = 0.0;
    AcousticOperator zero(spatial,opts);

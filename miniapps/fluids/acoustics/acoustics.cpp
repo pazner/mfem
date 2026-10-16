@@ -14,7 +14,7 @@ int main(int argc, char *argv[])
    const MPI_Comm comm = MPI_COMM_WORLD;
    int n = 16, order = 2, method = 23, output_steps = 10;
    real_t dt = .01, final_time = .1;
-   bool triangles = false, paraview = false;
+   bool triangles = false, paraview = false, pc_test = false;
    std::string problem_name = "wave", mesh_file;
    Medium medium;
    SolverOptions options;
@@ -32,11 +32,13 @@ int main(int argc, char *argv[])
    args.AddOption(&medium.density,"-rho","--density",
                   "Positive background density.");
    args.AddOption(&medium.speed,"-c","--sound-speed","Positive sound speed.");
-   args.AddOption(&problem_name,"-p","--problem","wave or constant.");
+   args.AddOption(&problem_name,"-p","--problem","wave, multimode, or constant.");
    args.AddOption(&triangles,"-tri","--triangles","-quad","--quadrilaterals",
                   "Generated element type.");
-   args.AddOption(&options.ilu,"-ilu","--ilu","-no-ilu","--no-ilu",
-                  "Processor-block hypre ILU(0).");
+   args.AddOption(&options.preconditioner,"-pc","--preconditioner",
+                  "block-ilu, block-jacobi, block-gs, hypre-ilu, or none.");
+   args.AddOption(&pc_test,"-pct","--pc-test","-no-pct","--no-pc-test",
+                  "Solve (M/dt + K)x = b once with a fixed random RHS.");
    args.AddOption(&options.verbose,"-v","--verbose","-no-v","--no-verbose",
                   "Print step and stage diagnostics.");
    args.AddOption(&options.history,"-hist","--history",
@@ -54,10 +56,16 @@ int main(int argc, char *argv[])
                std::isfinite(medium.density) && medium.density > 0 &&
                std::isfinite(medium.speed) && medium.speed > 0,
                "Invalid physical or discretization options.");
-   MFEM_VERIFY(problem_name == "wave" ||
+   MFEM_VERIFY(problem_name == "wave" || problem_name == "multimode" ||
                problem_name == "constant","Unknown problem.");
    MFEM_VERIFY(method == 4 || method == 21 || method == 22 ||
                method == 23,"Unsupported ODE method.");
+
+   MFEM_VERIFY(options.preconditioner == "block-ilu" ||
+               options.preconditioner == "block-jacobi" ||
+               options.preconditioner == "block-gs" ||
+               options.preconditioner == "hypre-ilu" ||
+               options.preconditioner == "none", "Unknown preconditioner.");
 
    Mesh mesh = mesh_file.empty() ? PeriodicMesh(n,triangles) : Mesh(mesh_file);
    MFEM_VERIFY(mesh.Dimension() == 2 && mesh.SpaceDimension() == 2 &&
@@ -73,14 +81,49 @@ int main(int argc, char *argv[])
    mesh.Clear();
    DG_FECollection fec(order,2);
    ParFiniteElementSpace fes(&pmesh,&fec,3,Ordering::byNODES);
-   ParFiniteElementSpace pressure_fes(&pmesh,&fec);
-   ParFiniteElementSpace velocity_fes(&pmesh,&fec,2,Ordering::byNODES);
 
    const double assembly_start = MPI_Wtime();
    SpatialOperator spatial(fes,medium);
    const double spatial_assembly = MPI_Wtime()-assembly_start;
 
    AcousticOperator flow(spatial,options);
+   if (pc_test)
+   {
+      Vector rhs, state(fes.GetTrueVSize());
+      RandomRightHandSide(fes,rhs);
+      const double start = MPI_Wtime();
+      flow.BeginStep(1,0,dt);
+      flow.SolveSystem(dt,rhs,state);
+      const SolverStats &stats = flow.Stats();
+      double times[4] =
+      {
+         spatial_assembly+stats.assembly_time,
+         stats.setup_time,
+         stats.solve_time,
+         MPI_Wtime()-start
+      };
+      double maximum[4];
+      MPI_Allreduce(times,maximum,4,MPI_DOUBLE,MPI_MAX,comm);
+      const auto elements = pmesh.GetGlobalNE();
+      const auto dofs = fes.GlobalTrueVSize();
+      const real_t rhs_norm = GlobalNorm(rhs,comm);
+
+      if (Mpi::Root())
+      {
+         std::cout << std::setprecision(14)
+                   << "RESULT pc_test=1 ranks=" << Mpi::WorldSize()
+                   << " elements=" << elements << " dofs=" << dofs
+                   << " order=" << order << " mass_shift=" << 1/dt
+                   << " stages=" << stats.stages << " setups=" << stats.setups
+                   << " krylov=" << stats.linear_iterations
+                   << " rhs_norm=" << rhs_norm << " residual=" << stats.residual
+                   << " relative_residual=" << stats.residual/rhs_norm
+                   << " assembly_s=" << maximum[0] << " setup_s=" << maximum[1]
+                   << " solve_s=" << maximum[2] << " elapsed_s=" << maximum[3] << '\n';
+      }
+      return 0;
+   }
+
    auto ode = method == 4 ? ODESolver::SelectExplicit(4) :
               ODESolver::SelectImplicit(method);
    if (method == 4)
@@ -90,6 +133,8 @@ int main(int argc, char *argv[])
    ode->Init(flow);
 
    Problem problem(medium,problem_name);
+   ParFiniteElementSpace pressure_fes(&pmesh,&fec);
+   ParFiniteElementSpace velocity_fes(&pmesh,&fec,2,Ordering::byNODES);
    ParGridFunction solution(&fes), pressure(&pressure_fes),
                    velocity(&velocity_fes);
    VectorFunctionCoefficient initial(3,[&](const Vector &x, Vector &u)

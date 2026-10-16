@@ -6,6 +6,7 @@
 #include "mfem.hpp"
 #include <functional>
 #include <memory>
+#include <vector>
 
 namespace acoustics
 {
@@ -34,12 +35,19 @@ public:
 
 class Problem
 {
+   struct Mode
+   {
+      real_t kx, ky, magnitude, phase;
+   };
    Medium medium;
    std::string name;
+   std::vector<Mode> modes;
 public:
-   Problem(const Medium &m, const std::string &n) : medium(m), name(n) { }
+   Problem(const Medium &m, const std::string &n);
    void State(const Vector &x, real_t time, Vector &state) const;
 };
+/// Fixed-seed, unit Euclidean norm vector in global algebraic row ordering.
+void RandomRightHandSide(ParFiniteElementSpace &, Vector &);
 Mesh PeriodicMesh(int n, bool triangles);
 void VerifyCollectively(bool ok, MPI_Comm comm, const char *message);
 real_t GlobalNorm(const Vector &x, MPI_Comm comm);
@@ -92,11 +100,25 @@ public:
    void EnergyWeights(Vector &) const;
 };
 
+/// Permutes processor-local DG rows into one block per element, including all
+/// components. Uniform element block sizes are required on each MPI rank.
+class ElementBlockPreconditioner : public Solver
+{
+   Array<int> permutation, inverse_permutation;
+   std::unique_ptr<Solver> local_solver;
+   mutable Vector rhs, solution;
+public:
+   ElementBlockPreconditioner(ParFiniteElementSpace &, const std::string &type);
+   void SetOperator(const Operator &) override;
+   void Mult(const Vector &, Vector &) const override;
+};
+
 struct SolverOptions
 {
    real_t linear_rtol = 1e-12;
    int linear_max = 300, krylov_dim = 100;
-   bool ilu = true, verbose = false;
+   bool verbose = false;
+   std::string preconditioner = "block-ilu";
    std::string history, export_prefix;
 };
 struct SolverStats
@@ -134,6 +156,8 @@ class AcousticOperator : public TimeDependentOperator
    mutable HypreSmoother mass_preconditioner;
    mutable CGSolver mass_solver;
    int step_number = 0, step_stage = 0;
+   void SolveShifted(real_t a, const Vector &rhs, Vector &state,
+                     const Vector *base);
 public:
    AcousticOperator(SpatialOperator &, const SolverOptions &);
    void BeginStep(int number, real_t time, real_t dt);
@@ -147,6 +171,8 @@ public:
    }
    void Mult(const Vector &, Vector &) const override;
    void ImplicitSolve(real_t a, const Vector &base, Vector &state) override;
+   /// Solve (M/a + K) state = rhs directly, using the same setup and diagnostics.
+   void SolveSystem(real_t a, const Vector &rhs, Vector &state);
    const SolverStats &Stats() const
    {
       return stats;

@@ -32,6 +32,7 @@ test_acoustics-test-par: test_acoustics
 check: all
 	$(RUN_MPI) ./test_acoustics
 	$(RUN_MPI) ./acoustics -n 3 -o 1 -tf .01
+	$(RUN_MPI) ./acoustics -n 3 -o 1 --pc-test -dt .1
 clean: clean-build clean-exec
 clean-build:
 	rm -f *.o acoustics test_acoustics
