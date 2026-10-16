@@ -397,7 +397,7 @@ void HyperbolicFormIntegrator::AssembleFaceGrad(
             for (int dj = 0; dj < fluxFunction.num_equations; dj++)
             {
                // pre-multiply integration weight to Jacobian
-               const real_t w = +ip.weight * sign * JDotN(di,dj);
+               const real_t w = -ip.weight * sign * JDotN(di,dj);
                for (int j = 0; j < dof2; j++)
                {
                   // Test side 1
@@ -799,6 +799,7 @@ void RusanovFlux::Grad(int side, const Vector &state1, const Vector &state2,
    if (side == 1)
    {
       fluxFunction.ComputeFluxJacobianDotN(state1, nor, Tr, grad);
+      grad *= 0.5;
 
       for (int i = 0; i < fluxFunction.num_equations; i++)
       {
@@ -808,6 +809,7 @@ void RusanovFlux::Grad(int side, const Vector &state1, const Vector &state2,
    else
    {
       fluxFunction.ComputeFluxJacobianDotN(state2, nor, Tr, grad);
+      grad *= 0.5;
 
       for (int i = 0; i < fluxFunction.num_equations; i++)
       {
@@ -1363,6 +1365,43 @@ real_t EulerFlux::ComputeFluxDotN(const Vector &x,
    const real_t speed = std::fabs(normal_velocity) / std::sqrt(normal*normal);
    // max characteristic speed = fluid speed + sound speed
    return speed + sound;
+}
+
+void EulerFlux::ComputeFluxJacobian(const Vector &state,
+                                    ElementTransformation &Tr,
+                                    DenseTensor &J_) const
+{
+   const real_t rho = state(0);
+   const real_t energy = state(dim + 1);
+   Vector velocity(dim), dp(dim + 2);
+   real_t speed2 = 0.0;
+   for (int i = 0; i < dim; i++)
+   {
+      velocity(i) = state(i + 1) / rho;
+      speed2 += velocity(i) * velocity(i);
+   }
+   const real_t gm1 = specific_heat_ratio - 1.0;
+   const real_t pressure = gm1 * (energy - 0.5 * rho * speed2);
+   dp(0) = 0.5 * gm1 * speed2;
+   for (int i = 0; i < dim; i++) { dp(i + 1) = -gm1 * velocity(i); }
+   dp(dim + 1) = gm1;
+   J_.SetSize(dim + 2, dim + 2, dim);
+   J_ = 0.0;
+   for (int d = 0; d < dim; d++)
+   {
+      J_(0, d + 1, d) = 1.0;
+      for (int j = 0; j < dim + 2; j++)
+      {
+         const real_t du = ((j == d + 1) - velocity(d) * (j == 0)) / rho;
+         for (int i = 0; i < dim; i++)
+         {
+            J_(i + 1, j, d) = (j == i + 1) * velocity(d) +
+                              state(i + 1) * du + (i == d) * dp(j);
+         }
+         J_(dim + 1, j, d) = (energy + pressure) * du +
+                             velocity(d) * ((j == dim + 1) + dp(j));
+      }
+   }
 }
 
 } // namespace mfem

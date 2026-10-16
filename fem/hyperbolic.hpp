@@ -628,6 +628,9 @@ public:
     * @note The Jacobian of flux J n is required to be implemented in
     * FluxFunction::ComputeFluxJacobianDotN()
     *
+    * @note The wave speed is held fixed. For state-dependent wave speeds,
+    * this is an approximate Jacobian; derivatives of the speed are omitted.
+    *
     * @param[in] side gradient w.r.t the first (u⁻) or second argument (u⁺)
     * @param[in] state1 state value (u⁻) of the beginning of the interval
     * (num_equations)
@@ -1083,6 +1086,10 @@ public:
    real_t ComputeFluxDotN(const Vector &x, const Vector &normal,
                           FaceElementTransformations &Tr,
                           Vector &fluxN) const override;
+   /// Analytic derivative of the conservative Euler flux.
+   void ComputeFluxJacobian(const Vector &state, ElementTransformation &Tr,
+                            DenseTensor &J_) const override;
+
 };
 
 } // namespace mfem
