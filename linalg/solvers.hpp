@@ -1083,6 +1083,60 @@ public:
    void Mult(const Vector &xt, Vector &x) const override;
 };
 
+/** Block Jacobi solver with contiguous, fixed-size blocks.
+
+    Accepts a finalized SparseMatrix or HypreParMatrix. For a parallel matrix,
+    only the processor-local diagonal matrix is used; there is no communication.
+    Each diagonal block is factored with dense, pivoted LU. The block size must
+    be positive and divide the local matrix size. SetOperator copies the local
+    matrix, so the input matrix need not outlive this solver. CPU implementation.
+*/
+class BlockJacobi : public Solver
+{
+protected:
+   int block_size;
+   std::unique_ptr<class SparseMatrix> local_matrix;
+   mutable DenseTensor diagonal;
+   mutable Array<int> pivots;
+   mutable Vector correction;
+
+   /// Form b - A*x in iterative mode, or copy b otherwise.
+   void FormResidual(const Vector &b, const Vector &x) const;
+   /// Add the correction to x in iterative mode, or overwrite x otherwise.
+   void Update(Vector &x) const;
+
+public:
+   /// Create an empty solver; call SetOperator before Mult.
+   explicit BlockJacobi(int block_size_);
+   BlockJacobi(const Operator &op, int block_size_ = 1);
+   ~BlockJacobi() override;
+
+   void SetOperator(const Operator &op) override;
+
+   /** Apply the inverse block diagonal. If iterative_mode is true, perform one
+       block Jacobi iteration starting from x, using the local matrix only. */
+   void Mult(const Vector &b, Vector &x) const override;
+};
+
+/** Forward block Gauss-Seidel using contiguous, fixed-size blocks.
+
+    Uses the same matrix types and diagonal factorizations as BlockJacobi.
+    For HypreParMatrix, the sweep is processor-local: off-processor entries
+    are ignored. Blocks are visited in their original matrix order.
+*/
+class BlockGaussSeidel : public BlockJacobi
+{
+public:
+   explicit BlockGaussSeidel(int block_size_) : BlockJacobi(block_size_) { }
+   BlockGaussSeidel(const Operator &op, int block_size_ = 1)
+      : BlockJacobi(op, block_size_) { }
+
+   /** Apply (D+L)^{-1}. If iterative_mode is true, perform one forward block
+       Gauss-Seidel iteration starting from x, using the local matrix only. */
+   void Mult(const Vector &b, Vector &x) const override;
+};
+
+
 /** Block ILU solver:
  *  Performs a block ILU(k) approximate factorization with specified block
  *  size. Currently only k=0 is supported. This is useful as a preconditioner

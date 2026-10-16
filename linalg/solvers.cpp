@@ -3012,6 +3012,133 @@ void MinimumDiscardedFillOrdering(SparseMatrix &C, Array<int> &p)
    }
 }
 
+BlockJacobi::BlockJacobi(int block_size_)
+   : Solver(0), block_size(block_size_)
+{
+   MFEM_VERIFY(block_size > 0, "Block size must be positive.");
+}
+
+BlockJacobi::BlockJacobi(const Operator &op, int block_size_)
+   : BlockJacobi(block_size_)
+{
+   SetOperator(op);
+}
+
+BlockJacobi::~BlockJacobi() = default;
+
+void BlockJacobi::SetOperator(const Operator &op)
+{
+   const SparseMatrix *matrix = dynamic_cast<const SparseMatrix *>(&op);
+#ifdef MFEM_USE_MPI
+   SparseMatrix processor_matrix;
+   if (const auto *parallel = dynamic_cast<const HypreParMatrix *>(&op))
+   {
+      parallel->GetDiag(processor_matrix);
+      matrix = &processor_matrix;
+   }
+#endif
+   MFEM_VERIFY(matrix, "Expected SparseMatrix or HypreParMatrix.");
+   MFEM_VERIFY(matrix->Finalized(), "Matrix must be finalized.");
+   MFEM_VERIFY(op.Height() == op.Width() &&
+               matrix->Height() == matrix->Width(), "Matrix must be square.");
+   MFEM_VERIFY(matrix->Height() % block_size == 0,
+               "Block size must evenly divide the local matrix size.");
+   // Copy before releasing the previous matrix (also permits resetting from it).
+   auto copy = std::unique_ptr<SparseMatrix>(new SparseMatrix(*matrix));
+   local_matrix = std::move(copy);
+   height = op.Height();
+   width = op.Width();
+   const int blocks = height/block_size;
+   diagonal.SetSize(block_size, block_size, blocks);
+   diagonal = 0.0;
+   pivots.SetSize(height);
+   correction.SetSize(height);
+
+   const int *I = local_matrix->HostReadI();
+   const int *J = local_matrix->HostReadJ();
+   const real_t *data = local_matrix->HostReadData();
+   for (int i = 0; i < height; i++)
+   {
+      const int block = i/block_size;
+      for (int k = I[i]; k < I[i+1]; k++)
+      {
+         if (J[k]/block_size == block)
+         {
+            diagonal(i%block_size, J[k]%block_size, block) += data[k];
+         }
+      }
+   }
+   for (int block = 0; block < blocks; block++)
+   {
+      LUFactors factors(diagonal.GetData(block), pivots.GetData()+block*block_size);
+      MFEM_VERIFY(factors.Factor(block_size),
+                  "Singular diagonal block " << block << ".");
+   }
+}
+
+void BlockJacobi::FormResidual(const Vector &b, const Vector &x) const
+{
+   MFEM_VERIFY(local_matrix, "Call SetOperator before Mult.");
+   MFEM_VERIFY(b.Size() == height, "Invalid right-hand side size.");
+   correction = b;
+   if (iterative_mode)
+   {
+      MFEM_VERIFY(x.Size() == width, "Invalid initial guess size.");
+      local_matrix->AddMult(x, correction, -1.0);
+   }
+}
+
+void BlockJacobi::Update(Vector &x) const
+{
+   if (iterative_mode)
+   {
+      x += correction;
+   }
+   else
+   {
+      x = correction;
+   }
+}
+
+void BlockJacobi::Mult(const Vector &b, Vector &x) const
+{
+   FormResidual(b, x);
+   real_t *data = correction.HostReadWrite();
+   for (int block = 0; block < height/block_size; block++)
+   {
+      LUFactors factors(diagonal.GetData(block), pivots.GetData()+block*block_size);
+      factors.Solve(block_size, 1, data+block*block_size);
+   }
+   Update(x);
+}
+
+void BlockGaussSeidel::Mult(const Vector &b, Vector &x) const
+{
+   FormResidual(b, x);
+   const int *I = local_matrix->HostReadI();
+   const int *J = local_matrix->HostReadJ();
+   const real_t *values = local_matrix->HostReadData();
+   real_t *data = correction.HostReadWrite();
+   for (int block = 0; block < height/block_size; block++)
+   {
+      const int start = block*block_size;
+      for (int i = start; i < start+block_size; i++)
+      {
+         for (int k = I[i]; k < I[i+1]; k++)
+         {
+            if (J[k] < start)
+            {
+               data[i] -= values[k]*data[J[k]];
+            }
+         }
+      }
+      LUFactors factors(diagonal.GetData(block), pivots.GetData()+start);
+      factors.Solve(block_size, 1, data+start);
+   }
+   Update(x);
+}
+
+
 BlockILU::BlockILU(int block_size_,
                    Reordering reordering_,
                    int k_fill_)
