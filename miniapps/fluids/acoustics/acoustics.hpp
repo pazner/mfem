@@ -59,15 +59,33 @@ class SpatialOperator : public Operator
    std::unique_ptr<HypreParMatrix> mass_matrix;
    HypreParMatrix *matrix;
 public:
-   SpatialOperator(ParFiniteElementSpace &, const Medium &, int offset = 3);
+   SpatialOperator(ParFiniteElementSpace &, const Medium &);
    void AddIntegrators(ParNonlinearForm &);
-   void Mult(const Vector &x, Vector &y) const override { matrix->Mult(x,y); }
+   void Mult(const Vector &x, Vector &y) const override
+   {
+      matrix->Mult(x,y);
+   }
    /// Evaluate the original form, useful for verifying the assembled matrix.
-   void FormMult(const Vector &x, Vector &y) const { residual.Mult(x,y); }
-   Operator &GetGradient(const Vector &) const override { return *matrix; }
-   HypreParMatrix &Matrix() const { return *matrix; }
-   HypreParMatrix &Mass() const { return *mass_matrix; }
-   ParFiniteElementSpace &Space() const { return fes; }
+   void FormMult(const Vector &x, Vector &y) const
+   {
+      residual.Mult(x,y);
+   }
+   Operator &GetGradient(const Vector &) const override
+   {
+      return *matrix;
+   }
+   HypreParMatrix &Matrix() const
+   {
+      return *matrix;
+   }
+   HypreParMatrix &Mass() const
+   {
+      return *mass_matrix;
+   }
+   ParFiniteElementSpace &Space() const
+   {
+      return fes;
+   }
    void Conserved(const Vector &, Vector &) const;
    real_t Energy(const Vector &) const;
    /// Apply the physical energy weights (without mass or the factor one half).
@@ -76,7 +94,7 @@ public:
 
 struct SolverOptions
 {
-   real_t linear_rtol = 1e-10;
+   real_t linear_rtol = 1e-12;
    int linear_max = 300, krylov_dim = 100;
    bool ilu = true, verbose = false;
    std::string history, export_prefix;
@@ -123,10 +141,16 @@ public:
    /// Caller retains ownership and must keep the solver alive. Non-iterative
    /// solvers must report their own failures; the true residual is also recorded.
    void SetLinearSolver(Solver &solver);
-   void SetExplicitMode() { SetImplicitVariableType(ImplicitVariableType::SLOPE); }
+   void SetExplicitMode()
+   {
+      SetImplicitVariableType(ImplicitVariableType::SLOPE);
+   }
    void Mult(const Vector &, Vector &) const override;
    void ImplicitSolve(real_t a, const Vector &base, Vector &state) override;
-   const SolverStats &Stats() const { return stats; }
+   const SolverStats &Stats() const
+   {
+      return stats;
+   }
 };
 }
 #endif
