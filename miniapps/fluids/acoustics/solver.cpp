@@ -12,10 +12,6 @@ SpatialOperator::SpatialOperator(ParFiniteElementSpace &f, const Medium &m)
    : Operator(f.GetTrueVSize()), fes(f), medium(m), flux(m), numerical_flux(flux),
      convection(numerical_flux,3,-1.0), residual(&f), mass(&f)
 {
-   MFEM_VERIFY(f.GetVDim() == 3 && f.GetOrdering() == Ordering::byNODES,
-               "Expected three components in byNODES ordering.");
-   MFEM_VERIFY(std::isfinite(m.density) && m.density > 0 &&
-               std::isfinite(m.speed) && m.speed > 0, "Invalid acoustic medium.");
    AddIntegrators(residual);
    auto *mi = new VectorMassIntegrator;
    mi->SetVDim(3);
@@ -71,11 +67,8 @@ ElementBlockPreconditioner::ElementBlockPreconditioner(
    ParFiniteElementSpace &fes, const std::string &type)
    : Solver(fes.GetTrueVSize())
 {
-   MFEM_VERIFY(fes.IsDGSpace() && fes.GetVSize() == height,
-               "Element blocks require a discontinuous finite element space.");
    permutation.SetSize(height);
    inverse_permutation.SetSize(height);
-   inverse_permutation = -1;
    int block_size = 0;
    int next = 0;
    bool uniform = true;
@@ -90,18 +83,13 @@ ElementBlockPreconditioner::ElementBlockPreconditioner(
       uniform = uniform && dofs.Size() == block_size;
       for (int dof : dofs)
       {
-         MFEM_VERIFY(dof >= 0, "Expected unsigned DG degrees of freedom.");
          const int tdof = fes.GetLocalTDofNumber(dof);
-         MFEM_VERIFY(tdof >= 0 && tdof < height &&
-                     inverse_permutation[tdof] == -1,
-                     "Element blocks must partition the local true degrees of freedom.");
          permutation[next] = tdof;
          inverse_permutation[tdof] = next++;
       }
    }
-   MFEM_VERIFY(next == height, "Incomplete element block partition.");
-   VerifyCollectively(uniform,fes.GetComm(),
-                      "Element preconditioners require uniform element sizes on each rank.");
+   MFEM_VERIFY(uniform,
+               "Element preconditioners require uniform element sizes on each rank.");
    // Empty ranks never apply BlockILU, which requires a nonempty local matrix.
    block_size = std::max(1,block_size);
    if (type == "block-ilu")
@@ -114,7 +102,6 @@ ElementBlockPreconditioner::ElementBlockPreconditioner(
    }
    else
    {
-      MFEM_VERIFY(type == "block-gs", "Unknown element preconditioner.");
       local_solver.reset(new BlockGaussSeidel(block_size));
    }
    rhs.SetSize(height);
@@ -123,17 +110,13 @@ ElementBlockPreconditioner::ElementBlockPreconditioner(
 
 void ElementBlockPreconditioner::SetOperator(const Operator &op)
 {
-   const auto *parallel = dynamic_cast<const HypreParMatrix *>(&op);
-   MFEM_VERIFY(parallel && op.Height() == height && op.Width() == width,
-               "Expected a parallel matrix on the element space.");
+   const auto &parallel = static_cast<const HypreParMatrix &>(op);
    if (height == 0)
    {
       return;
    }
    SparseMatrix diagonal;
-   parallel->GetDiag(diagonal);
-   MFEM_VERIFY(diagonal.Height() == height && diagonal.Width() == width,
-               "Expected matching local row and column partitions.");
+   parallel.GetDiag(diagonal);
    const int *I = diagonal.HostReadI();
    const int *J = diagonal.HostReadJ();
    const real_t *values = diagonal.HostReadData();
@@ -152,7 +135,6 @@ void ElementBlockPreconditioner::SetOperator(const Operator &op)
 
 void ElementBlockPreconditioner::Mult(const Vector &b, Vector &x) const
 {
-   MFEM_VERIFY(b.Size() == height, "Invalid element right-hand side size.");
    for (int i = 0; i < height; i++)
    {
       rhs(i) = b(permutation[i]);
@@ -196,7 +178,7 @@ AcousticOperator::AcousticOperator(SpatialOperator &s, const SolverOptions &o)
          file.close();
          ok = !file.fail();
       }
-      VerifyCollectively(ok,s.Space().GetComm(),"Cannot write solver history.");
+      MFEM_VERIFY(ok,"Cannot write solver history.");
    }
 }
 void AcousticOperator::SetPreconditionerFactory(PreconditionerFactory f)
@@ -223,23 +205,17 @@ void AcousticOperator::BeginStep(int number, real_t time, real_t dt)
 }
 void AcousticOperator::Mult(const Vector &u, Vector &du) const
 {
-   const MPI_Comm comm = spatial.Space().GetComm();
-   CheckFinite(u,comm);
    Vector rhs(height);
    spatial.Mult(u,rhs);
    rhs *= -1;
    mass_solver.iterative_mode = false;
    mass_solver.Mult(rhs,du);
-   VerifyCollectively(mass_solver.GetConverged(),comm,"Mass solve failed.");
-   CheckFinite(du,comm);
+   MFEM_VERIFY(mass_solver.GetConverged(),"Mass solve failed.");
+   CheckFinite(du);
 }
 void AcousticOperator::ImplicitSolve(real_t a, const Vector &base,
                                      Vector &state)
 {
-   MFEM_VERIFY(ImplicitVarTypeIsState(),
-               "Implicit solves require stage-state mode.");
-   MFEM_VERIFY(std::isfinite(a) && a > 0,"Stage coefficient must be positive.");
-   CheckFinite(base,spatial.Space().GetComm());
    Vector rhs(height);
    spatial.Mass().Mult(base,rhs);
    rhs /= a;
@@ -252,12 +228,9 @@ void AcousticOperator::SolveSystem(real_t a, const Vector &rhs, Vector &state)
 void AcousticOperator::SolveShifted(real_t a, const Vector &rhs, Vector &state,
                                     const Vector *base)
 {
-   MFEM_VERIFY(std::isfinite(a) && a > 0,"Stage coefficient must be positive.");
-   MFEM_VERIFY(rhs.Size() == height,"Invalid right-hand side size.");
    const MPI_Comm comm = spatial.Space().GetComm();
    int rank;
    MPI_Comm_rank(comm,&rank);
-   CheckFinite(rhs,comm);
    // Indexed time targets can perturb an otherwise constant step by roundoff.
    const bool reused = cached_a > 0 && std::abs(a-cached_a) <=
                        64*std::numeric_limits<real_t>::epsilon()*std::max(a,cached_a);
@@ -287,8 +260,6 @@ void AcousticOperator::SolveShifted(real_t a, const Vector &rhs, Vector &state,
          if (factory)
          {
             preconditioner = factory({spatial,*stage_matrix,shift.constant});
-            VerifyCollectively(bool(preconditioner),comm,
-                               "Preconditioner factory returned null.");
          }
          else if (options.preconditioner == "hypre-ilu")
          {
@@ -334,9 +305,8 @@ void AcousticOperator::SolveShifted(real_t a, const Vector &rhs, Vector &state,
    solver.Mult(rhs,state);
    const double solve_seconds = MPI_Wtime()-start;
    const auto *iterative = dynamic_cast<IterativeSolver *>(&solver);
-   VerifyCollectively(!iterative ||
-                      iterative->GetConverged(),comm,"Linear solve failed.");
-   CheckFinite(state,comm);
+   MFEM_VERIFY(!iterative || iterative->GetConverged(),"Linear solve failed.");
+   CheckFinite(state);
    Vector residual(height);
    stage_matrix->Mult(state,residual);
    residual -= rhs;
@@ -370,7 +340,7 @@ void AcousticOperator::SolveShifted(real_t a, const Vector &rhs, Vector &state,
          file.close();
          ok = !file.fail();
       }
-      VerifyCollectively(ok,comm,"Cannot write solver history.");
+      MFEM_VERIFY(ok,"Cannot write solver history.");
    }
    if (!options.export_prefix.empty())
    {
@@ -401,7 +371,7 @@ void AcousticOperator::SolveShifted(real_t a, const Vector &rhs, Vector &state,
          file.close();
          ok = ok && !file.fail();
       }
-      VerifyCollectively(ok,comm,"Cannot export stage vectors or metadata.");
+      MFEM_VERIFY(ok,"Cannot export stage vectors or metadata.");
       stage_matrix->Print((name+"-A").c_str());
    }
 }

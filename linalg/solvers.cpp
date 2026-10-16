@@ -3078,12 +3078,9 @@ void BlockJacobi::SetOperator(const Operator &op)
 
 void BlockJacobi::FormResidual(const Vector &b, const Vector &x) const
 {
-   MFEM_VERIFY(local_matrix, "Call SetOperator before Mult.");
-   MFEM_VERIFY(b.Size() == height, "Invalid right-hand side size.");
    correction = b;
    if (iterative_mode)
    {
-      MFEM_VERIFY(x.Size() == width, "Invalid initial guess size.");
       local_matrix->AddMult(x, correction, -1.0);
    }
 }

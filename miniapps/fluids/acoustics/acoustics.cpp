@@ -144,7 +144,6 @@ int main(int argc, char *argv[])
    solution.ProjectCoefficient(initial);
    Vector state;
    solution.GetTrueDofs(state);
-   CheckFinite(state,comm);
 
    auto update_fields = [&]()
    {
@@ -188,7 +187,7 @@ int main(int argc, char *argv[])
       ode->Step(state,time,step);
       time = target;
       steps++;
-      CheckFinite(state,comm);
+      CheckFinite(state);
 
       if (output && (steps%output_steps == 0 || time >= final_time))
       {

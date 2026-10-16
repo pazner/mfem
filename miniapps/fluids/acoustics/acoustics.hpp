@@ -49,9 +49,8 @@ public:
 /// Fixed-seed, unit Euclidean norm vector in global algebraic row ordering.
 void RandomRightHandSide(ParFiniteElementSpace &, Vector &);
 Mesh PeriodicMesh(int n, bool triangles);
-void VerifyCollectively(bool ok, MPI_Comm comm, const char *message);
 real_t GlobalNorm(const Vector &x, MPI_Comm comm);
-void CheckFinite(const Vector &x, MPI_Comm comm);
+void CheckFinite(const Vector &x);
 
 /// Forms borrow integrators. Matrix references remain valid for this object's
 /// lifetime; the mesh and finite element space must not change underneath it.

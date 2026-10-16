@@ -53,8 +53,6 @@ void AcousticFlux::ComputeFluxJacobianDotN(const Vector &, const Vector &n,
 }
 Problem::Problem(const Medium &m, const std::string &n) : medium(m), name(n)
 {
-   MFEM_VERIFY(name == "wave" || name == "multimode" || name == "constant",
-               "Unknown acoustic problem.");
    if (name != "multimode")
    {
       return;
@@ -142,25 +140,19 @@ Mesh PeriodicMesh(int n, bool triangles)
    ty(1) = 4;
    return Mesh::MakePeriodic(mesh,mesh.CreatePeriodicVertexMapping({tx,ty}));
 }
-void VerifyCollectively(bool ok, MPI_Comm comm, const char *message)
-{
-   int local = ok, global;
-   MPI_Allreduce(&local,&global,1,MPI_INT,MPI_MIN,comm);
-   MFEM_VERIFY(global, message);
-}
 real_t GlobalNorm(const Vector &x, MPI_Comm comm)
 {
    real_t local = x*x, global;
    MPI_Allreduce(&local,&global,1,MPITypeMap<real_t>::mpi_type,MPI_SUM,comm);
    return std::sqrt(global);
 }
-void CheckFinite(const Vector &x, MPI_Comm comm)
+void CheckFinite(const Vector &x)
 {
    bool ok = true;
    for (int i = 0; i < x.Size(); i++)
    {
       ok = ok && std::isfinite(x(i));
    }
-   VerifyCollectively(ok,comm,"Nonfinite acoustic state.");
+   MFEM_VERIFY(ok,"Nonfinite acoustic state.");
 }
 }
