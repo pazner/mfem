@@ -15,7 +15,7 @@ int main(int argc, char *argv[])
    int n = 16, order = 2, method = 23, output_steps = 10;
    real_t dt = .01, final_time = .1;
    bool triangles = false, paraview = false, pc_test = false;
-   std::string problem_name = "wave", mesh_file;
+   std::string problem_name = "wave", mesh_file; 
    Medium medium;
    SolverOptions options;
 
@@ -36,7 +36,7 @@ int main(int argc, char *argv[])
    args.AddOption(&triangles,"-tri","--triangles","-quad","--quadrilaterals",
                   "Generated element type.");
    args.AddOption(&options.preconditioner,"-pc","--preconditioner",
-                  "block-ilu, block-jacobi, block-gs, hypre-ilu, or none.");
+                  "block-ilu, block-jacobi, block-gs, hypre-ilu, agglom, or none.");
    args.AddOption(&pc_test,"-pct","--pc-test","-no-pct","--no-pc-test",
                   "Solve (M/dt + K)x = b once with a fixed random RHS.");
    args.AddOption(&options.verbose,"-v","--verbose","-no-v","--no-verbose",
@@ -65,9 +65,10 @@ int main(int argc, char *argv[])
                options.preconditioner == "block-jacobi" ||
                options.preconditioner == "block-gs" ||
                options.preconditioner == "hypre-ilu" ||
-               options.preconditioner == "none", "Unknown preconditioner.");
+               options.preconditioner == "agglom" ||
+               options.preconditioner == "none", "Unknown preconditioner."); 
 
-   Mesh mesh = mesh_file.empty() ? PeriodicMesh(n,triangles) : Mesh(mesh_file);
+   Mesh mesh = mesh_file.empty() ? PeriodicMesh(n,triangles) : Mesh(mesh_file);  
    MFEM_VERIFY(mesh.Dimension() == 2 && mesh.SpaceDimension() == 2 &&
                !mesh.Nonconforming(),
                "Only conforming planar 2D meshes are supported.");

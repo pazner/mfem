@@ -1,6 +1,8 @@
 // Copyright (c) 2010-2026, Lawrence Livermore National Security, LLC.
 // This file is part of MFEM. See LICENSE for details.
 #include "acoustics.hpp"
+#include "../../dg-agglomeration/mg_agglom.hpp"
+#include "../../dg-agglomeration/partition.hpp"
 #include <cmath>
 #include <fstream>
 #include <iomanip>
@@ -275,16 +277,33 @@ void AcousticOperator::SolveShifted(real_t a, const Vector &rhs, Vector &state,
             MFEM_ABORT("hypre-ilu requires hypre >= 2.19; choose another preconditioner.");
 #endif
          }
+         else if (options.preconditioner == "agglom")
+         {
+            int dim = spatial.Space().GetMesh()->Dimension();
+            int ne = spatial.Space().GetNE();
+            int nl = std::ceil(std::log(ne)/std::log(4.0));
+            int ncoarse = pow(2, dim); 
+            preconditioner.reset(new SmoothedAggregationGMG(spatial.Space(), *stage_matrix, ncoarse, nl, false, SmoothedAggregationGMG::SmootherType::BlockJacobi));
+         }
          else if (options.preconditioner != "none")
          {
             preconditioner.reset(new ElementBlockPreconditioner(
                                     spatial.Space(),options.preconditioner));
          }
-         if (preconditioner)
+         if (preconditioner && options.preconditioner == "agglom")
          {
+            gmres->SetOperator(*stage_matrix);
             gmres->SetPreconditioner(*preconditioner);
          }
-         gmres->SetOperator(*stage_matrix);
+         else if(preconditioner && options.preconditioner != "agglom")
+         {
+            gmres->SetPreconditioner(*preconditioner);
+            gmres->SetOperator(*stage_matrix);
+         }
+         else
+         {
+            gmres->SetOperator(*stage_matrix);
+         }
          if (auto *hypre = dynamic_cast<HypreSolver *>(preconditioner.get()))
          {
             Vector zero(height), work(height);

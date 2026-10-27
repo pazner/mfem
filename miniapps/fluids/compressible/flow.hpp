@@ -113,7 +113,8 @@ struct SolverOptions
 {
    real_t newton_rtol = 1e-10, newton_atol = 1e-12, linear_rtol = 1e-10;
    int newton_max = 20, linear_max = 300, krylov_dim = 100;
-   bool ilu = true, verbose = false;
+   bool prec_bool = true; // if true, ILU, if false, Agglom.
+   bool verbose = false;
    std::string export_prefix, history;
 };
 

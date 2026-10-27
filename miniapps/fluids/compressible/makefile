@@ -7,7 +7,15 @@ CONFIG_MK = $(or $(wildcard $(MFEM_BUILD_DIR)/config/config.mk),$(wildcard $(MFE
 MFEM_LIB_FILE = mfem_is_not_built
 -include $(CONFIG_MK)
 .DEFAULT_GOAL := all
-COMMON_OBJ = physics.o problems.o solver.o
+AGGLOM_DIR = ../../dg-agglomeration
+AGGLOM_SRC = $(wildcard $(AGGLOM_DIR)/*.cpp)
+# Build the objects locally (flattened) instead of inside dg-agglomeration/
+AGGLOM_OBJ = $(notdir $(AGGLOM_SRC:.cpp=.o))
+
+COMMON_OBJ = physics.o problems.o solver.o $(AGGLOM_OBJ)
+
+vpath %.cpp $(AGGLOM_DIR)
+vpath %.hpp $(AGGLOM_DIR)
 ifeq ($(MFEM_USE_MPI),YES)
 MINIAPPS = compressible test_compressible
 endif
@@ -17,7 +25,7 @@ compressible: compressible.o $(COMMON_OBJ) $(MFEM_LIB_FILE)
 	$(MFEM_CXX) $(MFEM_LINK_FLAGS) $(filter %.o,$^) -o $@ $(MFEM_LIBS)
 test_compressible: test_compressible.o $(COMMON_OBJ) $(MFEM_LIB_FILE)
 	$(MFEM_CXX) $(MFEM_LINK_FLAGS) $(filter %.o,$^) -o $@ $(MFEM_LIBS)
-%.o: %.cpp flow.hpp $(CONFIG_MK)
+%.o: %.cpp flow.hpp $(wildcard $(AGGLOM_DIR)/*.hpp) $(CONFIG_MK)
 	$(MFEM_CXX) $(MFEM_FLAGS) -c $< -o $@
 $(MFEM_LIB_FILE):
 	$(error Build MFEM first with make in the repository root)

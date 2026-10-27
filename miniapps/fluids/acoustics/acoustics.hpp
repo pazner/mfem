@@ -14,7 +14,7 @@ using namespace mfem;
 
 struct Medium
 {
-   real_t density = 1.0, speed = 1.0;
+   real_t density = 1.0, speed = 1.0; 
 };
 
 /// Pressure and velocity flux for a homogeneous, stationary background medium.

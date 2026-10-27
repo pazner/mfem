@@ -39,8 +39,8 @@ int main(int argc, char *argv[])
    args.AddOption(&penalty,"-ip","--penalty","Interior penalty multiplier.");
    args.AddOption(&triangles,"-tri","--triangles","-quad","--quadrilaterals",
                   "Generated mesh element type.");
-   args.AddOption(&solver_options.ilu,"-ilu","--ilu","-no-ilu","--no-ilu",
-                  "Use processor-block hypre ILU(0).");
+   args.AddOption(&solver_options.prec_bool,"-ilu","--ilu","-agglom","--agglom",
+                  "Choose the preconditioner.");
    args.AddOption(&solver_options.verbose,"-v","--verbose","-no-v","--no-verbose",
                   "Print step headings and per-stage Newton/GMRES iterations.");
    args.AddOption(&solver_options.newton_rtol,"-nr","--newton-rtol",
