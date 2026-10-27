@@ -1,6 +1,8 @@
 // Copyright (c) 2010-2026, Lawrence Livermore National Security, LLC.
 // This file is part of MFEM. See LICENSE for details.
 #include "flow.hpp"
+#include "../../dg-agglomeration/mg_agglom.hpp"
+#include "../../dg-agglomeration/partition.hpp"
 #include <cmath>
 #include <fstream>
 #include <iomanip>
@@ -146,7 +148,7 @@ class LinearSolver : public Solver
    SolverStats &stats;
    PreconditionerFactory factory;
    std::unique_ptr<Solver> preconditioner;
-   GMRESSolver gmres;
+   std::unique_ptr<GMRESSolver> gmres;
    Solver *external;
    int system = 0;
    double setup_seconds = 0.0;
@@ -155,14 +157,21 @@ public:
    LinearSolver(SpatialOperator &s, StageOperator &st, const SolverOptions &o,
                 SolverStats &stat, PreconditionerFactory f, Solver *ext)
       : Solver(s.Height()), spatial(s), stage(st), options(o), stats(stat),
-        factory(std::move(f)), gmres(s.Space().GetComm()), external(ext)
+        factory(std::move(f)), gmres(std::unique_ptr<GMRESSolver>(new GMRESSolver(s.Space().GetComm()))), external(ext)
    {
-      gmres.SetRelTol(o.linear_rtol); gmres.SetAbsTol(0.0);
-      gmres.SetMaxIter(o.linear_max); gmres.SetKDim(o.krylov_dim);
-      gmres.SetPrintLevel(-1);
+      gmres->SetRelTol(o.linear_rtol); gmres->SetAbsTol(0.0);
+      gmres->SetMaxIter(o.linear_max); gmres->SetKDim(o.krylov_dim);
+      gmres->SetPrintLevel(-1);
    }
    void SetOperator(const Operator &op) override
    {
+      gmres.reset(); 
+      gmres.reset(new GMRESSolver(spatial.Space().GetComm()));
+      gmres->SetRelTol(options.linear_rtol);
+      gmres->SetAbsTol(0);
+      gmres->SetMaxIter(options.linear_max);
+      gmres->SetKDim(options.krylov_dim);
+      gmres->SetPrintLevel(-1);
       const double start = MPI_Wtime();
       if (external) { external->SetOperator(op); }
       else
@@ -174,7 +183,7 @@ public:
             preconditioner = factory({spatial,stage.State(),matrix,stage.Shift()});
             MFEM_VERIFY(preconditioner, "Preconditioner factory returned null.");
          }
-         else if (options.ilu)
+         else if (options.prec_bool)
          {
 #if MFEM_HYPRE_VERSION >= 21900
             auto ilu = std::unique_ptr<HypreILU>(new HypreILU);
@@ -185,8 +194,28 @@ public:
             MFEM_ABORT("HypreILU requires hypre >= 2.19; use --no-ilu.");
 #endif
          }
-         if (preconditioner) { gmres.SetPreconditioner(*preconditioner); }
-         gmres.SetOperator(op);
+         else
+         {
+            int dim = spatial.Space().GetMesh()->Dimension();
+            int ne = spatial.Space().GetNE();
+            int nl = std::ceil(std::log(ne)/std::log(4.0));
+            int ncoarse = pow(2, dim); 
+            preconditioner.reset(new SmoothedAggregationGMG(spatial.Space(), matrix, ncoarse, nl, false, SmoothedAggregationGMG::SmootherType::BlockGaussSeidel));
+         }
+         if (preconditioner && !options.prec_bool)
+         {  
+            gmres->SetOperator(op);
+            gmres->SetPreconditioner(*preconditioner); 
+         }
+         else if (preconditioner && options.prec_bool)
+         { 
+            gmres->SetPreconditioner(*preconditioner); 
+            gmres->SetOperator(op);
+         }
+         else
+         {
+            gmres->SetOperator(op);
+         }
          if (auto *hypre = dynamic_cast<HypreSolver *>(preconditioner.get()))
          {
             Vector zero(height), work(height); zero = 0.0; work = 0.0;
@@ -216,7 +245,7 @@ public:
    void Mult(const Vector &b, Vector &x) const override
    {
       const double start = MPI_Wtime();
-      Solver &solver = external ? *external : const_cast<GMRESSolver &>(gmres);
+      Solver &solver = external ? *external : const_cast<GMRESSolver &>(*(gmres.get()));
       solver.iterative_mode = false;
       solver.Mult(b,x);
       const auto *iterative = dynamic_cast<IterativeSolver *>(&solver);
