@@ -1202,6 +1202,29 @@ public:
                         bool final) override;
 };
 
+/** CPU incomplete Cholesky factorization with an explicitly prescribed graph.
+    The pattern must contain the matrix graph, including the diagonal. Numerical
+    zeros in the pattern are retained. The permutation maps new indices to old
+    indices. Setup returns the original index of a failed pivot, or -1 on success.
+    The optional shift adds shift*abs(A_ii) to the diagonal before factoring.
+    Neither the matrix, pattern, nor permutation is retained by reference. */
+class IncompleteCholeskySolver : public Solver
+{
+   Array<int> offsets, columns, permutation;
+   Vector factors, diagonal;
+   mutable Vector work;
+   bool ready = false;
+
+public:
+   IncompleteCholeskySolver() : Solver(0) { }
+   int Factor(const SparseMatrix &matrix, const SparseMatrix &pattern,
+              const Array<int> &new_to_old, real_t shift = 0.0);
+   void SetOperator(const Operator &op) override;
+   void Mult(const Vector &x, Vector &y) const override;
+   void MultTranspose(const Vector &x, Vector &y) const override { Mult(x, y); }
+   int NumNonZeroElems() const { return factors.Size() + diagonal.Size(); }
+};
+
 
 #ifdef MFEM_USE_SUITESPARSE
 

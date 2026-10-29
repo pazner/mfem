@@ -20,6 +20,97 @@
 namespace mfem
 {
 
+namespace
+{
+// Host fallback for tensor orders exceeding the fixed stack buffers used by
+// the tuned kernels. Workspace is O(max(D1D,Q1D)^dim), work is O(p^(dim+1)).
+void PADiffusionApplyCPU(const int dim, const int ne, const int d1d,
+                         const int q1d, const bool symmetric,
+                         const Array<real_t> &b, const Array<real_t> &g,
+                         const Vector &data, const Vector &x, Vector &y)
+{
+   MFEM_VERIFY(dim == 2 || dim == 3, "Expected tensor diffusion in 2D or 3D");
+   int nd = 1, nq = 1, workspace_size = 1;
+   for (int d = 0; d < dim; ++d)
+   {
+      nd *= d1d;
+      nq *= q1d;
+      workspace_size *= std::max(d1d, q1d);
+   }
+   const real_t *B = b.HostRead(), *G = g.HostRead();
+   const real_t *D = data.HostRead(), *X = x.HostRead();
+   real_t *Y = y.HostReadWrite();
+   Vector work1(workspace_size), work2(workspace_size);
+   Vector gradient(dim*nq), flux(dim*nq);
+   auto contract = [&](const real_t *input, real_t *output,
+                       int derivative, bool transpose, bool add)
+   {
+      int sizes[3] = {d1d, d1d, d1d};
+      if (transpose) { sizes[0] = sizes[1] = sizes[2] = q1d; }
+      const real_t *source = input;
+      for (int axis = 0; axis < dim; ++axis)
+      {
+         int before = 1, after = 1;
+         for (int d = 0; d < axis; ++d) { before *= sizes[d]; }
+         for (int d = axis+1; d < dim; ++d) { after *= sizes[d]; }
+         const int ni = sizes[axis], no = transpose ? d1d : q1d;
+         const real_t *matrix = axis == derivative ? G : B;
+         real_t *target = axis%2 ? work2.GetData() : work1.GetData();
+         for (int k = 0; k < after; ++k)
+            for (int j = 0; j < no; ++j)
+               for (int i = 0; i < before; ++i)
+               {
+                  real_t sum = 0.0;
+                  for (int l = 0; l < ni; ++l)
+                  {
+                     const real_t value = transpose ? matrix[l+q1d*j]
+                                          : matrix[j+q1d*l];
+                     sum += value*source[i+before*(l+ni*k)];
+                  }
+                  target[i+before*(j+no*k)] = sum;
+               }
+         source = target;
+         sizes[axis] = no;
+      }
+      const int count = transpose ? nd : nq;
+      for (int i = 0; i < count; ++i)
+      {
+         if (add) { output[i] += source[i]; }
+         else { output[i] = source[i]; }
+      }
+   };
+   const int packed2[2][2] = {{0,1},{1,2}};
+   const int packed3[3][3] = {{0,1,2},{1,3,4},{2,4,5}};
+   const int entries = symmetric ? dim*(dim+1)/2 : dim*dim;
+   for (int e = 0; e < ne; ++e)
+   {
+      for (int a = 0; a < dim; ++a)
+      { contract(X+e*nd, gradient.GetData()+a*nq, a, false, false); }
+      for (int a = 0; a < dim; ++a)
+         for (int q = 0; q < nq; ++q)
+         {
+            real_t sum = 0.0;
+            for (int c = 0; c < dim; ++c)
+            {
+               const int index = symmetric ? (dim == 2 ? packed2[a][c] : packed3[a][c])
+                                 : (dim == 2 ? a+dim*c : a*dim+c);
+               sum += D[q+nq*(index+entries*e)]*gradient[q+c*nq];
+            }
+            flux[q+a*nq] = sum;
+         }
+      for (int a = 0; a < dim; ++a)
+      { contract(flux.GetData()+a*nq, Y+e*nd, a, true, true); }
+   }
+}
+
+bool UseDynamicDiffusionCPU(int d1d, int q1d)
+{
+   const auto &limits = DeviceDofQuadLimits::Get();
+   return !Device::Allows(Backend::DEVICE_MASK) &&
+          (d1d > limits.MAX_D1D || q1d > limits.MAX_Q1D);
+}
+} // namespace
+
 void DiffusionIntegrator::AssembleDiagonalPA(Vector &diag)
 {
    if (DeviceCanUseCeed())
@@ -87,6 +178,13 @@ void DiffusionIntegrator::AddMultPA(const Vector &x, Vector &y) const
                                            rmaps->Ga2t,
                                            rmaps->Ga3t,
                                            Dv, x, y, dofs1D, quad1D);
+      }
+
+      if (UseDynamicDiffusionCPU(dofs1D, quad1D))
+      {
+         PADiffusionApplyCPU(dim, ne, dofs1D, quad1D, symmetric,
+                             B, G, Dv, x, y);
+         return;
       }
 
       ApplyPAKernels::Run(dim, dofs1D, quad1D, ne, symmetric, B, G, Bt,
@@ -204,6 +302,14 @@ void DiffusionIntegrator::AddAbsMultPA(const Vector &x, Vector &y) const
    Vector abs_pa_data(pa_data);
    abs_pa_data.Abs();
    auto abs_maps = maps->Abs();
+
+   if (!fespace->UsesRaggedTensorBasis() &&
+       UseDynamicDiffusionCPU(dofs1D, quad1D))
+   {
+      PADiffusionApplyCPU(dim, ne, dofs1D, quad1D, symmetric,
+                          abs_maps.B, abs_maps.G, abs_pa_data, x, y);
+      return;
+   }
 
    ApplyPAKernels::Run(dim, dofs1D, quad1D, ne, symmetric,
                        abs_maps.B, abs_maps.G, abs_maps.Bt, abs_maps.Gt,

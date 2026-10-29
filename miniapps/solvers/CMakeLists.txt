@@ -27,6 +27,23 @@ if (MFEM_USE_MPI)
     EXTRA_HEADERS block_fespace_operator.hpp
     LIBRARIES mfem)
 
+  if (MFEM_USE_LAPACK AND MFEM_USE_METIS AND MFEM_USE_METIS_5)
+    add_mfem_miniapp(vertex-patch
+      MAIN vertex-patch.cpp
+      EXTRA_SOURCES vertex_patch.cpp
+      EXTRA_HEADERS vertex_patch.hpp
+      LIBRARIES mfem)
+    if (MFEM_ENABLE_TESTING)
+      foreach(mode sc no-sc)
+        add_test(NAME vertex-patch-${mode}_np${MFEM_MPI_NP}
+          COMMAND ${MPIEXEC} ${MPIEXEC_NUMPROC_FLAG} ${MFEM_MPI_NP}
+          ${MPIEXEC_PREFLAGS} $<TARGET_FILE:vertex-patch>
+          -m ${CMAKE_CURRENT_SOURCE_DIR}/../../data/beam-hex.mesh -o 3 -${mode}
+          ${MPIEXEC_POSTFLAGS})
+      endforeach()
+    endif()
+  endif()
+
   # Add the corresponding tests to the "test" target
   if (MFEM_ENABLE_TESTING)
     if (NOT (HYPRE_USING_CUDA OR HYPRE_USING_HIP))

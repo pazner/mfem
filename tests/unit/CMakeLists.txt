@@ -54,6 +54,7 @@ set(UNIT_TESTS_SRCS
   general/test_zlib.cpp
   linalg/test_amgfsolver.cpp
   linalg/test_cg_indefinite.cpp
+  linalg/test_incomplete_cholesky.cpp
   linalg/test_chebyshev.cpp
   linalg/test_complex_dense_matrix.cpp
   linalg/test_complex_operator.cpp
@@ -151,6 +152,7 @@ set(UNIT_TESTS_SRCS
   fem/test_oscillation.cpp
   fem/test_pa_coeff.cpp
   fem/test_pa_diagonal.cpp
+  fem/test_pa_diffusion_high_order.cpp
   fem/test_pa_grad.cpp
   fem/test_pa_idinterp.cpp
   fem/test_pa_kernels.cpp
@@ -555,3 +557,18 @@ add_dependencies(debug_device_tests copy_miniapps_multidomain_data)
 add_dependencies(debug_device_tests copy_miniapps_nurbs_data)
 add_dependencies(${MFEM_ALL_TESTS_TARGET_NAME} debug_device_tests)
 add_test(NAME debug_device_tests COMMAND debug_device_tests)
+
+if (MFEM_USE_MPI AND MFEM_USE_LAPACK AND MFEM_USE_METIS AND MFEM_USE_METIS_5)
+  mfem_add_executable(vertex_patch_tests
+    punit_test_main.cpp linalg/test_incomplete_cholesky.cpp
+    fem/test_pa_diffusion_high_order.cpp
+    miniapps/test_vertex_patch.cpp
+    ${PROJECT_SOURCE_DIR}/miniapps/solvers/vertex_patch.cpp)
+  target_link_libraries(vertex_patch_tests mfem)
+  add_dependencies(${MFEM_ALL_TESTS_TARGET_NAME} vertex_patch_tests)
+  foreach(np 1 2 4)
+    add_test(NAME vertex_patch_tests_np=${np}
+      COMMAND ${MPIEXEC} ${MPIEXEC_NUMPROC_FLAG} ${np} ${MPIEXEC_PREFLAGS}
+      $<TARGET_FILE:vertex_patch_tests> ${MPIEXEC_POSTFLAGS})
+  endforeach()
+endif()

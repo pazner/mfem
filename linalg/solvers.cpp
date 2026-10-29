@@ -20,11 +20,134 @@
 #include <algorithm>
 #include <cmath>
 #include <set>
+#include <vector>
 
 namespace mfem
 {
 
 using namespace std;
+
+int IncompleteCholeskySolver::Factor(
+   const SparseMatrix &matrix, const SparseMatrix &pattern,
+   const Array<int> &new_to_old, real_t shift)
+{
+   ready = false;
+   const int n = matrix.Height();
+   MFEM_VERIFY(matrix.Width() == n && pattern.Height() == n &&
+               pattern.Width() == n && new_to_old.Size() == n &&
+               shift >= 0.0 && std::isfinite(shift), "Invalid ICC inputs");
+   height = width = n;
+   permutation = new_to_old;
+   Array<int> inverse(n);
+   inverse = -1;
+   for (int i = 0; i < n; ++i)
+   {
+      const int j = permutation[i];
+      MFEM_VERIFY(j >= 0 && j < n && inverse[j] == -1,
+                  "ICC permutation is not a bijection");
+      inverse[j] = i;
+   }
+   offsets.SetSize(n + 1);
+   offsets[0] = 0;
+   Array<int> cols;
+   Vector vals;
+   std::vector<std::vector<int>> rows(n);
+   for (int i = 0; i < n; ++i)
+   {
+      pattern.GetRow(permutation[i], cols, vals);
+      bool has_diagonal = false;
+      for (int j : cols)
+      {
+         const int k = inverse[j];
+         if (k < i) { rows[i].push_back(k); }
+         if (k == i) { has_diagonal = true; }
+      }
+      MFEM_VERIFY(has_diagonal, "ICC pattern is missing a diagonal");
+      auto &row = rows[i];
+      std::sort(row.begin(), row.end());
+      row.erase(std::unique(row.begin(), row.end()), row.end());
+      offsets[i+1] = offsets[i] + int(row.size());
+   }
+   columns.SetSize(offsets[n]);
+   factors.SetSize(offsets[n]);
+   diagonal.SetSize(n);
+   work.SetSize(n);
+   Vector accumulator(n);
+   accumulator = 0.0;
+   for (int i = 0; i < n; ++i)
+   {
+      for (int k = offsets[i]; k < offsets[i+1]; ++k)
+      {
+         columns[k] = rows[i][k-offsets[i]];
+      }
+      matrix.GetRow(permutation[i], cols, vals);
+      for (int j = 0; j < cols.Size(); ++j)
+      {
+         const int col = inverse[cols[j]];
+         if (col < i)
+         {
+            MFEM_VERIFY(std::binary_search(rows[i].begin(), rows[i].end(), col),
+                        "ICC pattern does not contain the matrix graph");
+         }
+         accumulator[col] = vals[j];
+      }
+      real_t pivot = accumulator[i] + shift*std::abs(accumulator[i]);
+      for (int k = offsets[i]; k < offsets[i+1]; ++k)
+      {
+         const int j = columns[k];
+         real_t value = accumulator[j];
+         // Intersect the two sorted rows. No fill outside the supplied graph.
+         int a = offsets[i], b = offsets[j];
+         while (a < k && b < offsets[j+1])
+         {
+            if (columns[a] < columns[b]) { ++a; }
+            else if (columns[b] < columns[a]) { ++b; }
+            else { value -= factors[a++]*factors[b++]; }
+         }
+         factors[k] = value/diagonal[j];
+         pivot -= factors[k]*factors[k];
+      }
+      for (int j : cols) { accumulator[inverse[j]] = 0.0; }
+      if (!(pivot > 0.0) || !std::isfinite(pivot)) { return permutation[i]; }
+      diagonal[i] = std::sqrt(pivot);
+   }
+   ready = true;
+   return -1;
+}
+
+void IncompleteCholeskySolver::SetOperator(const Operator &op)
+{
+   const auto *a = dynamic_cast<const SparseMatrix *>(&op);
+   MFEM_VERIFY(a, "IncompleteCholeskySolver requires a SparseMatrix");
+   Array<int> order(a->Height());
+   for (int i = 0; i < order.Size(); ++i) { order[i] = i; }
+   const int pivot = Factor(*a, *a, order);
+   MFEM_VERIFY(pivot < 0, "ICC failed at pivot " << pivot);
+}
+
+void IncompleteCholeskySolver::Mult(const Vector &x, Vector &y) const
+{
+   MFEM_VERIFY(ready && x.Size() == height, "ICC is not ready or size mismatch");
+   for (int i = 0; i < height; ++i)
+   {
+      real_t value = x[permutation[i]];
+      for (int k = offsets[i]; k < offsets[i+1]; ++k)
+      {
+         value -= factors[k]*work[columns[k]];
+      }
+      work[i] = value/diagonal[i];
+   }
+   for (int i = height-1; i >= 0; --i)
+   {
+      work[i] /= diagonal[i];
+      for (int k = offsets[i]; k < offsets[i+1]; ++k)
+      {
+         work[columns[k]] -= factors[k]*work[i];
+      }
+   }
+   y.SetSize(height);
+   for (int i = 0; i < height; ++i) { y[permutation[i]] = work[i]; }
+}
 
 IterativeSolver::IterativeSolver()
    : Solver(0, true)

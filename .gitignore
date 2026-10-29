@@ -408,6 +408,7 @@ miniapps/solvers/block-solvers
 miniapps/solvers/lor_solvers
 miniapps/solvers/plor_solvers
 miniapps/solvers/lor_elast
+miniapps/solvers/vertex-patch
 miniapps/solvers/ParaView
 miniapps/solvers/mesh.*
 miniapps/solvers/sol.*
@@ -494,3 +495,6 @@ TAGS
 
 # vs code
 .vscode
+
+# Focused vertex-patch numerical tests
+tests/unit/vertex_patch_tests

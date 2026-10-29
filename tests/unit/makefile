@@ -278,3 +278,17 @@ clean-exec:
 clean: clean-exec
 	rm -f $(SEQ_UNIT_TESTS) $(PAR_UNIT_TESTS) *.o */*.o */*~ *~
 	rm -rf *.dSYM
+
+# Focused CPU/MPI tests for the sparse FDM miniapp and reusable ICC solver.
+ifeq ($(MFEM_USE_MPI)$(MFEM_USE_LAPACK)$(MFEM_USE_METIS)$(MFEM_USE_METIS_5),YESYESYESYES)
+vertex_patch_tests: $(MFEM_DIR)/miniapps/solvers/vertex_patch.cpp $(MFEM_DIR)/miniapps/solvers/vertex_patch.hpp $(PAR_MAIN_OBJ) linalg/test_incomplete_cholesky.o fem/test_pa_diffusion_high_order.o miniapps/test_vertex_patch.o $(MFEM_LIB_FILE)
+	$(MAKE) -C $(MFEM_DIR)/miniapps/solvers vertex_patch.o
+	$(CCC) $(MFEM_LINK_FLAGS) $(PAR_MAIN_OBJ) linalg/test_incomplete_cholesky.o fem/test_pa_diffusion_high_order.o miniapps/test_vertex_patch.o $(MFEM_DIR)/miniapps/solvers/vertex_patch.o $(MFEM_LIBS) -o $@
+miniapps/test_vertex_patch.o: $(SRC)miniapps/test_vertex_patch.cpp $(MFEM_DIR)/miniapps/solvers/vertex_patch.hpp $(HEADER_FILES) $(CONFIG_MK)
+	$(CCC) $(MFEM_FLAGS) $(INCLUDES) -c $< -o $@
+endif
+
+clean-vertex-patch-tests:
+	rm -f vertex_patch_tests miniapps/test_vertex_patch.o
+clean: clean-vertex-patch-tests
+.PHONY: clean-vertex-patch-tests
