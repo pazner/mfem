@@ -56,7 +56,9 @@ The physical operator remains MFEM's partially assembled diffusion operator in
 the standard nodal basis. The preconditioner converts residuals/corrections with
 transpose-consistent sum-factorized FDM basis operators. Reference data are
 computed using MFEM's LAPACK eigensolver once per degree and cached in memory.
-There is no on-disk basis cache.
+Assembly quadrature, tensor-product stencils, CSR patterns, and condensation
+updates are also cached per basis and dimension. Geometry and coefficient values
+are evaluated for each element. There is no on-disk basis cache.
 
 Canonical entity orientations use global vertex IDs. Interior eigenfunctions
 transform with their reflection parity, rather than with nodal reversal alone.
@@ -69,6 +71,8 @@ of order at least `3*p`. Sparse assembly and condensation never form dense
 high-order element matrices. Cell interiors are diagonal. The uncondensed path
 retains symbolic zeros for the fill induced by eliminating interiors, instead
 of applying ordinary ICC(0) to the original graph.
+Element assembly and condensation accumulate directly into precomputed CSR
+patterns. Condensed patch factorization reuses the matrix graph.
 
 Each vertex star has one owner, the lowest participating MPI rank. Shared-vertex
 neighbors exchange sparse element contributions during setup, including
@@ -76,6 +80,8 @@ edge-only and vertex-only contacts. Cached, deduplicated communication schedules
 gather residuals and scatter summed patch corrections. Condensation removes
 cell-interior unknowns from these exchanges. Essential DOFs are excluded from
 patches, but boundary-centered patches are retained when they have free DOFs.
+Patches whose residual DOFs are all locally owned are solved while the residual
+gather is in flight; the remaining patches are solved after it completes.
 
 Patch factors use MFEM's prescribed-pattern `IncompleteCholeskySolver`, with
 interiors ordered first and a METIS nested-dissection ordering of the interface

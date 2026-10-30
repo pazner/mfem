@@ -275,4 +275,107 @@ TEST_CASE("Condensed single-element Dirichlet problem",
    prec.Mult(rhs, y); y -= x;
    REQUIRE(y.Norml2() < 1.e-10);
 }
+
+TEST_CASE("FDM assembly cache follows coefficient and geometry changes",
+          "[VertexPatch][Parallel]")
+{
+   for (int dim : {2, 3}) for (int p : {2, 5})
+      {
+         CAPTURE(dim, p);
+         Mesh mesh = TestMesh(dim, false);
+         const auto basis = Basis::Get(p);
+         ConstantCoefficient one(1.), three(3.);
+         auto first = AssembleElement(*basis, *mesh.GetElementTransformation(0), one);
+         auto scaled = AssembleElement(*basis, *mesh.GetElementTransformation(0), three);
+         Vector x(first->Width()), y, expected;
+         x.Randomize(47);
+         y.SetSize(x.Size()); expected.SetSize(x.Size());
+         first->Mult(x, expected); expected *= 3.;
+         scaled->Mult(x, y); y -= expected;
+         REQUIRE(y.Norml2() < 1.e-11 * expected.Norml2());
+
+         // Uniform scaling changes the diffusion matrix by length^(dim-2).
+         mesh.Transform([](const Vector &a, Vector &b) { b = a; b *= 2.; });
+         auto stretched = AssembleElement(*basis, *mesh.GetElementTransformation(0),
+                                          one);
+         first->Mult(x, expected); expected *= dim == 2 ? 1. : 2.;
+         stretched->Mult(x, y); y -= expected;
+         REQUIRE(y.Norml2() < 1.e-11 * expected.Norml2());
+         std::vector<int> boundary;
+         auto s1 = CondenseElement(*first, p, dim, boundary);
+         auto s2 = CondenseElement(*scaled, p, dim, boundary);
+         x.SetSize(s1->Width()); x.Randomize(59);
+         y.SetSize(x.Size()); expected.SetSize(x.Size());
+         s1->Mult(x, expected); expected *= 3.;
+         s2->Mult(x, y); y -= expected;
+         REQUIRE(y.Norml2() < 1.e-11 * expected.Norml2());
+      }
+}
+
+TEST_CASE("FDM condensation accepts different sparse graphs",
+          "[VertexPatch][Parallel]")
+{
+   for (int dim : {2, 3})
+   {
+      const int p = 3, n = p + 1, nd = dim == 2 ? n*n : n*n*n;
+      const int interior = dim == 2 ? 1 + n : 1 + n + n*n;
+      for (bool extra_edge : {false, true, false})
+      {
+         CAPTURE(dim, extra_edge);
+         SparseMatrix matrix(nd);
+         for (int i = 0; i < nd; ++i) { matrix.Add(i, i, 4.); }
+         matrix.Add(0, interior, 1.); matrix.Add(interior, 0, 1.);
+         if (extra_edge) { matrix.Add(0, 1, 0.5); matrix.Add(1, 0, 0.5); }
+         matrix.Finalize();
+         std::vector<int> boundary;
+         const auto schur = CondenseElement(matrix, p, dim, boundary);
+         const SparseMatrix &s = *schur;
+         for (int i = 0; i < s.Height(); ++i) for (int j = 0; j < s.Width(); ++j)
+            {
+               real_t expected = i == j ? (boundary[i] == 0 ? 3.75 : 4.) : 0.;
+               if (extra_edge && ((boundary[i] == 0 && boundary[j] == 1) ||
+                                  (boundary[i] == 1 && boundary[j] == 0))) { expected = 0.5; }
+               REQUIRE(s(i, j) == MFEM_Approx(expected));
+            }
+      }
+   }
+}
+
+TEST_CASE("Vertex patches with local and remote residual dependencies",
+          "[VertexPatch][Parallel]")
+{
+   Mesh serial = Mesh::MakeCartesian3D(4, 4, 4, Element::HEXAHEDRON, 1., 1., 1.);
+   Array<int> part(serial.GetNE());
+   // Contiguous slabs have both patches confined to a rank and shared patches.
+   for (int e = 0; e < serial.GetNE(); ++e)
+   { part[e] = e * Mpi::WorldSize() / serial.GetNE(); }
+   ParMesh mesh(MPI_COMM_WORLD, serial, part);
+   H1_FECollection fec(3, 3); ParFiniteElementSpace fes(&mesh, &fec);
+   Array<int> boundary(mesh.bdr_attributes.Max()); boundary = 1;
+   Array<int> essential; fes.GetEssentialTrueDofs(boundary, essential);
+   ConstantCoefficient one(1.);
+   ParBilinearForm form(&fes); form.SetAssemblyLevel(AssemblyLevel::PARTIAL);
+   form.AddDomainIntegrator(new DiffusionIntegrator(one)); form.Assemble();
+   OperatorPtr matrix; form.FormSystemMatrix(essential, matrix);
+   Vector x(fes.GetTrueVSize()), y(x.Size()), mx(x.Size()), my(x.Size());
+   x.Randomize(71 + Mpi::WorldRank()); y.Randomize(89 + Mpi::WorldRank());
+   x.SetSubVector(essential, 0.); y.SetSubVector(essential, 0.);
+   for (bool sc : {false, true})
+   {
+      CAPTURE(sc);
+      Options options; options.static_condensation = sc;
+      Preconditioner prec(fes, one, boundary, options);
+      prec.Mult(x, mx); prec.Mult(y, my);
+      REQUIRE(Dot(mx, y) == MFEM_Approx(Dot(x, my), 1.e-9, 1.e-10));
+      REQUIRE(Dot(x, mx) > 0.);
+      Vector rhs(x.Size()), solution(x.Size()); matrix->Mult(x, rhs); solution = 0.;
+      CGSolver cg(MPI_COMM_WORLD); cg.SetOperator(*matrix);
+      cg.SetPreconditioner(prec);
+      cg.SetRelTol(1.e-11); cg.SetMaxIter(200); cg.SetPrintLevel(0);
+      cg.Mult(rhs, solution);
+      REQUIRE(cg.GetConverged());
+      matrix->Mult(solution, my); my -= rhs;
+      REQUIRE(std::sqrt(Dot(my, my) / Dot(rhs, rhs)) < 1.e-8);
+   }
+}
 #endif

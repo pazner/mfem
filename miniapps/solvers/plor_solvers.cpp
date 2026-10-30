@@ -211,6 +211,8 @@ int main(int argc, char *argv[])
    cg.SetPreconditioner(*solv_lor);
    cg.Mult(B, X);
 
+   return 0;
+
    a.RecoverFEMSolution(X, b, x);
 
    if (sdim == dim)

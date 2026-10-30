@@ -33,12 +33,17 @@ struct Options
 /// Reference-interval data, cached once per polynomial degree.
 struct Basis
 {
+   struct AssemblyData;
    int p;
    DenseMatrix S, inverse, G, derivative;
    Vector eigenvalues;
    Array<int> parity;
    explicit Basis(int degree);
    static std::shared_ptr<const Basis> Get(int degree);
+   /// Cached quadrature, sparse stencils, and condensation plan for this basis.
+   const AssemblyData &GetAssemblyData(int dimension) const;
+private:
+   mutable std::shared_ptr<const AssemblyData> assembly[2];
 };
 
 /// Sum-factorized global FDM-to-GLL conversion, including modal orientations.

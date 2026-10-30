@@ -38,37 +38,68 @@ bool Interior(int i, int n, int dim)
    return true;
 }
 
-// Rectangular tensor contraction, with the first coordinate varying fastest.
-void Tensor(const Vector &x, Vector &y,
-            const std::vector<const DenseMatrix*> &b,
-            bool transpose, Vector &u, Vector &v)
+// Rectangular tensor contractions with contiguous inner loops. Read directly
+// from x and write the final contraction to y, without endpoint buffer copies.
+template <int DIM, bool TRANSPOSE>
+void TensorKernel(const Vector &x, Vector &y,
+                  const std::array<const DenseMatrix*, 3> &b,
+                  Vector &u, Vector &v)
 {
-   const int dim = int(b.size());
-   std::vector<int> sizes(dim);
-   for (int d = 0; d < dim; ++d)
-   { sizes[d] = transpose ? b[d]->Height() : b[d]->Width(); }
-   u = x;
-   for (int axis = 0; axis < dim; ++axis)
+   int sizes[DIM];
+   for (int d = 0; d < DIM; ++d)
+   { sizes[d] = TRANSPOSE ? b[d]->Height() : b[d]->Width(); }
+   const real_t *input = x.GetData();
+   for (int axis = 0; axis < DIM; ++axis)
    {
       const DenseMatrix &m = *b[axis];
       int before = 1, after = 1;
       for (int d = 0; d < axis; ++d) { before *= sizes[d]; }
-      for (int d = axis + 1; d < dim; ++d) { after *= sizes[d]; }
-      const int ni = sizes[axis], no = transpose ? m.Width() : m.Height();
-      v.SetSize(before * no * after);
+      for (int d = axis + 1; d < DIM; ++d) { after *= sizes[d]; }
+      const int ni = sizes[axis], no = TRANSPOSE ? m.Width() : m.Height();
+      Vector &output = axis == DIM - 1 ? y : (axis == 0 ? u : v);
+      output.SetSize(before * no * after);
+      real_t *out = output.GetData();
       for (int k = 0; k < after; ++k)
          for (int j = 0; j < no; ++j)
-            for (int i = 0; i < before; ++i)
+         {
+            real_t *dest = out + before * (j + no * k);
+            if (axis == 0)
             {
-               real_t value = 0;
+               real_t value = 0.;
                for (int l = 0; l < ni; ++l)
-               { value += (transpose ? m(l, j) : m(j, l)) * u[i + before * (l + ni * k)]; }
-               v[i + before * (j + no * k)] = value;
+               { value += (TRANSPOSE ? m(l, j) : m(j, l)) * input[l + ni * k]; }
+               dest[0] = value;
             }
-      u.Swap(v);
+            else
+            {
+               std::fill(dest, dest + before, 0.);
+               for (int l = 0; l < ni; ++l)
+               {
+                  const real_t factor = TRANSPOSE ? m(l, j) : m(j, l);
+                  const real_t *src = input + before * (l + ni * k);
+                  for (int i = 0; i < before; ++i) { dest[i] += factor * src[i]; }
+               }
+            }
+         }
+      input = out;
       sizes[axis] = no;
    }
-   y = u;
+}
+void Tensor(const Vector &x, Vector &y,
+            const std::array<const DenseMatrix*, 3> &b, int dim,
+            bool transpose, Vector &u, Vector &v)
+{
+   if (dim == 2)
+   {
+      if (transpose) { TensorKernel<2, true>(x, y, b, u, v); }
+      else { TensorKernel<2, false>(x, y, b, u, v); }
+   }
+   else
+   {
+      MFEM_VERIFY(dim == 3, "Expected a 2D or 3D tensor contraction");
+      if (transpose) { TensorKernel<3, true>(x, y, b, u, v); }
+      else { TensorKernel<3, false>(x, y, b, u, v); }
+   }
 }
 using Rows = std::vector<std::unordered_map<int, real_t>>;
 std::unique_ptr<SparseMatrix> CSR(const Rows &rows, int width = -1)
@@ -88,6 +119,123 @@ std::unique_ptr<SparseMatrix> CSR(const Rows &rows, int width = -1)
    return std::unique_ptr<SparseMatrix>(new SparseMatrix(i, j, a, n,
                                                          width < 0 ? n : width));
 }
+// Build symbolic rows once, then accumulate numerical values in contiguous CSR.
+struct SparsePattern
+{
+   std::vector<int> offsets, columns;
+   SparsePattern() = default;
+   explicit SparsePattern(std::vector<std::vector<int>> rows)
+   {
+      offsets.push_back(0);
+      for (auto &row : rows)
+      {
+         std::sort(row.begin(), row.end());
+         row.erase(std::unique(row.begin(), row.end()), row.end());
+         columns.insert(columns.end(), row.begin(), row.end());
+         offsets.push_back(int(columns.size()));
+      }
+   }
+   explicit SparsePattern(const SparseMatrix &a)
+      : offsets(a.GetI(), a.GetI() + a.Height() + 1),
+        columns(a.GetJ(), a.GetJ() + a.NumNonZeroElems()) { }
+   int Slot(int row, int col) const
+   {
+      auto begin = columns.begin() + offsets[row];
+      auto end = columns.begin() + offsets[row + 1];
+      auto it = std::lower_bound(begin, end, col);
+      MFEM_VERIFY(it != end && *it == col, "Missing symbolic matrix entry");
+      return int(it - columns.begin());
+   }
+   std::unique_ptr<SparseMatrix> NewMatrix() const
+   {
+      const int height = int(offsets.size()) - 1;
+      int *i = new int[offsets.size()], *j = new int[columns.size()];
+      std::copy(offsets.begin(), offsets.end(), i);
+      std::copy(columns.begin(), columns.end(), j);
+      return std::unique_ptr<SparseMatrix>(new SparseMatrix(
+                                              i, j, nullptr, height, height,
+                                              true, true, true));
+   }
+   bool Matches(const SparseMatrix &a) const
+   {
+      return int(offsets.size()) == a.Height() + 1 &&
+             int(columns.size()) == a.NumNonZeroElems() &&
+             std::equal(offsets.begin(), offsets.end(), a.GetI()) &&
+             std::equal(columns.begin(), columns.end(), a.GetJ());
+   }
+};
+
+struct CondensationPlan
+{
+   struct Update { int slot, left, right, diagonal; };
+   SparsePattern source, schur;
+   std::vector<int> boundary, diagonals, interior_offdiagonals;
+   std::vector<Update> updates;
+   CondensationPlan() = default;
+   CondensationPlan(const SparsePattern &pattern, int n, int dim) : source(pattern)
+   {
+      const int nd = int(source.offsets.size()) - 1;
+      std::vector<int> index(nd, -1);
+      for (int i = 0; i < nd; ++i) if (!Interior(i, n, dim))
+         { index[i] = int(boundary.size()); boundary.push_back(i); }
+      std::vector<std::vector<int>> rows(boundary.size());
+      const auto &ai = source.offsets, &aj = source.columns;
+      for (int i = 0; i < nd; ++i)
+      {
+         if (index[i] >= 0)
+         {
+            for (int k = ai[i]; k < ai[i + 1]; ++k) if (index[aj[k]] >= 0)
+               { rows[index[i]].push_back(index[aj[k]]); }
+         }
+         else
+         {
+            for (int k = ai[i]; k < ai[i + 1]; ++k) if (index[aj[k]] >= 0)
+                  for (int l = ai[i]; l < ai[i + 1]; ++l) if (index[aj[l]] >= 0)
+                     { rows[index[aj[k]]].push_back(index[aj[l]]); }
+         }
+      }
+      schur = SparsePattern(std::move(rows));
+      // Preserve the original row/update ordering, including symbolic zeros.
+      for (int i = 0; i < nd; ++i)
+      {
+         if (index[i] >= 0)
+         {
+            for (int k = ai[i]; k < ai[i + 1]; ++k) if (index[aj[k]] >= 0)
+               { updates.push_back({schur.Slot(index[i], index[aj[k]]), k, -1, -1}); }
+         }
+         else
+         {
+            int diagonal = -1;
+            for (int k = ai[i]; k < ai[i + 1]; ++k)
+            {
+               if (aj[k] == i) { diagonal = k; }
+               else if (index[aj[k]] < 0) { interior_offdiagonals.push_back(k); }
+            }
+            MFEM_VERIFY(diagonal >= 0, "Missing interior diagonal");
+            diagonals.push_back(diagonal);
+            for (int k = ai[i]; k < ai[i + 1]; ++k) if (index[aj[k]] >= 0)
+                  for (int l = ai[i]; l < ai[i + 1]; ++l) if (index[aj[l]] >= 0)
+                     { updates.push_back({schur.Slot(index[aj[k]], index[aj[l]]), k, l, diagonal}); }
+         }
+      }
+   }
+   std::unique_ptr<SparseMatrix> Apply(const SparseMatrix &a) const
+   {
+      const real_t *av = a.GetData();
+      for (int k : diagonals)
+      { MFEM_VERIFY(av[k] > 0., "Nonpositive interior diagonal"); }
+      for (int k : interior_offdiagonals)
+      { MFEM_VERIFY(av[k] == 0., "Interior block is not diagonal"); }
+      auto result = schur.NewMatrix();
+      real_t *values = result->GetData();
+      for (const auto &u : updates)
+      {
+         if (u.right < 0) { values[u.slot] += av[u.left]; }
+         else { values[u.slot] -= av[u.left] * av[u.right] / av[u.diagonal]; }
+      }
+      return result;
+   }
+};
 }
 
 Basis::Basis(int degree) : p(degree), S(p + 1), inverse(p + 1), G(p + 1),
@@ -241,7 +389,7 @@ void BasisChange::Apply(const Vector &x, Vector &y, bool invert,
    const auto &out = invert ? modal : nodal;
    const auto &mask = invert ? modal_mask : nodal_mask;
    const DenseMatrix &s = invert ? basis->inverse : basis->S;
-   std::vector<const DenseMatrix*> matrices(dim, &s);
+   const std::array<const DenseMatrix*, 3> matrices = {{&s, &s, &s}};
    local_in.SetSize(fes.GetVSize()); local_out.SetSize(fes.GetVSize());
    if (transpose) { fes.GetRestrictionMatrix()->MultTranspose(x, local_in); }
    else { fes.GetProlongationMatrix()->Mult(x, local_in); }
@@ -254,7 +402,7 @@ void BasisChange::Apply(const Vector &x, Vector &y, bool invert,
          element[i] = transpose ? local_in[out[k]] * mask[k] * (invert ? signs[k] : 1)
                       : local_in[in[k]] * (invert ? 1 : signs[k]);
       }
-      Tensor(element, result, matrices, transpose, scratch1, scratch2);
+      Tensor(element, result, matrices, dim, transpose, scratch1, scratch2);
       for (int i = 0; i < nd; ++i)
       {
          const int k = e * nd + i;
@@ -267,45 +415,118 @@ void BasisChange::Apply(const Vector &x, Vector &y, bool invert,
    else { fes.GetRestrictionMatrix()->Mult(local_out, y); }
 }
 
+struct Basis::AssemblyData
+{
+   struct Contribution { int row, column, slot; real_t weight; };
+   struct Stencil
+   {
+      std::vector<int> offsets;
+      std::vector<Contribution> entries;
+   };
+   DenseMatrix values, deriv;
+   IntegrationRule quadrature;
+   SparsePattern pattern;
+   CondensationPlan condensation;
+   std::array<Stencil, 3> stencils;
+
+   AssemblyData(const Basis &basis, int dim)
+   {
+      const int p = basis.p, n = p + 1, nd = Power(n, dim);
+      IntegrationRules rules(0, Quadrature1D::GaussLobatto);
+      const IntegrationRule &ir = rules.Get(Geometry::SEGMENT, 3 * p);
+      const int nq = ir.GetNPoints();
+      H1_SegmentElement fe(p);
+      const auto &map = fe.GetDofMap();
+      DenseMatrix gi(n), broken_coeff(n);
+      values.SetSize(n, nq); deriv.SetSize(p, nq);
+      DenseMatrixInverse inverse_g(basis.G); inverse_g.GetInverseMatrix(gi);
+      Mult(basis.S, gi, broken_coeff);
+      Vector shape(n); DenseMatrix dshape(n, 1);
+      for (int q = 0; q < nq; ++q)
+      {
+         fe.CalcShape(ir.IntPoint(q), shape); fe.CalcDShape(ir.IntPoint(q), dshape);
+         for (int i = 0; i < n; ++i)
+         {
+            real_t v = 0;
+            for (int j = 0; j < n; ++j) { v += shape[map[j]] * broken_coeff(j, i); }
+            values(i, q) = v * v;
+         }
+         deriv(0, q) = 1.;
+         for (int i = 1; i < p; ++i)
+         {
+            real_t v = 0;
+            for (int j = 0; j < n; ++j) { v += dshape(map[j], 0) * basis.S(j, i); }
+            deriv(i, q) = v * v / basis.eigenvalues[i - 1];
+         }
+      }
+
+      quadrature.SetSize(Power(nq, dim));
+      for (int q = 0; q < quadrature.GetNPoints(); ++q)
+      {
+         int a[3] = {0, 0, 0}; Coordinates(q, nq, dim, a);
+         auto &ip = quadrature.IntPoint(q);
+         ip.Init(q);
+         ip.Set3(ir.IntPoint(a[0]).x, ir.IntPoint(a[1]).x,
+                 dim == 3 ? ir.IntPoint(a[2]).x : 0.);
+         ip.weight = 1.;
+         for (int d = 0; d < dim; ++d) { ip.weight *= ir.IntPoint(a[d]).weight; }
+      }
+      std::vector<std::vector<int>> rows(nd);
+      for (int axis = 0; axis < dim; ++axis)
+      {
+         auto &stencil = stencils[axis];
+         stencil.offsets.push_back(0);
+         for (int r = 0; r < p * Power(n, dim - 1); ++r)
+         {
+            int t = r;
+            std::vector<std::pair<int, real_t>> entries(1, {0, 1.});
+            int stride = 1;
+            for (int d = 0; d < dim; ++d)
+            {
+               const int count = d == axis ? p : n, row = t % count; t /= count;
+               const DenseMatrix &factor = d == axis ? basis.derivative : basis.G;
+               std::vector<std::pair<int, real_t>> next;
+               for (int col = 0; col < n; ++col) if (factor(row, col) != 0.)
+                     for (const auto &entry : entries)
+                     { next.emplace_back(entry.first + stride * col, entry.second * factor(row, col)); }
+               entries.swap(next); stride *= n;
+            }
+
+            for (const auto &a : entries) for (const auto &b : entries)
+               {
+                  rows[a.first].push_back(b.first);
+                  stencil.entries.push_back({a.first, b.first, -1, a.second * b.second});
+               }
+            stencil.offsets.push_back(int(stencil.entries.size()));
+         }
+      }
+      pattern = SparsePattern(std::move(rows));
+      for (int axis = 0; axis < dim; ++axis)
+         for (auto &entry : stencils[axis].entries)
+         { entry.slot = pattern.Slot(entry.row, entry.column); }
+      condensation = CondensationPlan(pattern, n, dim);
+   }
+};
+
+const Basis::AssemblyData &Basis::GetAssemblyData(int dimension) const
+{
+   MFEM_VERIFY(dimension == 2 ||
+               dimension == 3, "Expected quadrilaterals/hexahedra");
+   auto &data = assembly[dimension - 2];
+   if (!data) { data = std::make_shared<AssemblyData>(*this, dimension); }
+   return *data;
+}
+
 std::unique_ptr<SparseMatrix> AssembleElement(
    const Basis &basis, ElementTransformation &trans, Coefficient &coefficient)
 {
-   const int p = basis.p, n = p + 1, dim = trans.GetDimension(), nd = Power(n,
-                                                                            dim);
-   IntegrationRules rules(0, Quadrature1D::GaussLobatto);
-   const IntegrationRule &ir = rules.Get(Geometry::SEGMENT, 3 * p);
-   const int nq = ir.GetNPoints();
-   H1_SegmentElement fe(p);
-   const auto &map = fe.GetDofMap();
-   DenseMatrix gi(n), broken_coeff(n), values(n, nq), deriv(p, nq);
-   DenseMatrixInverse inverse_g(basis.G); inverse_g.GetInverseMatrix(gi);
-   Mult(basis.S, gi, broken_coeff);
-   Vector shape(n); DenseMatrix dshape(n, 1);
-   for (int q = 0; q < nq; ++q)
+   const int dim = trans.GetDimension();
+   const auto &data = basis.GetAssemblyData(dim);
+   std::array<Vector, 3> metric;
+   for (int d = 0; d < dim; ++d) { metric[d].SetSize(data.quadrature.GetNPoints()); }
+   for (int q = 0; q < data.quadrature.GetNPoints(); ++q)
    {
-      fe.CalcShape(ir.IntPoint(q), shape); fe.CalcDShape(ir.IntPoint(q), dshape);
-      for (int i = 0; i < n; ++i)
-      {
-         real_t v = 0;
-         for (int j = 0; j < n; ++j) { v += shape[map[j]] * broken_coeff(j, i); }
-         values(i, q) = v * v;
-      }
-      deriv(0, q) = 1.;
-      for (int i = 1; i < p; ++i)
-      {
-         real_t v = 0;
-         for (int j = 0; j < n; ++j) { v += dshape(map[j], 0) * basis.S(j, i); }
-         deriv(i, q) = v * v / basis.eigenvalues[i - 1];
-      }
-   }
-   std::vector<Vector> metric(dim, Vector(Power(nq, dim)));
-   for (int q = 0; q < metric[0].Size(); ++q)
-   {
-      int a[3] = {0, 0, 0}; Coordinates(q, nq, dim, a);
-      IntegrationPoint ip; ip.Set3(ir.IntPoint(a[0]).x, ir.IntPoint(a[1]).x,
-                                   dim == 3 ? ir.IntPoint(a[2]).x : 0.);
-      real_t weight = 1.;
-      for (int d = 0; d < dim; ++d) { weight *= ir.IntPoint(a[d]).weight; }
+      const auto &ip = data.quadrature.IntPoint(q);
       trans.SetIntPoint(&ip);
       const real_t alpha = coefficient.Eval(trans, ip);
       MFEM_VERIFY(alpha > 0. && std::isfinite(alpha) && trans.Jacobian().Det() > 0.,
@@ -315,42 +536,36 @@ std::unique_ptr<SparseMatrix> AssembleElement(
       {
          real_t norm = 0.;
          for (int j = 0; j < dim; ++j) { norm += inv(d, j) * inv(d, j); }
-         metric[d][q] = weight * trans.Weight() * alpha * norm;
+         metric[d][q] = ip.weight * trans.Weight() * alpha * norm;
       }
    }
-   Rows rows(nd);
+   auto matrix = data.pattern.NewMatrix();
+   real_t *av = matrix->GetData();
    Vector diagonal, u, v;
    for (int axis = 0; axis < dim; ++axis)
    {
-      std::vector<const DenseMatrix*> b(dim, &values); b[axis] = &deriv;
-      Tensor(metric[axis], diagonal, b, false, u, v);
+      std::array<const DenseMatrix*, 3> b = {{&data.values, &data.values, &data.values}};
+      b[axis] = &data.deriv;
+      Tensor(metric[axis], diagonal, b, dim, false, u, v);
+      const auto &stencil = data.stencils[axis];
       for (int r = 0; r < diagonal.Size(); ++r)
       {
-         int t = r;
-         std::vector<std::pair<int, real_t>> entries(1, {0, 1.});
-         int stride = 1;
-         for (int d = 0; d < dim; ++d)
-         {
-            const int count = d == axis ? p : n, row = t % count; t /= count;
-            const DenseMatrix &factor = d == axis ? basis.derivative : basis.G;
-            std::vector<std::pair<int, real_t>> next;
-            for (int col = 0; col < n; ++col) if (factor(row, col) != 0.)
-                  for (const auto &entry : entries)
-                  { next.emplace_back(entry.first + stride * col, entry.second * factor(row, col)); }
-            entries.swap(next); stride *= n;
-         }
          MFEM_VERIFY(diagonal[r] > 0., "Nonpositive auxiliary mass diagonal");
-         for (const auto &a : entries) for (const auto &bentry : entries)
-            { rows[a.first][bentry.first] += diagonal[r] * a.second * bentry.second; }
+         for (int k = stencil.offsets[r]; k < stencil.offsets[r + 1]; ++k)
+         {
+            const auto &entry = stencil.entries[k];
+            av[entry.slot] += diagonal[r] * entry.weight;
+         }
       }
    }
-   return CSR(rows);
+   return matrix;
 }
 
 namespace
 {
 using Global = HYPRE_BigInt;
-struct Message : VarMessage<17>
+constexpr int patch_message_tag = 17;
+struct Message : VarMessage<patch_message_tag>
 {
    void Encode(int) override { }
    void Decode(int) override { }
@@ -368,7 +583,17 @@ Messages Exchange(Messages &send, MPI_Comm comm)
    Messages recv;
    for (auto &entry : send) { recv[entry.first]; }
    Message::IsendAll(send, comm);
-   Message::RecvAll(recv, comm);
+   // Receive exactly once from each neighbor. RecvAll probes MPI_ANY_SOURCE
+   // and can consume a fast neighbor's next exchange before a slow neighbor's
+   // current exchange, since the setup phases reuse the same tag.
+   for (auto &entry : recv)
+   {
+      MPI_Status status;
+      MPI_Probe(entry.first, patch_message_tag, comm, &status);
+      int size;
+      MPI_Get_count(&status, MPI_BYTE, &size);
+      entry.second.Recv(entry.first, size, comm);
+   }
    Message::WaitAllSent(send);
    // Keep the neighbor keys for the next exchange, but release sent storage.
    for (auto &entry : send) { std::string().swap(entry.second.data); }
@@ -379,39 +604,6 @@ struct ElementData
    std::unique_ptr<SparseMatrix> matrix;
    std::vector<int> lex, dofs, signs;
 };
-
-std::unique_ptr<SparseMatrix> Condense(const SparseMatrix &a, int n, int dim,
-                                       std::vector<int> &boundary)
-{
-   const int nd = a.Height();
-   std::vector<int> index(nd, -1);
-   for (int i = 0; i < nd; ++i) if (!Interior(i, n, dim))
-      { index[i] = int(boundary.size()); boundary.push_back(i); }
-   Rows rows(boundary.size());
-   const int *ai = a.GetI(), *aj = a.GetJ(); const real_t *av = a.GetData();
-   for (int i = 0; i < nd; ++i)
-   {
-      if (index[i] >= 0)
-      {
-         for (int k = ai[i]; k < ai[i + 1]; ++k) if (index[aj[k]] >= 0)
-            { rows[index[i]][index[aj[k]]] += av[k]; }
-      }
-      else
-      {
-         real_t diagonal = 0.;
-         for (int k = ai[i]; k < ai[i + 1]; ++k)
-         {
-            if (aj[k] == i) { diagonal = av[k]; }
-            else { MFEM_VERIFY(index[aj[k]] >= 0 || av[k] == 0., "Interior block is not diagonal"); }
-         }
-         MFEM_VERIFY(diagonal > 0., "Nonpositive interior diagonal");
-         for (int k = ai[i]; k < ai[i + 1]; ++k) if (index[aj[k]] >= 0)
-               for (int l = ai[i]; l < ai[i + 1]; ++l) if (index[aj[l]] >= 0)
-                  { rows[index[aj[k]]][index[aj[l]]] -= av[k] * av[l] / diagonal; }
-      }
-   }
-   return CSR(rows);
-}
 
 // Injection of trace coefficients into the full modal space; the transpose
 // extracts the trace residual. Reuse MFEM's ownership/reduction operators.
@@ -531,11 +723,20 @@ class PatchSolver : public Solver
    int rank;
    Global offset;
    std::vector<Patch> patches;
+   std::vector<int> local_patches, remote_patches;
    std::map<int, Peer> peers;
    std::vector<int> local_indices;
    mutable Vector extended, correction;
    mutable std::vector<MPI_Request> requests;
    real_t damping = 1.;
+   void ApplyPatch(const Patch &patch) const
+   {
+      for (int i = 0; i < int(patch.indices.size()); ++i)
+      { patch.rhs[i] = extended[patch.indices[i]]; }
+      patch.factor->Mult(patch.rhs, patch.solution);
+      for (int i = 0; i < int(patch.indices.size()); ++i)
+      { correction[patch.indices[i]] += patch.solution[i]; }
+   }
 public:
    long long factor_nonzeros = 0, patch_unknowns = 0, communication_values = 0;
    long long NumPatches() const { return patches.size(); }
@@ -668,15 +869,23 @@ public:
          auto &a = it->second;
          auto matrix = CSR(a.rows);
          // Keep precisely the fill induced by eliminating cell interiors.
-         Rows pattern = a.rows;
-         for (int i = 0; i < int(a.rows.size()); ++i) if (a.interior[i])
-               for (const auto &j : a.rows[i]) if (!a.interior[j.first])
-                     for (const auto &k : a.rows[i]) if (!a.interior[k.first])
-                        { pattern[j.first].emplace(k.first, 0.); }
-         auto graph = CSR(pattern);
-         Array<int> ordering = PatchOrdering(pattern, a.interior);
+         // Condensed patches already have this graph; do not copy it again.
+         Rows filled_pattern;
+         std::unique_ptr<SparseMatrix> graph;
+         if (!options.static_condensation)
+         {
+            filled_pattern = a.rows;
+            for (int i = 0; i < int(a.rows.size()); ++i) if (a.interior[i])
+                  for (const auto &j : a.rows[i]) if (!a.interior[j.first])
+                        for (const auto &k : a.rows[i]) if (!a.interior[k.first])
+                           { filled_pattern[j.first].emplace(k.first, 0.); }
+            graph = CSR(filled_pattern);
+         }
+         Array<int> ordering = PatchOrdering(
+                                  options.static_condensation ? a.rows : filled_pattern, a.interior);
          Patch patch; patch.factor.reset(new IncompleteCholeskySolver);
-         const int failed = patch.factor->Factor(*matrix, *graph, ordering,
+         const int failed = patch.factor->Factor(*matrix, graph ? *graph : *matrix,
+                                                 ordering,
                                                  options.diagonal_shift);
          MFEM_VERIFY(failed < 0, "ICC nonpositive pivot " << failed <<
                      " in vertex patch "
@@ -687,6 +896,9 @@ public:
          patch.solution.SetSize(int(a.global.size()));
          factor_nonzeros += patch.factor->NumNonZeroElems();
          patch_unknowns += a.global.size();
+         bool local = true;
+         for (int i : patch.indices) { if (local_indices[i] < 0) { local = false; break; } }
+         (local ? local_patches : remote_patches).push_back(int(patches.size()));
          patches.push_back(std::move(patch));
          // The factor and DOF indices now own everything needed by this patch.
          it = assembled.erase(it);
@@ -710,19 +922,16 @@ public:
       }
       for (int i = 0; i < extended.Size(); ++i)
       { if (local_indices[i] >= 0) { extended[i] = x[local_indices[i]]; } }
+      correction = 0.;
+      // These patches need no incoming values and can run during the gather.
+      for (int i : local_patches) { ApplyPatch(patches[i]); }
       MPI_Waitall(k, requests.data(), MPI_STATUSES_IGNORE);
       for (const auto &entry : peers)
       {
          const auto &peer = entry.second;
          for (int i = 0; i < int(peer.requested.size()); ++i) { extended[peer.requested[i]] = peer.receive[i]; }
       }
-      correction = 0.;
-      for (const auto &patch : patches)
-      {
-         for (int i = 0; i < int(patch.indices.size()); ++i) { patch.rhs[i] = extended[patch.indices[i]]; }
-         patch.factor->Mult(patch.rhs, patch.solution);
-         for (int i = 0; i < int(patch.indices.size()); ++i) { correction[patch.indices[i]] += patch.solution[i]; }
-      }
+      for (int i : remote_patches) { ApplyPatch(patches[i]); }
       k = 0;
       for (auto &entry : peers)
       {
@@ -788,7 +997,17 @@ std::unique_ptr<SparseMatrix> CondenseElement(
                matrix.Height() == Power(degree + 1, dimension) &&
                matrix.Width() == matrix.Height(), "Invalid FDM element dimensions");
    boundary.clear();
-   return Condense(matrix, degree + 1, dimension, boundary);
+   const auto &cached = Basis::Get(degree)->GetAssemblyData(
+                           dimension).condensation;
+   if (cached.source.Matches(matrix))
+   {
+      boundary = cached.boundary;
+      return cached.Apply(matrix);
+   }
+   // The public API also accepts matrices with a different sparse graph.
+   const CondensationPlan plan(SparsePattern(matrix), degree + 1, dimension);
+   boundary = plan.boundary;
+   return plan.Apply(matrix);
 }
 
 struct Preconditioner::Impl
