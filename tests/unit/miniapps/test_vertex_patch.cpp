@@ -275,4 +275,37 @@ TEST_CASE("Condensed single-element Dirichlet problem",
    prec.Mult(rhs, y); y -= x;
    REQUIRE(y.Norml2() < 1.e-10);
 }
+
+TEST_CASE("FDM condensation preserves structural zeros",
+          "[VertexPatch][Parallel]")
+{
+   for (int dim : {2, 3})
+   {
+      CAPTURE(dim);
+      const int nd = dim == 2 ? 9 : 27, interior = dim == 2 ? 4 : 13;
+      SparseMatrix matrix(nd);
+      for (int i = 0; i < nd; ++i) { matrix.Add(i, i, 4.); }
+      matrix.Add(0, interior, 1.); matrix.Add(interior, 0, 1.);
+      matrix.Add(1, interior, 2.); matrix.Add(interior, 1, 2.);
+      matrix.Add(0, 1, 0.5); matrix.Add(1, 0, 0.5);
+      matrix.Finalize(0);
+      std::vector<int> boundary;
+      const auto schur = CondenseElement(matrix, 2, dim, boundary);
+      const SparseMatrix &s = *schur;
+      // Elimination cancels both off-diagonal values exactly, but their
+      // entries must remain in the graph used for prescribed-pattern ICC.
+      REQUIRE(s.NumNonZeroElems() == int(boundary.size()) + 2);
+      REQUIRE(s(0, 0) == 3.75);
+      REQUIRE(s(1, 1) == 3.);
+      Array<int> columns; Vector values;
+      for (int row : {0, 1})
+      {
+         s.GetRow(row, columns, values);
+         REQUIRE(columns.Size() == 2);
+         REQUIRE(columns[0] == 0);
+         REQUIRE(columns[1] == 1);
+         REQUIRE(values[1 - row] == 0.);
+      }
+   }
+}
 #endif

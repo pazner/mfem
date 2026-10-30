@@ -17,7 +17,6 @@
 #include <cstring>
 #include <map>
 #include <set>
-#include <unordered_map>
 #include <metis.h>
 
 namespace mfem
@@ -69,24 +68,6 @@ void Tensor(const Vector &x, Vector &y,
       sizes[axis] = no;
    }
    y = u;
-}
-using Rows = std::vector<std::unordered_map<int, real_t>>;
-std::unique_ptr<SparseMatrix> CSR(const Rows &rows, int width = -1)
-{
-   const int n = int(rows.size());
-   int *i = new int[n + 1]; i[0] = 0;
-   for (int r = 0; r < n; ++r) { i[r + 1] = i[r] + int(rows[r].size()); }
-   int *j = new int[i[n]];
-   real_t *a = new real_t[i[n]];
-   for (int r = 0; r < n; ++r)
-   {
-      std::vector<std::pair<int, real_t>> entries(rows[r].begin(), rows[r].end());
-      std::sort(entries.begin(), entries.end());
-      int k = i[r];
-      for (const auto &entry : entries) { j[k] = entry.first; a[k++] = entry.second; }
-   }
-   return std::unique_ptr<SparseMatrix>(new SparseMatrix(i, j, a, n,
-                                                         width < 0 ? n : width));
 }
 }
 
@@ -320,7 +301,7 @@ std::unique_ptr<SparseMatrix> AssembleElement(
          metric[d][q] = weight * trans.Weight() * alpha * norm;
       }
    }
-   Rows rows(nd);
+   auto matrix = std::make_unique<SparseMatrix>(nd);
    Vector diagonal, u, v;
    for (int axis = 0; axis < dim; ++axis)
    {
@@ -343,10 +324,12 @@ std::unique_ptr<SparseMatrix> AssembleElement(
          }
          MFEM_VERIFY(diagonal[r] > 0., "Nonpositive auxiliary mass diagonal");
          for (const auto &a : entries) for (const auto &bentry : entries)
-            { rows[a.first][bentry.first] += diagonal[r] * a.second * bentry.second; }
+            { matrix->Add(a.first, bentry.first, diagonal[r] * a.second * bentry.second); }
       }
    }
-   return CSR(rows);
+   // Keep structural zeros for the prescribed ICC sparsity pattern.
+   matrix->Finalize(0); matrix->SortColumnIndices();
+   return matrix;
 }
 
 namespace
@@ -400,14 +383,14 @@ std::unique_ptr<SparseMatrix> Condense(const SparseMatrix &a, int n, int dim,
    std::vector<int> index(nd, -1);
    for (int i = 0; i < nd; ++i) if (!Interior(i, n, dim))
       { index[i] = int(boundary.size()); boundary.push_back(i); }
-   Rows rows(boundary.size());
+   auto matrix = std::make_unique<SparseMatrix>(int(boundary.size()));
    const int *ai = a.GetI(), *aj = a.GetJ(); const real_t *av = a.GetData();
    for (int i = 0; i < nd; ++i)
    {
       if (index[i] >= 0)
       {
          for (int k = ai[i]; k < ai[i + 1]; ++k) if (index[aj[k]] >= 0)
-            { rows[index[i]][index[aj[k]]] += av[k]; }
+            { matrix->Add(index[i], index[aj[k]], av[k]); }
       }
       else
       {
@@ -420,10 +403,12 @@ std::unique_ptr<SparseMatrix> Condense(const SparseMatrix &a, int n, int dim,
          MFEM_VERIFY(diagonal > 0., "Nonpositive interior diagonal");
          for (int k = ai[i]; k < ai[i + 1]; ++k) if (index[aj[k]] >= 0)
                for (int l = ai[i]; l < ai[i + 1]; ++l) if (index[aj[l]] >= 0)
-                  { rows[index[aj[k]]][index[aj[l]]] -= av[k] * av[l] / diagonal; }
+                  { matrix->Add(index[aj[k]], index[aj[l]], -av[k] * av[l] / diagonal); }
       }
    }
-   return CSR(rows);
+   // Keep structural zeros for the prescribed ICC sparsity pattern.
+   matrix->Finalize(0); matrix->SortColumnIndices();
+   return matrix;
 }
 
 // Injection of trace coefficients into the full modal space; the transpose
@@ -458,17 +443,17 @@ struct PatchAssembly
    std::map<Global, int> index;
    std::vector<Global> global;
    std::vector<bool> interior;
-   Rows rows;
+   std::unique_ptr<SparseMatrix> matrix;
    int Insert(Global g, bool cell)
    {
       const auto it = index.find(g);
       if (it != index.end()) { return it->second; }
       const int i = int(global.size()); index[g] = i;
-      global.push_back(g); interior.push_back(cell); rows.emplace_back(); return i;
+      global.push_back(g); interior.push_back(cell); return i;
    }
 };
 void ReceivePatches(const std::string &s,
-                    std::map<Global, PatchAssembly> &patches)
+                    std::map<Global, PatchAssembly> &patches, bool assemble)
 {
    size_t pos = 0;
    while (pos < s.size())
@@ -480,22 +465,31 @@ void ReceivePatches(const std::string &s,
       for (int i = 0; i < n; ++i)
       {
          Global g = Unpack<Global>(s, pos); int interior = Unpack<int>(s, pos);
-         local[i] = patch.Insert(g, interior != 0);
+         local[i] = assemble ? patch.index.at(g) : patch.Insert(g, interior != 0);
       }
       const int nz = Unpack<int>(s, pos);
+      if (!assemble)
+      {
+         const size_t record_size = 2 * sizeof(int) + sizeof(real_t);
+         MFEM_VERIFY(nz >= 0 && size_t(nz) <= (s.size() - pos) / record_size,
+                     "Invalid patch matrix message");
+         pos += size_t(nz) * record_size;
+         continue;
+      }
       for (int k = 0; k < nz; ++k)
       {
          const int i = Unpack<int>(s, pos), j = Unpack<int>(s, pos);
          const real_t value = Unpack<real_t>(s, pos);
-         patch.rows[local[i]][local[j]] += value;
+         patch.matrix->Add(local[i], local[j], value);
       }
    }
 }
-Array<int> PatchOrdering(const Rows &pattern, const std::vector<bool> &interior)
+Array<int> PatchOrdering(const SparseMatrix &pattern,
+                         const std::vector<bool> &interior)
 {
-   std::vector<int> interface, inverse(pattern.size(), -1);
-   Array<int> permutation(int(pattern.size())); int first = 0;
-   for (int i = 0; i < int(pattern.size()); ++i)
+   std::vector<int> interface, inverse(pattern.Height(), -1);
+   Array<int> permutation(pattern.Height()); int first = 0;
+   for (int i = 0; i < pattern.Height(); ++i)
    {
       if (interior[i]) { permutation[first++] = i; }
       else { inverse[i] = int(interface.size()); interface.push_back(i); }
@@ -507,8 +501,9 @@ Array<int> PatchOrdering(const Rows &pattern, const std::vector<bool> &interior)
       for (int i = 0; i < n; ++i)
       {
          std::vector<idx_t> row;
-         for (const auto &entry : pattern[interface[i]])
-         { if (inverse[entry.first] >= 0 && entry.first != interface[i]) { row.push_back(inverse[entry.first]); } }
+         const int *cols = pattern.GetRowColumns(interface[i]);
+         for (int k = 0; k < pattern.RowSize(interface[i]); ++k)
+         { if (inverse[cols[k]] >= 0 && cols[k] != interface[i]) { row.push_back(inverse[cols[k]]); } }
          std::sort(row.begin(), row.end());
          columns.insert(columns.end(), row.begin(), row.end());
          offsets[i + 1] = idx_t(columns.size());
@@ -628,11 +623,17 @@ public:
       }
       auto received = Exchange(send, comm);
       std::map<Global, PatchAssembly> assembled;
-      ReceivePatches(local_records, assembled);
+      // Establish complete patch DOF numbering before allocating the matrices.
+      ReceivePatches(local_records, assembled, false);
+      for (const auto &entry : received)
+      { ReceivePatches(entry.second.data, assembled, false); }
+      for (auto &entry : assembled)
+      { entry.second.matrix = std::make_unique<SparseMatrix>(int(entry.second.global.size())); }
+      ReceivePatches(local_records, assembled, true);
       std::string().swap(local_records);
       for (auto &entry : received)
       {
-         ReceivePatches(entry.second.data, assembled);
+         ReceivePatches(entry.second.data, assembled, true);
          std::string().swap(entry.second.data);
       }
       received.clear();
@@ -679,17 +680,23 @@ public:
       for (auto it = assembled.begin(); it != assembled.end(); )
       {
          auto &a = it->second;
-         auto matrix = CSR(a.rows);
+         auto matrix = std::move(a.matrix);
+         // Copy the open matrix so the ICC graph can still accept fill entries.
+         SparseMatrix graph(*matrix);
+         matrix->Finalize(0); matrix->SortColumnIndices();
          // Keep precisely the fill induced by eliminating cell interiors.
-         Rows pattern = a.rows;
-         for (int i = 0; i < int(a.rows.size()); ++i) if (a.interior[i])
-               for (const auto &j : a.rows[i]) if (!a.interior[j.first])
-                     for (const auto &k : a.rows[i]) if (!a.interior[k.first])
-                        { pattern[j.first].emplace(k.first, 0.); }
-         auto graph = CSR(pattern);
-         Array<int> ordering = PatchOrdering(pattern, a.interior);
+         for (int i = 0; i < matrix->Height(); ++i) if (a.interior[i])
+            {
+               const int *cols = matrix->GetRowColumns(i);
+               const int size = matrix->RowSize(i);
+               for (int j = 0; j < size; ++j) if (!a.interior[cols[j]])
+                     for (int k = 0; k < size; ++k) if (!a.interior[cols[k]])
+                        { graph.Add(cols[j], cols[k], 0.); }
+            }
+         graph.Finalize(0); graph.SortColumnIndices();
+         Array<int> ordering = PatchOrdering(graph, a.interior);
          Patch patch; patch.factor.reset(new IncompleteCholeskySolver);
-         const int failed = patch.factor->Factor(*matrix, *graph, ordering,
+         const int failed = patch.factor->Factor(*matrix, graph, ordering,
                                                  options.diagonal_shift);
          MFEM_VERIFY(failed < 0, "ICC nonpositive pivot " << failed <<
                      " in vertex patch "
@@ -885,8 +892,10 @@ struct Preconditioner::Impl
          active = trace_space.get();
       }
       active->GetEssentialTrueDofs(ess_bdr, active_essential);
-      Rows assembled(active->GetVSize());
-      Rows cross(options.static_condensation ? active->GetVSize() : 0);
+      auto local_matrix = std::make_unique<SparseMatrix>(active->GetVSize());
+      std::unique_ptr<SparseMatrix> local_cross;
+      if (options.static_condensation)
+      { local_cross = std::make_unique<SparseMatrix>(active->GetVSize(), fes.GetVSize()); }
       Vector local_inverse(fes.GetVSize()); local_inverse = 0.;
       std::vector<ElementData> elements(mesh.GetNE());
       for (int e = 0; e < mesh.GetNE(); ++e)
@@ -909,7 +918,7 @@ struct Preconditioner::Impl
                      else if (!Interior(j, n, dim))
                      {
                         const int row = full_to_trace[basis->ModalMap()[e * nd + j]];
-                        cross[row][col] += av[k] * sign * basis->Signs()[e * nd + j];
+                        local_cross->Add(row, col, av[k] * sign * basis->Signs()[e * nd + j]);
                      }
                   }
                }
@@ -931,10 +940,9 @@ struct Preconditioner::Impl
          const real_t *av = el.matrix->GetData();
          for (int i = 0; i < int(el.lex.size()); ++i)
             for (int k = ai[i]; k < ai[i + 1]; ++k)
-            { assembled[el.dofs[i]][el.dofs[aj[k]]] += av[k] * el.signs[i] * el.signs[aj[k]]; }
+            { local_matrix->Add(el.dofs[i], el.dofs[aj[k]], av[k] * el.signs[i] * el.signs[aj[k]]); }
       }
-      auto local_matrix = CSR(assembled);
-      Rows().swap(assembled);
+      local_matrix->Finalize(0); local_matrix->SortColumnIndices();
       ParBilinearForm form(active);
       auxiliary.reset(form.ParallelAssemble(local_matrix.get()));
       local_matrix.reset();
@@ -942,10 +950,10 @@ struct Preconditioner::Impl
       auxiliary_nonzeros = auxiliary->NNZ();
       if (options.static_condensation)
       {
-         auto local_cross = CSR(cross, fes.GetVSize());
-         Rows().swap(cross);
+         local_cross->Finalize(0); local_cross->SortColumnIndices();
          ParMixedBilinearForm mixed(&fes, active);
          coupling.reset(mixed.ParallelAssemble(local_cross.get()));
+         local_cross.reset();
          inverse_interior.SetSize(fes.GetTrueVSize());
          fes.GetRestrictionMatrix()->Mult(local_inverse, inverse_interior);
       }
