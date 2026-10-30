@@ -47,7 +47,7 @@ class BasisChange : public Operator
    ParFiniteElementSpace &fes;
    std::shared_ptr<const Basis> basis;
    int dim, nd;
-   Array<int> nodal, modal, signs, nodal_mask, modal_mask;
+   Array<int> nodal, modal, signs, mask;
    mutable Vector local_in, local_out, element, result, scratch1, scratch2;
    void Apply(const Vector &, Vector &, bool inverse, bool transpose) const;
 public:
@@ -80,8 +80,33 @@ std::unique_ptr<SparseMatrix> CondenseElement(
     Mult is a fixed symmetric linear action on standard H1 true DOFs. */
 class Preconditioner : public Solver
 {
-   struct Impl;
-   std::unique_ptr<Impl> impl;
+   class PatchSolver;
+   class CoarseTransfer;
+   ParFiniteElementSpace &fes;
+   MPI_Comm comm;
+   Options options;
+   Array<int> essential, active_essential;
+   std::unique_ptr<BasisChange> basis;
+   std::unique_ptr<H1_FECollection> coarse_collection;
+   std::unique_ptr<FiniteElementCollection> trace_collection;
+   std::unique_ptr<ParFiniteElementSpace> coarse_space, trace_space;
+   std::unique_ptr<ParBilinearForm> coarse_form;
+   std::unique_ptr<HypreParMatrix> coarse_matrix, auxiliary, coupling;
+   std::unique_ptr<HypreBoomerAMG> coarse_solver;
+   std::unique_ptr<SparseMatrix> trace;
+   std::unique_ptr<PRefinementTransferOperator> interpolation;
+   std::unique_ptr<CoarseTransfer> transfer;
+   std::unique_ptr<PatchSolver> patches;
+   std::unique_ptr<Multigrid> multigrid;
+   Vector inverse_interior;
+   mutable Vector rhs, interior, reduced, trace_solution, solution, temp;
+   long long auxiliary_nonzeros = 0;
+   int degree;
+
+   void BuildCoarse(Coefficient &coefficient, const Array<int> &ess_bdr,
+                    Array<int> &coarse_essential);
+   void BuildAuxiliary(Coefficient &coefficient, const Array<int> &ess_bdr);
+   void BuildMultigrid(const Array<int> &coarse_essential);
 public:
    Preconditioner(ParFiniteElementSpace &space, Coefficient &coefficient,
                   const Array<int> &essential_boundary, const Options &options = {});

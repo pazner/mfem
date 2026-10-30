@@ -12,11 +12,9 @@
 #include "vertex_patch_solver.hpp"
 #if defined(MFEM_USE_MPI) && defined(MFEM_USE_LAPACK) && defined(MFEM_USE_METIS) && defined(MFEM_USE_METIS_5)
 #include <algorithm>
-#include <array>
 #include <cmath>
 #include <cstring>
 #include <map>
-#include <set>
 #include <metis.h>
 
 namespace mfem
@@ -56,14 +54,12 @@ void Tensor(const Vector &x, Vector &y,
       const int ni = sizes[axis], no = transpose ? m.Width() : m.Height();
       v.SetSize(before * no * after);
       for (int k = 0; k < after; ++k)
-         for (int j = 0; j < no; ++j)
-            for (int i = 0; i < before; ++i)
-            {
-               real_t value = 0;
-               for (int l = 0; l < ni; ++l)
-               { value += (transpose ? m(l, j) : m(j, l)) * u[i + before * (l + ni * k)]; }
-               v[i + before * (j + no * k)] = value;
-            }
+      {
+         DenseMatrix input(u.GetData() + before * ni * k, before, ni);
+         DenseMatrix output(v.GetData() + before * no * k, before, no);
+         if (transpose) { Mult(input, m, output); }
+         else { MultABt(input, m, output); }
+      }
       u.Swap(v);
       sizes[axis] = no;
    }
@@ -79,19 +75,13 @@ Basis::Basis(int degree) : p(degree), S(p + 1), inverse(p + 1), G(p + 1),
    // Work in lexicographic GLL order on MFEM's interval [0,1].
    const auto &map = fe.GetDofMap();
    const IntegrationRule &ir = IntRules.Get(Geometry::SEGMENT, 2 * p + 2);
-   DenseMatrix mass(p + 1), stiffness(p + 1), ds(p + 1, 1);
-   Vector shape(p + 1);
-   mass = 0.; stiffness = 0.;
-   for (int q = 0; q < ir.GetNPoints(); ++q)
-   {
-      const auto &ip = ir.IntPoint(q);
-      fe.CalcShape(ip, shape); fe.CalcDShape(ip, ds);
-      for (int i = 0; i <= p; ++i) for (int j = 0; j <= p; ++j)
-         {
-            mass(i, j) += ip.weight * shape[map[i]] * shape[map[j]];
-            stiffness(i, j) += ip.weight * ds(map[i], 0) * ds(map[j], 0);
-         }
-   }
+   IsoparametricTransformation identity;
+   identity.SetIdentityTransformation(Geometry::SEGMENT);
+   DenseMatrix nodal_mass, nodal_stiffness, mass, stiffness;
+   MassIntegrator(&ir).AssembleElementMatrix(fe, identity, nodal_mass);
+   DiffusionIntegrator(&ir).AssembleElementMatrix(fe, identity, nodal_stiffness);
+   nodal_mass.GetSubMatrix(map, mass);
+   nodal_stiffness.GetSubMatrix(map, stiffness);
    S = 0.; S(0, 0) = S(p, p) = 1.; parity = 1;
    if (p > 1)
    {
@@ -172,8 +162,8 @@ BasisChange::BasisChange(ParFiniteElementSpace &space,
    MFEM_VERIFY(restriction, "Expected conforming H1 element restriction");
    nodal = restriction->GatherMap();
    modal.SetSize(ne * nd); signs.SetSize(ne * nd);
-   nodal_mask.SetSize(ne * nd); modal_mask.SetSize(ne * nd);
-   Array<int> nseen(fes.GetVSize()), mseen(fes.GetVSize()); nseen = 0; mseen = 0;
+   mask.SetSize(ne * nd);
+   Array<int> seen(fes.GetVSize()); seen = 0;
    Array<HYPRE_BigInt> vertices;
    fes.GetParMesh()->GetGlobalVertexIndices(vertices);
    Array<int> ev;
@@ -209,8 +199,8 @@ BasisChange::BasisChange(ParFiniteElementSpace &space,
          }
          const int k = e * nd + i;
          modal[k] = nodal[e * nd + Index(slot, n, dim)]; signs[k] = sign;
-         nodal_mask[k] = !nseen[nodal[k]]; nseen[nodal[k]] = 1;
-         modal_mask[k] = !mseen[modal[k]]; mseen[modal[k]] = 1;
+         // Both orderings use the same first incident element of this entity.
+         mask[k] = !seen[nodal[k]]; seen[nodal[k]] = 1;
       }
    }
 }
@@ -220,7 +210,6 @@ void BasisChange::Apply(const Vector &x, Vector &y, bool invert,
 {
    const auto &in = invert ? nodal : modal;
    const auto &out = invert ? modal : nodal;
-   const auto &mask = invert ? modal_mask : nodal_mask;
    const DenseMatrix &s = invert ? basis->inverse : basis->S;
    std::vector<const DenseMatrix*> matrices(dim, &s);
    local_in.SetSize(fes.GetVSize()); local_out.SetSize(fes.GetVSize());
@@ -251,8 +240,7 @@ void BasisChange::Apply(const Vector &x, Vector &y, bool invert,
 std::unique_ptr<SparseMatrix> AssembleElement(
    const Basis &basis, ElementTransformation &trans, Coefficient &coefficient)
 {
-   const int p = basis.p, n = p + 1, dim = trans.GetDimension(), nd = Power(n,
-                                                                            dim);
+   const int p = basis.p, n = p + 1, dim = trans.GetDimension();
    IntegrationRules rules(0, Quadrature1D::GaussLobatto);
    const IntegrationRule &ir = rules.Get(Geometry::SEGMENT, 3 * p);
    const int nq = ir.GetNPoints();
@@ -279,16 +267,12 @@ std::unique_ptr<SparseMatrix> AssembleElement(
          deriv(i, q) = v * v / basis.eigenvalues[i - 1];
       }
    }
-   std::vector<Vector> metric(dim, Vector(Power(nq, dim)));
+   const IntegrationRule &volume_rule = rules.Get(
+                                           TensorBasisElement::GetTensorProductGeometry(dim), 3 * p);
+   std::vector<Vector> metric(dim, Vector(volume_rule.GetNPoints()));
    for (int q = 0; q < metric[0].Size(); ++q)
    {
-      int a[3] = {0, 0, 0}; Coordinates(q, nq, dim, a);
-      IntegrationPoint ip; ip.Init(q);
-      ip.Set3(ir.IntPoint(a[0]).x, ir.IntPoint(a[1]).x,
-              dim == 3 ? ir.IntPoint(a[2]).x : 0.);
-      real_t weight = 1.;
-      for (int d = 0; d < dim; ++d) { weight *= ir.IntPoint(a[d]).weight; }
-      ip.weight = weight;
+      const IntegrationPoint &ip = volume_rule.IntPoint(q);
       trans.SetIntPoint(&ip);
       const real_t alpha = coefficient.Eval(trans, ip);
       MFEM_VERIFY(alpha > 0. && std::isfinite(alpha) && trans.Jacobian().Det() > 0.,
@@ -298,37 +282,36 @@ std::unique_ptr<SparseMatrix> AssembleElement(
       {
          real_t norm = 0.;
          for (int j = 0; j < dim; ++j) { norm += inv(d, j) * inv(d, j); }
-         metric[d][q] = weight * trans.Weight() * alpha * norm;
+         metric[d][q] = ip.weight * trans.Weight() * alpha * norm;
       }
    }
-   auto matrix = std::make_unique<SparseMatrix>(nd);
+   SparseMatrix mass_factor(n), derivative_factor(p, n);
+   for (int i = 0; i < n; ++i) for (int j = 0; j < n; ++j)
+      {
+         if (basis.G(i, j) != 0.) { mass_factor.Add(i, j, basis.G(i, j)); }
+         if (i < p && basis.derivative(i, j) != 0.)
+         { derivative_factor.Add(i, j, basis.derivative(i, j)); }
+      }
+   mass_factor.Finalize(); derivative_factor.Finalize();
+   std::unique_ptr<SparseMatrix> matrix;
    Vector diagonal, u, v;
    for (int axis = 0; axis < dim; ++axis)
    {
       std::vector<const DenseMatrix*> b(dim, &values); b[axis] = &deriv;
       Tensor(metric[axis], diagonal, b, false, u, v);
-      for (int r = 0; r < diagonal.Size(); ++r)
-      {
-         int t = r;
-         std::vector<std::pair<int, real_t>> entries(1, {0, 1.});
-         int stride = 1;
-         for (int d = 0; d < dim; ++d)
-         {
-            const int count = d == axis ? p : n, row = t % count; t /= count;
-            const DenseMatrix &factor = d == axis ? basis.derivative : basis.G;
-            std::vector<std::pair<int, real_t>> next;
-            for (int col = 0; col < n; ++col) if (factor(row, col) != 0.)
-                  for (const auto &entry : entries)
-                  { next.emplace_back(entry.first + stride * col, entry.second * factor(row, col)); }
-            entries.swap(next); stride *= n;
-         }
-         MFEM_VERIFY(diagonal[r] > 0., "Nonpositive auxiliary mass diagonal");
-         for (const auto &a : entries) for (const auto &bentry : entries)
-            { matrix->Add(a.first, bentry.first, diagonal[r] * a.second * bentry.second); }
-      }
+      for (int i = 0; i < diagonal.Size(); ++i)
+      { MFEM_VERIFY(diagonal[i] > 0., "Nonpositive auxiliary mass diagonal"); }
+      // B = G x ... x derivative x ... x G, first coordinate fastest.
+      auto tensor = std::make_unique<SparseMatrix>(
+                       axis == 0 ? derivative_factor : mass_factor);
+      for (int d = 1; d < dim; ++d)
+      { tensor.reset(OuterProduct(d == axis ? derivative_factor : mass_factor, *tensor)); }
+      std::unique_ptr<SparseMatrix> contribution(Mult_AtDA(*tensor, diagonal));
+      if (matrix) { matrix.reset(Add(*matrix, *contribution)); }
+      else { matrix = std::move(contribution); }
    }
-   // Keep structural zeros for the prescribed ICC sparsity pattern.
-   matrix->Finalize(0); matrix->SortColumnIndices();
+   // Sparse products and sums retain structural zeros for the ICC pattern.
+   matrix->SortColumnIndices();
    return matrix;
 }
 
@@ -411,32 +394,25 @@ std::unique_ptr<SparseMatrix> Condense(const SparseMatrix &a, int n, int dim,
    return matrix;
 }
 
-// Injection of trace coefficients into the full modal space; the transpose
-// extracts the trace residual. Reuse MFEM's ownership/reduction operators.
-class TraceInjection : public Operator
+// Conforming scalar H1 trace and volume DOFs have the same entity owner.
+// Build the injection directly between owned true DOFs, without communication.
+std::unique_ptr<SparseMatrix> BuildTraceInjection(
+   ParFiniteElementSpace &full, ParFiniteElementSpace &trace,
+   const Array<int> &full_to_trace)
 {
-   ParFiniteElementSpace &full, &trace;
-   Array<int> map;
-   mutable Vector f, t;
-public:
-   TraceInjection(ParFiniteElementSpace &fs, ParFiniteElementSpace &ts,
-                  const Array<int> &m)
-      : Operator(fs.GetTrueVSize(), ts.GetTrueVSize()), full(fs), trace(ts), map(m) { }
-   void Mult(const Vector &x, Vector &y) const override
+   auto injection = std::make_unique<SparseMatrix>(full.GetTrueVSize(),
+                                                   trace.GetTrueVSize());
+   for (int i = 0; i < full_to_trace.Size(); ++i)
    {
-      t.SetSize(trace.GetVSize()); f.SetSize(full.GetVSize());
-      trace.GetProlongationMatrix()->Mult(x, t); f = 0.;
-      for (int i = 0; i < map.Size(); ++i) if (map[i] >= 0) { f[i] = t[map[i]]; }
-      y.SetSize(height); full.GetRestrictionMatrix()->Mult(f, y);
+      if (full_to_trace[i] < 0) { continue; }
+      const int row = full.GetLocalTDofNumber(i);
+      const int col = trace.GetLocalTDofNumber(full_to_trace[i]);
+      MFEM_VERIFY((row >= 0) == (col >= 0), "Inconsistent trace DOF ownership");
+      if (row >= 0) { injection->Set(row, col, 1.); }
    }
-   void MultTranspose(const Vector &x, Vector &y) const override
-   {
-      t.SetSize(trace.GetVSize()); f.SetSize(full.GetVSize());
-      full.GetRestrictionMatrix()->MultTranspose(x, f); t = 0.;
-      for (int i = 0; i < map.Size(); ++i) if (map[i] >= 0) { t[map[i]] += f[i]; }
-      y.SetSize(width); trace.GetProlongationMatrix()->MultTranspose(t, y);
-   }
-};
+   injection->Finalize();
+   return injection;
+}
 
 struct PatchAssembly
 {
@@ -500,12 +476,12 @@ Array<int> PatchOrdering(const SparseMatrix &pattern,
       std::vector<idx_t> offsets(n + 1), columns;
       for (int i = 0; i < n; ++i)
       {
-         std::vector<idx_t> row;
          const int *cols = pattern.GetRowColumns(interface[i]);
          for (int k = 0; k < pattern.RowSize(interface[i]); ++k)
-         { if (inverse[cols[k]] >= 0 && cols[k] != interface[i]) { row.push_back(inverse[cols[k]]); } }
-         std::sort(row.begin(), row.end());
-         columns.insert(columns.end(), row.begin(), row.end());
+         {
+            if (inverse[cols[k]] >= 0 && cols[k] != interface[i])
+            { columns.push_back(inverse[cols[k]]); }
+         }
          offsets[i + 1] = idx_t(columns.size());
       }
       std::vector<idx_t> perm(n), iperm(n);
@@ -522,18 +498,20 @@ Array<int> PatchOrdering(const SparseMatrix &pattern,
    return permutation;
 }
 
-class PatchSolver : public Solver
+} // namespace
+
+class Preconditioner::PatchSolver : public Solver
 {
    struct Patch
    {
       std::unique_ptr<IncompleteCholeskySolver> factor;
-      std::vector<int> indices;
+      Array<int> indices;
       mutable Vector rhs, solution;
    };
    struct Peer
    {
-      std::vector<int> requested, supplied;
-      mutable std::vector<real_t> receive, send;
+      Array<int> requested, supplied;
+      mutable Vector receive, send;
    };
    MPI_Comm comm;
    int rank;
@@ -550,48 +528,24 @@ class PatchSolver : public Solver
       for (int k = begin; k < end; ++k)
       {
          const auto &patch = patches[k];
-         for (size_t i = 0; i < patch.indices.size(); ++i)
-         { patch.rhs[i] = extended[patch.indices[i]]; }
+         extended.GetSubVector(patch.indices, patch.rhs);
          patch.factor->Mult(patch.rhs, patch.solution);
-         for (size_t i = 0; i < patch.indices.size(); ++i)
-         { correction[patch.indices[i]] += patch.solution[i]; }
+         correction.AddElementVector(patch.indices, patch.solution);
       }
    }
-public:
-   long long factor_nonzeros = 0, patch_unknowns = 0, communication_values = 0;
-   long long NumPatches() const { return patches.size(); }
-   real_t GetDamping() const { return damping; }
-   void SetDamping(real_t value) { damping = value; }
-   PatchSolver(ParFiniteElementSpace &fes,
-               const std::vector<ElementData> &elements,
-               const Array<int> &ess_bdr, int p, const Options &options)
-      : Solver(fes.GetTrueVSize()), offset(fes.GetMyTDofOffset())
+   std::map<Global, PatchAssembly> AssemblePatches(
+      ParFiniteElementSpace &fes, const std::vector<ElementData> &elements,
+      const Array<int> &ess_bdr, int p, Messages &send)
    {
-      MPI_Comm_dup(fes.GetComm(), &comm); MPI_Comm_rank(comm, &rank);
-      ParMesh &mesh = *fes.GetParMesh(); const int dim = mesh.Dimension(), n = p + 1;
+      ParMesh &mesh = *fes.GetParMesh();
+      const int dim = mesh.Dimension(), n = p + 1;
       const auto &gt = mesh.gtopo;
-      Messages send;
-      for (int i = 1; i < gt.GetNumNeighbors(); ++i) { send[gt.GetNeighborRank(i)]; }
-      // Only neighboring ownership ranges are needed, even at vertex-only contacts.
-      for (auto &entry : send)
-      { Pack(entry.second.data, offset); Pack(entry.second.data, offset + Global(height)); }
-      auto ranges_received = Exchange(send, comm);
-      std::map<int, std::pair<Global, Global>> ranges;
-      ranges[rank] = {offset, offset + height};
-      for (auto &entry : ranges_received)
-      {
-         size_t pos = 0; Global begin = Unpack<Global>(entry.second.data, pos);
-         Global end = Unpack<Global>(entry.second.data, pos); ranges[entry.first] = {begin, end};
-      }
-      ranges_received.clear();
       Array<Global> vertices; mesh.GetGlobalVertexIndices(vertices);
       Array<int> owner(mesh.GetNV()); owner = rank;
       for (int g = 1; g < gt.NGroups(); ++g)
       {
-         int lowest = rank;
-         for (int k = 0; k < gt.GetGroupSize(g); ++k)
-         { lowest = std::min(lowest, gt.GetNeighborRank(gt.GetGroup(g)[k])); }
-         for (int k = 0; k < mesh.GroupNVertices(g); ++k) { owner[mesh.GroupVertex(g, k)] = lowest; }
+         for (int k = 0; k < mesh.GroupNVertices(g); ++k)
+         { owner[mesh.GroupVertex(g, k)] = gt.GetGroupMasterRank(g); }
       }
       Array<int> essential; fes.GetEssentialVDofs(ess_bdr, essential);
       Array<int> ev;
@@ -650,7 +604,23 @@ public:
          ReceivePatches(entry.second.data, assembled, true);
          std::string().swap(entry.second.data);
       }
-      received.clear();
+      return assembled;
+   }
+   std::map<Global, int> BuildExchange(
+      const std::map<Global, PatchAssembly> &assembled, Messages &send)
+   {
+      // Only neighboring ownership ranges are needed, even at vertex-only contacts.
+      for (auto &entry : send)
+      { Pack(entry.second.data, offset); Pack(entry.second.data, offset + Global(height)); }
+      auto ranges_received = Exchange(send, comm);
+      std::map<int, std::pair<Global, Global>> ranges;
+      ranges[rank] = {offset, offset + height};
+      for (auto &entry : ranges_received)
+      {
+         size_t pos = 0; Global begin = Unpack<Global>(entry.second.data, pos);
+         Global end = Unpack<Global>(entry.second.data, pos); ranges[entry.first] = {begin, end};
+      }
+      ranges_received.clear();
       std::map<Global, int> all_dofs;
       for (const auto &entry : assembled) for (Global g : entry.second.global) { all_dofs.emplace(g, 0); }
       int count = 0;
@@ -667,7 +637,7 @@ public:
             for (const auto &r : ranges)
             { if (entry.first >= r.second.first && entry.first < r.second.second) { owner_rank = r.first; break; } }
             MFEM_VERIFY(owner_rank >= 0, "Patch DOF owner is not a vertex neighbor");
-            peers[owner_rank].requested.push_back(entry.second);
+            peers[owner_rank].requested.Append(entry.second);
             Pack(send[owner_rank].data, entry.first);
          }
       }
@@ -679,44 +649,54 @@ public:
          {
             const Global g = Unpack<Global>(entry.second.data, pos);
             MFEM_VERIFY(g >= offset && g < offset + height, "Incorrect patch DOF owner");
-            peer.supplied.push_back(g - offset);
+            peer.supplied.Append(g - offset);
          }
       }
       incoming_requests.clear();
       for (auto &entry : peers)
       {
          auto &peer = entry.second;
-         peer.receive.resize(peer.requested.size());
-         peer.send.resize(peer.supplied.size());
-         communication_values += 2 * peer.supplied.size();
+         peer.receive.SetSize(peer.requested.Size());
+         peer.send.SetSize(peer.supplied.Size());
+         communication_values += 2 * peer.supplied.Size();
       }
       requests.resize(2 * peers.size());
+      return all_dofs;
+   }
+   void FactorPatches(std::map<Global, PatchAssembly> &assembled,
+                      const std::map<Global, int> &all_dofs, real_t diagonal_shift)
+   {
       for (auto it = assembled.begin(); it != assembled.end(); )
       {
          auto &a = it->second;
          auto matrix = std::move(a.matrix);
-         // Copy the open matrix so the ICC graph can still accept fill entries.
-         SparseMatrix graph(*matrix);
-         matrix->Finalize(0); matrix->SortColumnIndices();
-         // Keep precisely the fill induced by eliminating cell interiors.
-         for (int i = 0; i < matrix->Height(); ++i) if (a.interior[i])
+         // Structural zeros carry the ICC fill in the numerical matrix itself.
+         // Only interface rows change, so the interior rows can be read in LIL form.
+         Array<int> cols;
+         Vector values;
+         for (int i = 0; i < matrix->Height(); ++i)
+         {
+            if (!a.interior[i]) { continue; }
+            matrix->GetRow(i, cols, values);
+            for (int j : cols)
             {
-               const int *cols = matrix->GetRowColumns(i);
-               const int size = matrix->RowSize(i);
-               for (int j = 0; j < size; ++j) if (!a.interior[cols[j]])
-                     for (int k = 0; k < size; ++k) if (!a.interior[cols[k]])
-                        { graph.Add(cols[j], cols[k], 0.); }
+               if (a.interior[j]) { continue; }
+               for (int k : cols)
+               {
+                  if (!a.interior[k]) { matrix->Add(j, k, 0.); }
+               }
             }
-         graph.Finalize(0); graph.SortColumnIndices();
-         Array<int> ordering = PatchOrdering(graph, a.interior);
-         Patch patch; patch.factor.reset(new IncompleteCholeskySolver);
-         const int failed = patch.factor->Factor(*matrix, graph, ordering,
-                                                 options.diagonal_shift);
+         }
+         matrix->Finalize(0); matrix->SortColumnIndices();
+         Array<int> ordering = PatchOrdering(*matrix, a.interior);
+         Patch patch; patch.factor = std::make_unique<IncompleteCholeskySolver>();
+         const int failed = patch.factor->Factor(*matrix, *matrix, ordering,
+                                                 diagonal_shift);
          MFEM_VERIFY(failed < 0, "ICC nonpositive pivot " << failed <<
                      " in vertex patch "
                      << it->first << " on rank " << rank <<
                      "; inspect mesh/coefficient or set --diagonal-shift");
-         for (Global g : a.global) { patch.indices.push_back(all_dofs.at(g)); }
+         for (Global g : a.global) { patch.indices.Append(all_dofs.at(g)); }
          patch.rhs.SetSize(a.global.size());
          patch.solution.SetSize(a.global.size());
          factor_nonzeros += patch.factor->NumNonZeroElems();
@@ -734,6 +714,24 @@ public:
       });
       local_patch_count = first_remote - patches.begin();
    }
+public:
+   long long factor_nonzeros = 0, patch_unknowns = 0, communication_values = 0;
+   long long NumPatches() const { return patches.size(); }
+   real_t GetDamping() const { return damping; }
+   void SetDamping(real_t value) { damping = value; }
+   PatchSolver(ParFiniteElementSpace &fes,
+               const std::vector<ElementData> &elements,
+               const Array<int> &ess_bdr, int p, const Options &options)
+      : Solver(fes.GetTrueVSize()), offset(fes.GetMyTDofOffset())
+   {
+      MPI_Comm_dup(fes.GetComm(), &comm); MPI_Comm_rank(comm, &rank);
+      const auto &gt = fes.GetParMesh()->gtopo;
+      Messages send;
+      for (int i = 1; i < gt.GetNumNeighbors(); ++i) { send[gt.GetNeighborRank(i)]; }
+      auto assembled = AssemblePatches(fes, elements, ess_bdr, p, send);
+      auto all_dofs = BuildExchange(assembled, send);
+      FactorPatches(assembled, all_dofs, options.diagonal_shift);
+   }
    ~PatchSolver() override { MPI_Comm_free(&comm); }
    void SetOperator(const Operator &) override { MFEM_ABORT("Reconstruct PatchSolver"); }
    void MultTranspose(const Vector &x, Vector &y) const override { Mult(x, y); }
@@ -743,11 +741,11 @@ public:
       for (auto &entry : peers)
       {
          auto &peer = entry.second;
-         for (size_t i = 0; i < peer.supplied.size(); ++i) { peer.send[i] = x[peer.supplied[i]]; }
-         MPI_Irecv(peer.receive.data(), peer.receive.size(),
+         x.GetSubVector(peer.supplied, peer.send);
+         MPI_Irecv(peer.receive.GetData(), peer.receive.Size(),
                    MPITypeMap<real_t>::mpi_type,
                    entry.first, 1, comm, &requests[k++]);
-         MPI_Isend(peer.send.data(), peer.send.size(), MPITypeMap<real_t>::mpi_type,
+         MPI_Isend(peer.send.GetData(), peer.send.Size(), MPITypeMap<real_t>::mpi_type,
                    entry.first, 1, comm, &requests[k++]);
       }
       for (int i = 0; i < extended.Size(); ++i)
@@ -759,17 +757,17 @@ public:
       for (const auto &entry : peers)
       {
          const auto &peer = entry.second;
-         for (size_t i = 0; i < peer.requested.size(); ++i) { extended[peer.requested[i]] = peer.receive[i]; }
+         extended.SetSubVector(peer.requested, peer.receive);
       }
       ApplyPatches(local_patch_count, patches.size());
       k = 0;
       for (auto &entry : peers)
       {
          auto &peer = entry.second;
-         for (size_t i = 0; i < peer.requested.size(); ++i) { peer.receive[i] = correction[peer.requested[i]]; }
-         MPI_Irecv(peer.send.data(), peer.send.size(), MPITypeMap<real_t>::mpi_type,
+         correction.GetSubVector(peer.requested, peer.receive);
+         MPI_Irecv(peer.send.GetData(), peer.send.Size(), MPITypeMap<real_t>::mpi_type,
                    entry.first, 2, comm, &requests[k++]);
-         MPI_Isend(peer.receive.data(), peer.receive.size(),
+         MPI_Isend(peer.receive.GetData(), peer.receive.Size(),
                    MPITypeMap<real_t>::mpi_type,
                    entry.first, 2, comm, &requests[k++]);
       }
@@ -780,21 +778,21 @@ public:
       for (const auto &entry : peers)
       {
          const auto &peer = entry.second;
-         for (size_t i = 0; i < peer.supplied.size(); ++i) { y[peer.supplied[i]] += peer.send[i]; }
+         y.AddElementVector(peer.supplied, peer.send);
       }
       y *= damping;
    }
 };
 
-class CoarseTransfer : public Operator
+class Preconditioner::CoarseTransfer : public Operator
 {
    const Operator &interpolation;
    const BasisChange &basis;
-   const TraceInjection *trace;
+   const Operator *trace;
    Array<int> fine_essential, coarse_essential;
    mutable Vector a, b, c;
 public:
-   CoarseTransfer(const Operator &p, const BasisChange &s, const TraceInjection *t,
+   CoarseTransfer(const Operator &p, const BasisChange &s, const Operator *t,
                   const Array<int> &fine, const Array<int> &coarse)
       : Operator(t ? t->Width() : s.Height(), p.Width()), interpolation(p), basis(s),
         trace(t),
@@ -803,21 +801,20 @@ public:
    {
       a = x; a.SetSubVector(coarse_essential, 0.);
       b.SetSize(basis.Height()); interpolation.Mult(a, b); basis.InverseMult(b, c);
-      if (trace) { trace->MultTranspose(c, y); }
+      if (trace) { y.SetSize(height); trace->MultTranspose(c, y); }
       else { y = c; }
       y.SetSubVector(fine_essential, 0.);
    }
    void MultTranspose(const Vector &x, Vector &y) const override
    {
       a = x; a.SetSubVector(fine_essential, 0.);
-      if (trace) { trace->Mult(a, b); }
+      if (trace) { b.SetSize(trace->Height()); trace->Mult(a, b); }
       else { b = a; }
       basis.InverseMultTranspose(b, c); y.SetSize(width);
       interpolation.MultTranspose(c, y);
       y.SetSubVector(coarse_essential, 0.);
    }
 };
-} // namespace
 
 std::unique_ptr<SparseMatrix> CondenseElement(
    const SparseMatrix &matrix, int degree, int dimension,
@@ -830,240 +827,237 @@ std::unique_ptr<SparseMatrix> CondenseElement(
    return Condense(matrix, degree + 1, dimension, boundary);
 }
 
-struct Preconditioner::Impl
+Preconditioner::Preconditioner(ParFiniteElementSpace &space,
+                               Coefficient &coefficient,
+                               const Array<int> &ess_bdr, const Options &opts)
+   : Solver(space.GetTrueVSize()), fes(space), comm(space.GetComm()),
+     options(opts),
+     degree(space.GetMaxElementOrder())
 {
-   ParFiniteElementSpace &fes;
-   MPI_Comm comm;
-   Options options;
-   Array<int> essential, active_essential;
-   std::shared_ptr<const Basis> reference;
-   std::unique_ptr<BasisChange> basis;
-   std::unique_ptr<H1_FECollection> coarse_collection;
-   std::unique_ptr<FiniteElementCollection> trace_collection;
-   std::unique_ptr<ParFiniteElementSpace> coarse_space, trace_space;
-   std::unique_ptr<ParBilinearForm> coarse_form;
-   std::unique_ptr<HypreParMatrix> coarse_matrix, auxiliary, coupling;
-   std::unique_ptr<HypreBoomerAMG> coarse_solver;
-   std::unique_ptr<TraceInjection> trace;
-   std::unique_ptr<PRefinementTransferOperator> interpolation;
-   std::unique_ptr<CoarseTransfer> transfer;
-   std::unique_ptr<PatchSolver> patches;
-   std::unique_ptr<Multigrid> multigrid;
-   Vector inverse_interior;
-   mutable Vector rhs, interior, reduced, trace_solution, solution, temp;
-   long long auxiliary_nonzeros = 0;
-   int degree;
+   ParMesh &mesh = *space.GetParMesh(); const int dim = mesh.Dimension();
+   const auto *collection = dynamic_cast<const H1_FECollection*>(space.FEColl());
+   MFEM_VERIFY((dim == 2 || dim == 3) && mesh.SpaceDimension() == dim &&
+               !space.Nonconforming() && !space.IsVariableOrder() &&
+               space.GetVDim() == 1 && collection &&
+               collection->GetBasisType() == BasisType::GaussLobatto,
+               "Vertex patches require conforming scalar GLL H1 with uniform degree in 2D/3D");
+   MFEM_VERIFY(options.damping >= 0. && std::isfinite(options.damping) &&
+               options.diagonal_shift >= 0. && std::isfinite(options.diagonal_shift) &&
+               options.power_iterations > 0, "Invalid vertex-patch options");
+   int wrong_geometry = 0;
+   for (int e = 0; e < mesh.GetNE(); ++e)
+   { if (mesh.GetElementGeometry(e) != TensorBasisElement::GetTensorProductGeometry(dim)) { wrong_geometry = 1; } }
+   MPI_Allreduce(MPI_IN_PLACE, &wrong_geometry, 1, MPI_INT, MPI_MAX, comm);
+   MFEM_VERIFY(!wrong_geometry, "Only quadrilaterals/hexahedra are supported");
+   fes.GetEssentialTrueDofs(ess_bdr, essential);
+   long long nessential = essential.Size();
+   MPI_Allreduce(MPI_IN_PLACE, &nessential, 1, MPI_LONG_LONG, MPI_SUM, comm);
+   MFEM_VERIFY(nessential > 0,
+               "Pure Neumann problems require nullspace handling and are not supported");
+   Array<int> coarse_essential;
+   BuildCoarse(coefficient, ess_bdr, coarse_essential);
+   if (degree == 1) { return; }
+   BuildAuxiliary(coefficient, ess_bdr);
+   BuildMultigrid(coarse_essential);
+}
 
-   Impl(ParFiniteElementSpace &space, Coefficient &coefficient,
-        const Array<int> &ess_bdr, const Options &opts)
-      : fes(space), comm(space.GetComm()), options(opts),
-        degree(space.GetMaxElementOrder())
+void Preconditioner::BuildCoarse(Coefficient &coefficient,
+                                 const Array<int> &ess_bdr,
+                                 Array<int> &coarse_essential)
+{
+   ParMesh &mesh = *fes.GetParMesh();
+   const int dim = mesh.Dimension();
+   coarse_collection.reset(new H1_FECollection(1, dim));
+   coarse_space.reset(new ParFiniteElementSpace(&mesh, coarse_collection.get()));
+   coarse_space->GetEssentialTrueDofs(ess_bdr, coarse_essential);
+   coarse_form.reset(new ParBilinearForm(coarse_space.get()));
+   coarse_form->AddDomainIntegrator(new DiffusionIntegrator(coefficient));
+   coarse_form->Assemble();
+   coarse_matrix.reset(new HypreParMatrix);
+   coarse_form->FormSystemMatrix(coarse_essential, *coarse_matrix);
+   coarse_solver.reset(new HypreBoomerAMG(*coarse_matrix));
+   coarse_solver->SetPrintLevel(0); coarse_solver->SetMaxIter(1);
+   coarse_solver->SetTol(0.); coarse_solver->SetRelaxType(6);
+}
+
+void Preconditioner::BuildAuxiliary(Coefficient &coefficient,
+                                    const Array<int> &ess_bdr)
+{
+   ParMesh &mesh = *fes.GetParMesh();
+   const int dim = mesh.Dimension();
+   auto reference = Basis::Get(degree);
+   basis.reset(new BasisChange(fes, reference));
+   const int n = degree + 1, nd = Power(n, dim);
+   ParFiniteElementSpace *active = &fes;
+   Array<int> full_to_trace(fes.GetVSize()); full_to_trace = -1;
+   if (options.static_condensation)
    {
-      ParMesh &mesh = *space.GetParMesh(); const int dim = mesh.Dimension();
-      const auto *collection = dynamic_cast<const H1_FECollection*>(space.FEColl());
-      MFEM_VERIFY((dim == 2 || dim == 3) && mesh.SpaceDimension() == dim &&
-                  !space.Nonconforming() && !space.IsVariableOrder() &&
-                  space.GetVDim() == 1 && collection &&
-                  collection->GetBasisType() == BasisType::GaussLobatto,
-                  "Vertex patches require conforming scalar GLL H1 with uniform degree in 2D/3D");
-      MFEM_VERIFY(options.damping >= 0. && std::isfinite(options.damping) &&
-                  options.diagonal_shift >= 0. && std::isfinite(options.diagonal_shift) &&
-                  options.power_iterations > 0, "Invalid vertex-patch options");
-      int wrong_geometry = 0;
+      trace_collection.reset(fes.FEColl()->GetTraceCollection());
+      trace_space.reset(new ParFiniteElementSpace(&mesh, trace_collection.get()));
+      Array<int> fd, td;
       for (int e = 0; e < mesh.GetNE(); ++e)
-      { if (mesh.GetElementGeometry(e) != TensorBasisElement::GetTensorProductGeometry(dim)) { wrong_geometry = 1; } }
-      MPI_Allreduce(MPI_IN_PLACE, &wrong_geometry, 1, MPI_INT, MPI_MAX, comm);
-      MFEM_VERIFY(!wrong_geometry, "Only quadrilaterals/hexahedra are supported");
-      fes.GetEssentialTrueDofs(ess_bdr, essential);
-      long long nessential = essential.Size();
-      MPI_Allreduce(MPI_IN_PLACE, &nessential, 1, MPI_LONG_LONG, MPI_SUM, comm);
-      MFEM_VERIFY(nessential > 0,
-                  "Pure Neumann problems require nullspace handling and are not supported");
-      coarse_collection.reset(new H1_FECollection(1, dim));
-      coarse_space.reset(new ParFiniteElementSpace(&mesh, coarse_collection.get()));
-      Array<int> coarse_essential;
-      coarse_space->GetEssentialTrueDofs(ess_bdr, coarse_essential);
-      coarse_form.reset(new ParBilinearForm(coarse_space.get()));
-      coarse_form->AddDomainIntegrator(new DiffusionIntegrator(coefficient));
-      coarse_form->Assemble();
-      coarse_matrix.reset(new HypreParMatrix);
-      coarse_form->FormSystemMatrix(coarse_essential, *coarse_matrix);
-      coarse_solver.reset(new HypreBoomerAMG(*coarse_matrix));
-      coarse_solver->SetPrintLevel(0); coarse_solver->SetMaxIter(1);
-      coarse_solver->SetTol(0.); coarse_solver->SetRelaxType(6);
-      if (degree == 1) { return; }
-      reference = Basis::Get(degree);
-      basis.reset(new BasisChange(fes, reference));
-      const int n = degree + 1, nd = Power(n, dim);
-      ParFiniteElementSpace *active = &fes;
-      Array<int> full_to_trace(fes.GetVSize()); full_to_trace = -1;
-      if (options.static_condensation)
       {
-         trace_collection.reset(fes.FEColl()->GetTraceCollection());
-         trace_space.reset(new ParFiniteElementSpace(&mesh, trace_collection.get()));
-         Array<int> fd, td;
-         for (int e = 0; e < mesh.GetNE(); ++e)
-         {
-            fes.GetElementDofs(e, fd); trace_space->GetElementDofs(e, td);
-            for (int i = 0; i < td.Size(); ++i) { full_to_trace[fd[i]] = td[i]; }
-         }
-         trace.reset(new TraceInjection(fes, *trace_space, full_to_trace));
-         active = trace_space.get();
+         fes.GetElementDofs(e, fd); trace_space->GetElementDofs(e, td);
+         for (int i = 0; i < td.Size(); ++i) { full_to_trace[fd[i]] = td[i]; }
       }
-      active->GetEssentialTrueDofs(ess_bdr, active_essential);
-      auto local_matrix = std::make_unique<SparseMatrix>(active->GetVSize());
-      std::unique_ptr<SparseMatrix> local_cross;
+      trace = BuildTraceInjection(fes, *trace_space, full_to_trace);
+      active = trace_space.get();
+   }
+   active->GetEssentialTrueDofs(ess_bdr, active_essential);
+   auto local_matrix = std::make_unique<SparseMatrix>(active->GetVSize());
+   std::unique_ptr<SparseMatrix> local_cross;
+   if (options.static_condensation)
+   { local_cross = std::make_unique<SparseMatrix>(active->GetVSize(), fes.GetVSize()); }
+   Vector local_inverse(fes.GetVSize()); local_inverse = 0.;
+   std::vector<ElementData> elements(mesh.GetNE());
+   for (int e = 0; e < mesh.GetNE(); ++e)
+   {
+      auto matrix = AssembleElement(*reference, *mesh.GetElementTransformation(e),
+                                    coefficient);
+      auto &el = elements[e];
       if (options.static_condensation)
-      { local_cross = std::make_unique<SparseMatrix>(active->GetVSize(), fes.GetVSize()); }
-      Vector local_inverse(fes.GetVSize()); local_inverse = 0.;
-      std::vector<ElementData> elements(mesh.GetNE());
-      for (int e = 0; e < mesh.GetNE(); ++e)
       {
-         auto matrix = AssembleElement(*reference, *mesh.GetElementTransformation(e),
-                                       coefficient);
-         auto &el = elements[e];
-         if (options.static_condensation)
-         {
-            const int *ai = matrix->GetI(), *aj = matrix->GetJ();
-            const real_t *av = matrix->GetData();
-            for (int i = 0; i < nd; ++i) if (Interior(i, n, dim))
+         const int *ai = matrix->GetI(), *aj = matrix->GetJ();
+         const real_t *av = matrix->GetData();
+         for (int i = 0; i < nd; ++i) if (Interior(i, n, dim))
+            {
+               const int col = basis->ModalMap()[e * nd + i],
+                         sign = basis->Signs()[e * nd + i];
+               for (int k = ai[i]; k < ai[i + 1]; ++k)
                {
-                  const int col = basis->ModalMap()[e * nd + i],
-                            sign = basis->Signs()[e * nd + i];
-                  for (int k = ai[i]; k < ai[i + 1]; ++k)
+                  const int j = aj[k];
+                  if (j == i) { local_inverse[col] = 1. / av[k]; }
+                  else if (!Interior(j, n, dim))
                   {
-                     const int j = aj[k];
-                     if (j == i) { local_inverse[col] = 1. / av[k]; }
-                     else if (!Interior(j, n, dim))
-                     {
-                        const int row = full_to_trace[basis->ModalMap()[e * nd + j]];
-                        local_cross->Add(row, col, av[k] * sign * basis->Signs()[e * nd + j]);
-                     }
+                     const int row = full_to_trace[basis->ModalMap()[e * nd + j]];
+                     local_cross->Add(row, col, av[k] * sign * basis->Signs()[e * nd + j]);
                   }
                }
-            el.matrix = CondenseElement(*matrix, degree, dim, el.lex);
-         }
-         else
-         {
-            el.matrix = std::move(matrix); el.lex.resize(nd);
-            for (int i = 0; i < nd; ++i) { el.lex[i] = i; }
-         }
-         for (int i : el.lex)
-         {
-            int dof = basis->ModalMap()[e * nd + i];
-            if (options.static_condensation) { dof = full_to_trace[dof]; }
-            MFEM_VERIFY(dof >= 0, "Invalid trace mapping");
-            el.dofs.push_back(dof); el.signs.push_back(basis->Signs()[e * nd + i]);
-         }
-         const int *ai = el.matrix->GetI(), *aj = el.matrix->GetJ();
-         const real_t *av = el.matrix->GetData();
-         for (size_t i = 0; i < el.lex.size(); ++i)
-            for (int k = ai[i]; k < ai[i + 1]; ++k)
-            { local_matrix->Add(el.dofs[i], el.dofs[aj[k]], av[k] * el.signs[i] * el.signs[aj[k]]); }
-      }
-      local_matrix->Finalize(0); local_matrix->SortColumnIndices();
-      ParBilinearForm form(active);
-      auxiliary.reset(form.ParallelAssemble(local_matrix.get()));
-      local_matrix.reset();
-      delete auxiliary->EliminateRowsCols(active_essential);
-      auxiliary_nonzeros = auxiliary->NNZ();
-      if (options.static_condensation)
-      {
-         local_cross->Finalize(0); local_cross->SortColumnIndices();
-         ParMixedBilinearForm mixed(&fes, active);
-         coupling.reset(mixed.ParallelAssemble(local_cross.get()));
-         local_cross.reset();
-         inverse_interior.SetSize(fes.GetTrueVSize());
-         fes.GetRestrictionMatrix()->Mult(local_inverse, inverse_interior);
-      }
-      patches.reset(new PatchSolver(*active, elements, ess_bdr, degree, options));
-      long long constrained = active_essential.Size();
-      MPI_Allreduce(MPI_IN_PLACE, &constrained, 1, MPI_LONG_LONG, MPI_SUM, comm);
-      const bool no_free_trace = (active->GlobalTrueVSize() == constrained);
-      real_t damping = no_free_trace ? 1. : options.damping;
-      if (damping == 0.)
-      {
-         ProductOperator product(patches.get(), auxiliary.get(), false, false);
-         PowerMethod power(comm); Vector eigenvector(active->GetTrueVSize());
-         const real_t largest = power.EstimateLargestEigenvalue(
-                                   product, eigenvector, options.power_iterations, 1.e-6, 12345);
-         MFEM_VERIFY(largest > 0. &&
-                     std::isfinite(largest), "Invalid smoother eigenvalue estimate");
-         damping = 1. / (1.2 * largest);
-      }
-      patches->SetDamping(damping);
-      interpolation.reset(new PRefinementTransferOperator(*coarse_space, fes, true));
-      transfer.reset(new CoarseTransfer(*interpolation->GetTrueTransferOperator(),
-                                        *basis, trace.get(), active_essential, coarse_essential));
-      Array<Operator*> operators(2), prolongations(1);
-      Array<Solver*> smoothers(2);
-      Array<bool> own(2), own_p(1); own = false; own_p = false;
-      operators[0] = coarse_matrix.get(); operators[1] = auxiliary.get();
-      smoothers[0] = coarse_solver.get(); smoothers[1] = patches.get();
-      prolongations[0] = transfer.get();
-      multigrid.reset(new Multigrid(operators, smoothers, prolongations, own, own,
-                                    own_p));
-      multigrid->SetCycleType(Multigrid::CycleType::VCYCLE, 1, 1);
-   }
-   void Mult(const Vector &x, Vector &y) const
-   {
-      if (degree == 1) { y.SetSize(x.Size()); coarse_solver->Mult(x, y); return; }
-      temp = x; temp.SetSubVector(essential, 0.);
-      basis->MultTranspose(temp, rhs);
-      if (options.static_condensation)
-      {
-         interior.SetSize(rhs.Size());
-         for (int i = 0; i < rhs.Size(); ++i) { interior[i] = inverse_interior[i] * rhs[i]; }
-         trace->MultTranspose(rhs, reduced);
-         temp.SetSize(reduced.Size()); coupling->Mult(interior, temp); reduced -= temp;
-         reduced.SetSubVector(active_essential, 0.);
-         trace_solution.SetSize(reduced.Size());
-         multigrid->Mult(reduced, trace_solution);
-         trace->Mult(trace_solution, solution);
-         temp.SetSize(rhs.Size()); coupling->MultTranspose(trace_solution, temp);
-         for (int i = 0; i < rhs.Size(); ++i)
-         { solution[i] += interior[i] - inverse_interior[i] * temp[i]; }
+            }
+         el.matrix = CondenseElement(*matrix, degree, dim, el.lex);
       }
       else
       {
-         rhs.SetSubVector(essential, 0.);
-         solution.SetSize(rhs.Size()); multigrid->Mult(rhs, solution);
+         el.matrix = std::move(matrix); el.lex.resize(nd);
+         for (int i = 0; i < nd; ++i) { el.lex[i] = i; }
       }
-      basis->Mult(solution, y);
-      for (int i : essential) { y[i] = x[i]; }
+      for (int i : el.lex)
+      {
+         int dof = basis->ModalMap()[e * nd + i];
+         if (options.static_condensation) { dof = full_to_trace[dof]; }
+         MFEM_VERIFY(dof >= 0, "Invalid trace mapping");
+         el.dofs.push_back(dof); el.signs.push_back(basis->Signs()[e * nd + i]);
+      }
+      const int *ai = el.matrix->GetI(), *aj = el.matrix->GetJ();
+      const real_t *av = el.matrix->GetData();
+      for (size_t i = 0; i < el.lex.size(); ++i)
+         for (int k = ai[i]; k < ai[i + 1]; ++k)
+         { local_matrix->Add(el.dofs[i], el.dofs[aj[k]], av[k] * el.signs[i] * el.signs[aj[k]]); }
    }
-};
+   local_matrix->Finalize(0); local_matrix->SortColumnIndices();
+   ParBilinearForm form(active);
+   auxiliary.reset(form.ParallelAssemble(local_matrix.get()));
+   local_matrix.reset();
+   delete auxiliary->EliminateRowsCols(active_essential);
+   auxiliary_nonzeros = auxiliary->NNZ();
+   if (options.static_condensation)
+   {
+      local_cross->Finalize(0); local_cross->SortColumnIndices();
+      ParMixedBilinearForm mixed(&fes, active);
+      coupling.reset(mixed.ParallelAssemble(local_cross.get()));
+      local_cross.reset();
+      inverse_interior.SetSize(fes.GetTrueVSize());
+      fes.GetRestrictionMatrix()->Mult(local_inverse, inverse_interior);
+   }
+   patches.reset(new PatchSolver(*active, elements, ess_bdr, degree, options));
+}
 
-Preconditioner::Preconditioner(ParFiniteElementSpace &space,
-                               Coefficient &coefficient,
-                               const Array<int> &ess_bdr, const Options &options)
-   : Solver(space.GetTrueVSize()), impl(new Impl(space, coefficient, ess_bdr,
-                                                 options)) { }
+void Preconditioner::BuildMultigrid(const Array<int> &coarse_essential)
+{
+   ParFiniteElementSpace *active = trace_space ? trace_space.get() : &fes;
+   long long constrained = active_essential.Size();
+   MPI_Allreduce(MPI_IN_PLACE, &constrained, 1, MPI_LONG_LONG, MPI_SUM, comm);
+   const bool no_free_trace = (active->GlobalTrueVSize() == constrained);
+   real_t damping = no_free_trace ? 1. : options.damping;
+   if (damping == 0.)
+   {
+      ProductOperator product(patches.get(), auxiliary.get(), false, false);
+      PowerMethod power(comm); Vector eigenvector(active->GetTrueVSize());
+      const real_t largest = power.EstimateLargestEigenvalue(
+                                product, eigenvector, options.power_iterations, 1.e-6, 12345);
+      MFEM_VERIFY(largest > 0. &&
+                  std::isfinite(largest), "Invalid smoother eigenvalue estimate");
+      damping = 1. / (1.2 * largest);
+   }
+   patches->SetDamping(damping);
+   interpolation.reset(new PRefinementTransferOperator(*coarse_space, fes, true));
+   transfer.reset(new CoarseTransfer(*interpolation->GetTrueTransferOperator(),
+                                     *basis, trace.get(), active_essential, coarse_essential));
+   Array<Operator*> operators(2), prolongations(1);
+   Array<Solver*> smoothers(2);
+   Array<bool> own(2), own_p(1); own = false; own_p = false;
+   operators[0] = coarse_matrix.get(); operators[1] = auxiliary.get();
+   smoothers[0] = coarse_solver.get(); smoothers[1] = patches.get();
+   prolongations[0] = transfer.get();
+   multigrid.reset(new Multigrid(operators, smoothers, prolongations, own, own,
+                                 own_p));
+   multigrid->SetCycleType(Multigrid::CycleType::VCYCLE, 1, 1);
+}
+
+void Preconditioner::Mult(const Vector &x, Vector &y) const
+{
+   if (degree == 1) { y.SetSize(x.Size()); coarse_solver->Mult(x, y); return; }
+   temp = x; temp.SetSubVector(essential, 0.);
+   basis->MultTranspose(temp, rhs);
+   if (options.static_condensation)
+   {
+      interior = rhs;
+      interior *= inverse_interior;
+      reduced.SetSize(trace->Width()); trace->MultTranspose(rhs, reduced);
+      temp.SetSize(reduced.Size()); coupling->Mult(interior, temp); reduced -= temp;
+      reduced.SetSubVector(active_essential, 0.);
+      trace_solution.SetSize(reduced.Size());
+      multigrid->Mult(reduced, trace_solution);
+      solution.SetSize(rhs.Size()); trace->Mult(trace_solution, solution);
+      temp.SetSize(rhs.Size()); coupling->MultTranspose(trace_solution, temp);
+      temp *= inverse_interior;
+      interior -= temp;
+      solution += interior;
+   }
+   else
+   {
+      rhs.SetSubVector(essential, 0.);
+      solution.SetSize(rhs.Size()); multigrid->Mult(rhs, solution);
+   }
+   basis->Mult(solution, y);
+   for (int i : essential) { y[i] = x[i]; }
+}
+
 Preconditioner::~Preconditioner() = default;
-void Preconditioner::Mult(const Vector &x, Vector &y) const { impl->Mult(x, y); }
+
 void Preconditioner::PrintStatistics(std::ostream &os) const
 {
    long long stats[4] = {0, 0, 0, 0};
-   if (impl->patches)
+   if (patches)
    {
-      stats[0] = impl->patches->NumPatches();
-      stats[1] = impl->patches->patch_unknowns;
-      stats[2] = impl->patches->factor_nonzeros;
-      stats[3] = impl->patches->communication_values;
+      stats[0] = patches->NumPatches();
+      stats[1] = patches->patch_unknowns;
+      stats[2] = patches->factor_nonzeros;
+      stats[3] = patches->communication_values;
    }
-   MPI_Allreduce(MPI_IN_PLACE, stats, 4, MPI_LONG_LONG, MPI_SUM, impl->comm);
-   int rank; MPI_Comm_rank(impl->comm, &rank);
+   MPI_Allreduce(MPI_IN_PLACE, stats, 4, MPI_LONG_LONG, MPI_SUM, comm);
+   int rank; MPI_Comm_rank(comm, &rank);
    if (rank == 0)
    {
       os << "Vertex patches: " << stats[0] << ", patch unknowns: " << stats[1]
          << ", factor nonzeros: " << stats[2] << '\n'
-         << "Auxiliary nonzeros: " << impl->auxiliary_nonzeros << '\n'
+         << "Auxiliary nonzeros: " << auxiliary_nonzeros << '\n'
          << "Factor arrays including solve workspace (bytes): "
          << (stats[2] + stats[1])*(sizeof(real_t) + sizeof(int)) + stats[0]*sizeof(
             int) << '\n'
          << "Patch exchange values per smoothing step (gather + scatter): " << stats[3]
          << '\n'
-         << "Smoother damping: " << (impl->patches ? impl->patches->GetDamping() : 1.) <<
+         << "Smoother damping: " << (patches ? patches->GetDamping() : 1.) <<
          std::endl;
    }
 }

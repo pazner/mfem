@@ -65,10 +65,13 @@ communication; no new finite-element collection is necessary.
 
 The sparse auxiliary operator uses diagonal weighted mass approximations in the
 broken orthonormal basis from equation (3.9). Quadrature is tensor Gauss–Lobatto
-of order at least `3*p`. Sparse assembly and condensation never form dense
-high-order element matrices. Cell interiors are diagonal. The uncondensed path
-retains symbolic zeros for the fill induced by eliminating interiors, instead
-of applying ordinary ICC(0) to the original graph.
+of order at least `3*p`. MFEM's sparse tensor products and `Mult_AtDA` assemble
+the weighted contributions. Sparse assembly and condensation never form dense
+high-order element matrices. Cell interiors are diagonal. Before factorization,
+the uncondensed patch matrix receives structural zeros for the fill induced by
+eliminating interiors; this same matrix supplies both the values and the ICC
+graph. Trace injection is a local sparse map between owned true DOFs, since the
+trace and volume spaces share entity owners.
 
 Each vertex star has one owner, the lowest participating MPI rank. Shared-vertex
 neighbors exchange sparse element contributions during setup, including

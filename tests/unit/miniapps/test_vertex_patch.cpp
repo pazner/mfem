@@ -115,7 +115,7 @@ TEST_CASE("FDM sparse auxiliary matrix", "[VertexPatch][Parallel]")
 TEST_CASE("FDM global changes of basis and parallel orientation",
           "[VertexPatch][Parallel]")
 {
-   for (int dim : {2, 3}) for (bool oriented : {false, true}) for (int p : {2, 3, 4})
+   for (int dim : {2, 3}) for (bool oriented : {false, true}) for (int p : {2, 3, 4, 7})
          {
             CAPTURE(dim, oriented, p);
             Mesh serial = TestMesh(dim, oriented); auto part = Partition(serial);
