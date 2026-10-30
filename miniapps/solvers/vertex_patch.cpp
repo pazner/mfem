@@ -370,6 +370,8 @@ Messages Exchange(Messages &send, MPI_Comm comm)
    Message::IsendAll(send, comm);
    Message::RecvAll(recv, comm);
    Message::WaitAllSent(send);
+   // Keep the neighbor keys for the next exchange, but release sent storage.
+   for (auto &entry : send) { std::string().swap(entry.second.data); }
    return recv;
 }
 struct ElementData
@@ -560,6 +562,7 @@ public:
          size_t pos = 0; Global begin = Unpack<Global>(entry.second.data, pos);
          Global end = Unpack<Global>(entry.second.data, pos); ranges[entry.first] = {begin, end};
       }
+      ranges_received.clear();
       Array<Global> vertices; mesh.GetGlobalVertexIndices(vertices);
       Array<int> owner(mesh.GetNV()); owner = rank;
       for (int g = 1; g < gt.NGroups(); ++g)
@@ -613,7 +616,13 @@ public:
       auto received = Exchange(send, comm);
       std::map<Global, PatchAssembly> assembled;
       ReceivePatches(local_records, assembled);
-      for (const auto &entry : received) { ReceivePatches(entry.second.data, assembled); }
+      std::string().swap(local_records);
+      for (auto &entry : received)
+      {
+         ReceivePatches(entry.second.data, assembled);
+         std::string().swap(entry.second.data);
+      }
+      received.clear();
       std::map<Global, int> all_dofs;
       for (const auto &entry : assembled) for (Global g : entry.second.global) { all_dofs.emplace(g, 0); }
       int count = 0;
@@ -645,6 +654,7 @@ public:
             peer.supplied.push_back(int(g - offset));
          }
       }
+      incoming_requests.clear();
       for (auto &entry : peers)
       {
          auto &peer = entry.second;
@@ -653,9 +663,9 @@ public:
          communication_values += 2 * peer.supplied.size();
       }
       requests.resize(2 * peers.size());
-      for (auto &entry : assembled)
+      for (auto it = assembled.begin(); it != assembled.end(); )
       {
-         auto &a = entry.second;
+         auto &a = it->second;
          auto matrix = CSR(a.rows);
          // Keep precisely the fill induced by eliminating cell interiors.
          Rows pattern = a.rows;
@@ -670,7 +680,7 @@ public:
                                                  options.diagonal_shift);
          MFEM_VERIFY(failed < 0, "ICC nonpositive pivot " << failed <<
                      " in vertex patch "
-                     << entry.first << " on rank " << rank <<
+                     << it->first << " on rank " << rank <<
                      "; inspect mesh/coefficient or set --diagonal-shift");
          for (Global g : a.global) { patch.indices.push_back(all_dofs.at(g)); }
          patch.rhs.SetSize(int(a.global.size()));
@@ -678,6 +688,8 @@ public:
          factor_nonzeros += patch.factor->NumNonZeroElems();
          patch_unknowns += a.global.size();
          patches.push_back(std::move(patch));
+         // The factor and DOF indices now own everything needed by this patch.
+         it = assembled.erase(it);
       }
    }
    ~PatchSolver() override { MPI_Comm_free(&comm); }
@@ -909,13 +921,16 @@ struct Preconditioner::Impl
             { assembled[el.dofs[i]][el.dofs[aj[k]]] += av[k] * el.signs[i] * el.signs[aj[k]]; }
       }
       auto local_matrix = CSR(assembled);
+      Rows().swap(assembled);
       ParBilinearForm form(active);
       auxiliary.reset(form.ParallelAssemble(local_matrix.get()));
+      local_matrix.reset();
       delete auxiliary->EliminateRowsCols(active_essential);
       auxiliary_nonzeros = auxiliary->NNZ();
       if (options.static_condensation)
       {
          auto local_cross = CSR(cross, fes.GetVSize());
+         Rows().swap(cross);
          ParMixedBilinearForm mixed(&fes, active);
          coupling.reset(mixed.ParallelAssemble(local_cross.get()));
          inverse_interior.SetSize(fes.GetTrueVSize());
