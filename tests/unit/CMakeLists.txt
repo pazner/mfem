@@ -563,7 +563,7 @@ if (MFEM_USE_MPI AND MFEM_USE_LAPACK AND MFEM_USE_METIS AND MFEM_USE_METIS_5)
     punit_test_main.cpp linalg/test_incomplete_cholesky.cpp
     fem/test_pa_diffusion_high_order.cpp
     miniapps/test_vertex_patch.cpp
-    ${PROJECT_SOURCE_DIR}/miniapps/solvers/vertex_patch.cpp)
+    ${PROJECT_SOURCE_DIR}/miniapps/solvers/vertex_patch_solver.cpp)
   target_link_libraries(vertex_patch_tests mfem)
   add_dependencies(${MFEM_ALL_TESTS_TARGET_NAME} vertex_patch_tests)
   foreach(np 1 2 4)

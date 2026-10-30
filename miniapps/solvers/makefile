@@ -29,7 +29,7 @@ LOR_ELAST_OBJ = $(LOR_ELAST_SRC:.cpp=.o)
 SEQ_MINIAPPS = lor_solvers
 PAR_MINIAPPS = block-solvers plor_solvers lor_elast
 ifeq ($(MFEM_USE_LAPACK)$(MFEM_USE_METIS)$(MFEM_USE_METIS_5),YESYESYES)
-   PAR_MINIAPPS += vertex-patch
+   PAR_MINIAPPS += vertex_patch
 endif
 
 ifeq ($(MFEM_USE_MPI),NO)
@@ -58,10 +58,10 @@ plor_solvers.o: $(SRC)lor_mms.hpp
 block-solvers: $(BLOCK_SOLVERS_OBJ)
 	$(MFEM_CXX) $(MFEM_LINK_FLAGS) -o $@ $(BLOCK_SOLVERS_OBJ) $(MFEM_LIBS)
 
-vertex-patch: vertex-patch.o vertex_patch.o
+vertex_patch: vertex_patch_main.o vertex_patch_solver.o
 	$(MFEM_CXX) $(MFEM_LINK_FLAGS) -o $@ $^ $(MFEM_LIBS)
 
-vertex-patch.o vertex_patch.o: $(SRC)vertex_patch.hpp
+vertex_patch_main.o vertex_patch_solver.o: $(SRC)vertex_patch_solver.hpp
 
 lor_elast: $(LOR_ELAST_OBJ)
 	$(MFEM_CXX) $(MFEM_LINK_FLAGS) -o $@ $(LOR_ELAST_OBJ) $(MFEM_LIBS)
@@ -114,8 +114,8 @@ clean-exec:
 	@rm -rf mesh.* sol.* ParaView
 
 # Sparse FDM vertex-patch smoke tests
-vertex-patch-test-par: vertex-patch-condensed vertex-patch-full
-vertex-patch-condensed: vertex-patch
+vertex_patch-test-par: vertex_patch-condensed vertex_patch-full
+vertex_patch-condensed: vertex_patch
 	@$(call mfem-test,$<, $(RUN_MPI), Condensed FDM vertex patches,-m ../../data/beam-hex.mesh -o 3 -sc,1)
-vertex-patch-full: vertex-patch
+vertex_patch-full: vertex_patch
 	@$(call mfem-test,$<, $(RUN_MPI), Full FDM vertex patches,-m ../../data/beam-hex.mesh -o 3 -no-sc,1)

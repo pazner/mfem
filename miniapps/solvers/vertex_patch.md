@@ -1,6 +1,6 @@
 # MPI H1 vertex-patch Poisson solver
 
-`vertex-patch` implements the scalar H1 specialization of Brubeck and Farrell,
+`vertex_patch` implements the scalar H1 specialization of Brubeck and Farrell,
 *Multigrid solvers for the de Rham complex with optimal complexity in polynomial
 degree*, arXiv:2211.14284v2, Sections 2.2, 3, and 4.4–4.5.
 
@@ -11,11 +11,11 @@ METIS 5, and hypre. It runs on the CPU; SuiteSparse is not required.
 
 ```sh
 make -j4
-make -C miniapps/solvers vertex-patch
+make -C miniapps/solvers vertex_patch
 cd miniapps/solvers
-mpirun -np 4 ./vertex-patch -m ../../data/inline-hex.mesh -o 4
-mpirun -np 4 ./vertex-patch -m ../../data/inline-hex.mesh -o 4 -no-sc
-mpirun -np 4 ./vertex-patch -m ../../data/star.mesh -o 7 -c 1
+mpirun -np 4 ./vertex_patch -m ../../data/inline-hex.mesh -o 4
+mpirun -np 4 ./vertex_patch -m ../../data/inline-hex.mesh -o 4 -no-sc
+mpirun -np 4 ./vertex_patch -m ../../data/star.mesh -o 7 -c 1
 ```
 
 Supported spaces are scalar Gauss–Lobatto H1 spaces of uniform degree on
@@ -91,8 +91,8 @@ damping can make the multigrid preconditioner unsuitable for CG. At degree one,
 only the coarse solver is used.
 
 The reusable miniapp API is `mfem::vertex_patch::Preconditioner` in
-`vertex_patch.hpp`. Its space, mesh, and coefficient must remain alive; construct
-a new preconditioner after changing them. Like many MFEM solvers, instances use
+`vertex_patch_solver.hpp`. Its space, mesh, and coefficient must remain alive;
+construct a new preconditioner after changing them. Like many MFEM solvers, instances use
 mutable work buffers and are not reentrant.
 
 The CPU diffusion application in the library has a dynamically sized,
@@ -108,7 +108,7 @@ make -C tests/unit -j4 vertex_patch_tests
 mpirun -np 1 tests/unit/vertex_patch_tests
 mpirun -np 2 tests/unit/vertex_patch_tests
 mpirun -np 4 tests/unit/vertex_patch_tests
-make -C miniapps/solvers vertex-patch-test-par
+make -C miniapps/solvers vertex_patch-test-par
 ```
 
 The focused suite checks reference basis identities and parity, transpose and

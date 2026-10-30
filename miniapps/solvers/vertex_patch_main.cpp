@@ -12,13 +12,13 @@
 
 // MPI H1 Poisson with sparse FDM vertex patches (Brubeck--Farrell,
 // arXiv:2211.14284, Sections 2.2, 3, 4.4--4.5).
-// Build: make vertex-patch
-// Runs: mpirun -np 4 vertex-patch -m ../../data/beam-hex.mesh -o 4
-//       mpirun -np 4 vertex-patch -m ../../data/star.mesh -o 7 -no-sc
+// Build: make vertex_patch
+// Runs: mpirun -np 4 vertex_patch -m ../../data/beam-hex.mesh -o 4
+//       mpirun -np 4 vertex_patch -m ../../data/star.mesh -o 7 -no-sc
 //
 // The physical operator uses partial assembly. Static condensation changes
 // only the preconditioner. No high-order dense element matrices are formed.
-#include "vertex_patch.hpp"
+#include "vertex_patch_solver.hpp"
 #include <cmath>
 #include <iostream>
 
@@ -169,7 +169,7 @@ int main(int argc, char *argv[])
 int main()
 {
    std::cerr <<
-             "vertex-patch requires MFEM_USE_MPI, MFEM_USE_LAPACK, and MFEM_USE_METIS_5.\n";
+             "vertex_patch requires MFEM_USE_MPI, MFEM_USE_LAPACK, and MFEM_USE_METIS_5.\n";
    return 1;
 }
 #endif

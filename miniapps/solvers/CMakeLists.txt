@@ -28,16 +28,16 @@ if (MFEM_USE_MPI)
     LIBRARIES mfem)
 
   if (MFEM_USE_LAPACK AND MFEM_USE_METIS AND MFEM_USE_METIS_5)
-    add_mfem_miniapp(vertex-patch
-      MAIN vertex-patch.cpp
-      EXTRA_SOURCES vertex_patch.cpp
-      EXTRA_HEADERS vertex_patch.hpp
+    add_mfem_miniapp(vertex_patch
+      MAIN vertex_patch_main.cpp
+      EXTRA_SOURCES vertex_patch_solver.cpp
+      EXTRA_HEADERS vertex_patch_solver.hpp
       LIBRARIES mfem)
     if (MFEM_ENABLE_TESTING)
       foreach(mode sc no-sc)
-        add_test(NAME vertex-patch-${mode}_np${MFEM_MPI_NP}
+        add_test(NAME vertex_patch-${mode}_np${MFEM_MPI_NP}
           COMMAND ${MPIEXEC} ${MPIEXEC_NUMPROC_FLAG} ${MFEM_MPI_NP}
-          ${MPIEXEC_PREFLAGS} $<TARGET_FILE:vertex-patch>
+          ${MPIEXEC_PREFLAGS} $<TARGET_FILE:vertex_patch>
           -m ${CMAKE_CURRENT_SOURCE_DIR}/../../data/beam-hex.mesh -o 3 -${mode}
           ${MPIEXEC_POSTFLAGS})
       endforeach()

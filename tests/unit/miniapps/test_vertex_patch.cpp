@@ -10,7 +10,7 @@
 // CONTRIBUTING.md for details.
 
 #include "unit_tests.hpp"
-#include "../../../miniapps/solvers/vertex_patch.hpp"
+#include "../../../miniapps/solvers/vertex_patch_solver.hpp"
 #include <cmath>
 
 using namespace mfem;

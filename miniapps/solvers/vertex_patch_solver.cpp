@@ -9,7 +9,7 @@
 // terms of the BSD-3 license. We welcome feedback and contributions, see file
 // CONTRIBUTING.md for details.
 
-#include "vertex_patch.hpp"
+#include "vertex_patch_solver.hpp"
 #if defined(MFEM_USE_MPI) && defined(MFEM_USE_LAPACK) && defined(MFEM_USE_METIS) && defined(MFEM_USE_METIS_5)
 #include <algorithm>
 #include <array>
@@ -302,10 +302,12 @@ std::unique_ptr<SparseMatrix> AssembleElement(
    for (int q = 0; q < metric[0].Size(); ++q)
    {
       int a[3] = {0, 0, 0}; Coordinates(q, nq, dim, a);
-      IntegrationPoint ip; ip.Set3(ir.IntPoint(a[0]).x, ir.IntPoint(a[1]).x,
-                                   dim == 3 ? ir.IntPoint(a[2]).x : 0.);
+      IntegrationPoint ip; ip.Init(q);
+      ip.Set3(ir.IntPoint(a[0]).x, ir.IntPoint(a[1]).x,
+              dim == 3 ? ir.IntPoint(a[2]).x : 0.);
       real_t weight = 1.;
       for (int d = 0; d < dim; ++d) { weight *= ir.IntPoint(a[d]).weight; }
+      ip.weight = weight;
       trans.SetIntPoint(&ip);
       const real_t alpha = coefficient.Eval(trans, ip);
       MFEM_VERIFY(alpha > 0. && std::isfinite(alpha) && trans.Jacobian().Det() > 0.,
