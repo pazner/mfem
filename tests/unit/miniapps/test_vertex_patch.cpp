@@ -157,35 +157,46 @@ TEST_CASE("FDM global changes of basis and parallel orientation",
 TEST_CASE("Vertex-patch preconditioner symmetry and Poisson solves",
           "[VertexPatch][Parallel]")
 {
-   for (int dim : {2, 3}) for (int p : {1, 2, 4}) for (bool sc : {false, true})
-         {
-            CAPTURE(dim, p, sc);
-            Mesh serial = TestMesh(dim, true); auto part = Partition(serial);
-            ParMesh mesh(MPI_COMM_WORLD, serial, part);
-            H1_FECollection fec(p, dim); ParFiniteElementSpace fes(&mesh, &fec);
-            Array<int> boundary(mesh.bdr_attributes.Max()); boundary = 1;
-            Array<int> essential; fes.GetEssentialTrueDofs(boundary, essential);
-            ConstantCoefficient one(1.); Options options; options.static_condensation = sc;
-            Preconditioner prec(fes, one, boundary, options);
-            Vector x(fes.GetTrueVSize()), y(x.Size()), mx(x.Size()), my(x.Size());
-            x.Randomize(113 + Mpi::WorldRank()); y.Randomize(211 + Mpi::WorldRank());
-            x.SetSubVector(essential, 0.); y.SetSubVector(essential, 0.);
-            prec.Mult(x, mx); prec.Mult(y, my);
-            REQUIRE(Dot(mx, y) == MFEM_Approx(Dot(x, my), 1.e-9, 1.e-10));
-            REQUIRE(Dot(x, mx) > 0.);
-            ParBilinearForm form(&fes); form.SetAssemblyLevel(AssemblyLevel::PARTIAL);
-            form.AddDomainIntegrator(new DiffusionIntegrator(one)); form.Assemble();
-            OperatorPtr matrix; form.FormSystemMatrix(essential, matrix);
-            Vector rhs(x.Size()), solution(x.Size()); matrix->Mult(x, rhs); solution = 0.;
-            CGSolver cg(MPI_COMM_WORLD); cg.SetOperator(*matrix);
-            cg.SetPreconditioner(prec);
-            cg.SetRelTol(1.e-11); cg.SetMaxIter(200); cg.SetPrintLevel(0);
-            cg.Mult(rhs, solution);
-            REQUIRE(cg.GetConverged());
-            matrix->Mult(solution, my); my -= rhs;
-            REQUIRE(std::sqrt(Dot(my, my) / Dot(rhs, rhs)) < 1.e-8);
-            solution -= x; REQUIRE(std::sqrt(Dot(solution, solution) / Dot(x, x)) < 1.e-8);
-         }
+   for (bool slabs : {false, true})
+      for (int dim : {2, 3}) for (int p : {1, 2, 4}) for (bool sc : {false, true})
+            {
+               CAPTURE(slabs, dim, p, sc);
+               Mesh serial = TestMesh(dim, true);
+               if (slabs)
+               {
+                  serial = dim == 2 ? Mesh::MakeCartesian2D(4, 4, Element::QUADRILATERAL,
+                                                            true, 1., 1.)
+                           : Mesh::MakeCartesian3D(4, 4, 4, Element::HEXAHEDRON, 1., 1., 1.);
+               }
+               auto part = Partition(serial);
+               // Larger contiguous slabs exercise both local and remote patches.
+               if (slabs) for (int e = 0; e < serial.GetNE(); ++e)
+                  { part[e] = e * Mpi::WorldSize() / serial.GetNE(); }
+               ParMesh mesh(MPI_COMM_WORLD, serial, part);
+               H1_FECollection fec(p, dim); ParFiniteElementSpace fes(&mesh, &fec);
+               Array<int> boundary(mesh.bdr_attributes.Max()); boundary = 1;
+               Array<int> essential; fes.GetEssentialTrueDofs(boundary, essential);
+               ConstantCoefficient one(1.); Options options; options.static_condensation = sc;
+               Preconditioner prec(fes, one, boundary, options);
+               Vector x(fes.GetTrueVSize()), y(x.Size()), mx(x.Size()), my(x.Size());
+               x.Randomize(113 + Mpi::WorldRank()); y.Randomize(211 + Mpi::WorldRank());
+               x.SetSubVector(essential, 0.); y.SetSubVector(essential, 0.);
+               prec.Mult(x, mx); prec.Mult(y, my);
+               REQUIRE(Dot(mx, y) == MFEM_Approx(Dot(x, my), 1.e-9, 1.e-10));
+               REQUIRE(Dot(x, mx) > 0.);
+               ParBilinearForm form(&fes); form.SetAssemblyLevel(AssemblyLevel::PARTIAL);
+               form.AddDomainIntegrator(new DiffusionIntegrator(one)); form.Assemble();
+               OperatorPtr matrix; form.FormSystemMatrix(essential, matrix);
+               Vector rhs(x.Size()), solution(x.Size()); matrix->Mult(x, rhs); solution = 0.;
+               CGSolver cg(MPI_COMM_WORLD); cg.SetOperator(*matrix);
+               cg.SetPreconditioner(prec);
+               cg.SetRelTol(1.e-11); cg.SetMaxIter(200); cg.SetPrintLevel(0);
+               cg.Mult(rhs, solution);
+               REQUIRE(cg.GetConverged());
+               matrix->Mult(solution, my); my -= rhs;
+               REQUIRE(std::sqrt(Dot(my, my) / Dot(rhs, rhs)) < 1.e-8);
+               solution -= x; REQUIRE(std::sqrt(Dot(solution, solution) / Dot(x, x)) < 1.e-8);
+            }
 }
 
 TEST_CASE("FDM sparse condensation agrees with dense Schur complements",
@@ -202,20 +213,20 @@ TEST_CASE("FDM sparse condensation agrees with dense Schur complements",
          std::vector<int> interior;
          for (int i = 0; i < a->Height(); ++i)
          { if (!std::binary_search(boundary.begin(), boundary.end(), i)) { interior.push_back(i); } }
-         DenseMatrix ii(int(interior.size())), ib(int(interior.size()),
-                                                  int(boundary.size()));
+         DenseMatrix ii(interior.size()), ib(interior.size(),
+                                             boundary.size());
          const SparseMatrix &mat = *a;
-         for (int i = 0; i < int(interior.size()); ++i)
+         for (size_t i = 0; i < interior.size(); ++i)
          {
-            for (int j = 0; j < int(interior.size()); ++j) { ii(i, j) = mat(interior[i], interior[j]); }
-            for (int j = 0; j < int(boundary.size()); ++j) { ib(i, j) = mat(interior[i], boundary[j]); }
+            for (size_t j = 0; j < interior.size(); ++j) { ii(i, j) = mat(interior[i], interior[j]); }
+            for (size_t j = 0; j < boundary.size(); ++j) { ib(i, j) = mat(interior[i], boundary[j]); }
          }
          DenseMatrixInverse inverse(ii, true);
          DenseMatrix inverse_ib(ib.Height(), ib.Width()), correction(ib.Width());
          inverse.Mult(ib, inverse_ib); MultAtB(ib, inverse_ib, correction);
          const SparseMatrix &s = *schur;
-         for (int i = 0; i < int(boundary.size()); ++i) for (int j = 0;
-                                                                j < int(boundary.size()); ++j)
+         for (size_t i = 0; i < boundary.size(); ++i) for (size_t j = 0;
+                                                              j < boundary.size(); ++j)
             { REQUIRE(s(i, j) == MFEM_Approx(mat(boundary[i], boundary[j]) - correction(i, j), 1.e-10, 1.e-11)); }
       }
 }
@@ -294,7 +305,7 @@ TEST_CASE("FDM condensation preserves structural zeros",
       const SparseMatrix &s = *schur;
       // Elimination cancels both off-diagonal values exactly, but their
       // entries must remain in the graph used for prescribed-pattern ICC.
-      REQUIRE(s.NumNonZeroElems() == int(boundary.size()) + 2);
+      REQUIRE(s.NumNonZeroElems() == boundary.size() + 2);
       REQUIRE(s(0, 0) == 3.75);
       REQUIRE(s(1, 1) == 3.);
       Array<int> columns; Vector values;

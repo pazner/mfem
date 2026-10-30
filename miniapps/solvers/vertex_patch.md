@@ -76,6 +76,8 @@ edge-only and vertex-only contacts. Cached, deduplicated communication schedules
 gather residuals and scatter summed patch corrections. Condensation removes
 cell-interior unknowns from these exchanges. Essential DOFs are excluded from
 patches, but boundary-centered patches are retained when they have free DOFs.
+Patches using only locally owned residual DOFs are solved during the gather;
+the remaining patches are solved after the remote residuals arrive.
 
 Patch factors use MFEM's prescribed-pattern `IncompleteCholeskySolver`, with
 interiors ordered first and a METIS nested-dissection ordering of the interface

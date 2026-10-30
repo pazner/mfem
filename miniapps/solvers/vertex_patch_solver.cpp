@@ -42,7 +42,7 @@ void Tensor(const Vector &x, Vector &y,
             const std::vector<const DenseMatrix*> &b,
             bool transpose, Vector &u, Vector &v)
 {
-   const int dim = int(b.size());
+   const int dim = b.size();
    std::vector<int> sizes(dim);
    for (int d = 0; d < dim; ++d)
    { sizes[d] = transpose ? b[d]->Height() : b[d]->Width(); }
@@ -382,8 +382,8 @@ std::unique_ptr<SparseMatrix> Condense(const SparseMatrix &a, int n, int dim,
    const int nd = a.Height();
    std::vector<int> index(nd, -1);
    for (int i = 0; i < nd; ++i) if (!Interior(i, n, dim))
-      { index[i] = int(boundary.size()); boundary.push_back(i); }
-   auto matrix = std::make_unique<SparseMatrix>(int(boundary.size()));
+      { index[i] = boundary.size(); boundary.push_back(i); }
+   auto matrix = std::make_unique<SparseMatrix>(boundary.size());
    const int *ai = a.GetI(), *aj = a.GetJ(); const real_t *av = a.GetData();
    for (int i = 0; i < nd; ++i)
    {
@@ -448,7 +448,7 @@ struct PatchAssembly
    {
       const auto it = index.find(g);
       if (it != index.end()) { return it->second; }
-      const int i = int(global.size()); index[g] = i;
+      const int i = global.size(); index[g] = i;
       global.push_back(g); interior.push_back(cell); return i;
    }
 };
@@ -492,7 +492,7 @@ Array<int> PatchOrdering(const SparseMatrix &pattern,
    for (int i = 0; i < pattern.Height(); ++i)
    {
       if (interior[i]) { permutation[first++] = i; }
-      else { inverse[i] = int(interface.size()); interface.push_back(i); }
+      else { inverse[i] = interface.size(); interface.push_back(i); }
    }
    idx_t n = idx_t(interface.size());
    if (n > 0)
@@ -539,11 +539,24 @@ class PatchSolver : public Solver
    int rank;
    Global offset;
    std::vector<Patch> patches;
+   int local_patch_count = 0;
    std::map<int, Peer> peers;
    std::vector<int> local_indices;
    mutable Vector extended, correction;
    mutable std::vector<MPI_Request> requests;
    real_t damping = 1.;
+   void ApplyPatches(int begin, int end) const
+   {
+      for (int k = begin; k < end; ++k)
+      {
+         const auto &patch = patches[k];
+         for (size_t i = 0; i < patch.indices.size(); ++i)
+         { patch.rhs[i] = extended[patch.indices[i]]; }
+         patch.factor->Mult(patch.rhs, patch.solution);
+         for (size_t i = 0; i < patch.indices.size(); ++i)
+         { correction[patch.indices[i]] += patch.solution[i]; }
+      }
+   }
 public:
    long long factor_nonzeros = 0, patch_unknowns = 0, communication_values = 0;
    long long NumPatches() const { return patches.size(); }
@@ -595,17 +608,18 @@ public:
             const auto &ip = vr->IntPoint(vertex);
             const int corner[3] = {int(ip.x)*p, int(ip.y)*p, int(ip.z)*p};
             std::vector<int> selected, inverse(el.lex.size(), -1);
-            for (int i = 0; i < int(el.lex.size()); ++i)
+            for (size_t i = 0; i < el.lex.size(); ++i)
             {
                int a[3]; Coordinates(el.lex[i], n, dim, a);
                bool inside = !essential[el.dofs[i]];
                for (int d = 0; d < dim; ++d)
                { if ((a[d] == 0 || a[d] == p) && a[d] != corner[d]) { inside = false; } }
-               if (inside) { inverse[i] = int(selected.size()); selected.push_back(i); }
+               if (inside) { inverse[i] = selected.size(); selected.push_back(i); }
             }
             if (selected.empty()) { continue; }
             const int root = owner[ev[vertex]];
             std::string &buffer = root == rank ? local_records : send[root].data;
+            // Counts and interior flags use int in the serialized format.
             Pack(buffer, vertices[ev[vertex]]); Pack(buffer, int(selected.size()));
             for (int i : selected)
             { Pack(buffer, fes.GetGlobalTDofNumber(el.dofs[i])); Pack(buffer, int(Interior(el.lex[i], n, dim))); }
@@ -628,7 +642,7 @@ public:
       for (const auto &entry : received)
       { ReceivePatches(entry.second.data, assembled, false); }
       for (auto &entry : assembled)
-      { entry.second.matrix = std::make_unique<SparseMatrix>(int(entry.second.global.size())); }
+      { entry.second.matrix = std::make_unique<SparseMatrix>(entry.second.global.size()); }
       ReceivePatches(local_records, assembled, true);
       std::string().swap(local_records);
       for (auto &entry : received)
@@ -646,7 +660,7 @@ public:
       for (const auto &entry : all_dofs)
       {
          if (entry.first >= offset && entry.first < offset + height)
-         { local_indices[entry.second] = int(entry.first - offset); }
+         { local_indices[entry.second] = entry.first - offset; }
          else
          {
             int owner_rank = -1;
@@ -665,7 +679,7 @@ public:
          {
             const Global g = Unpack<Global>(entry.second.data, pos);
             MFEM_VERIFY(g >= offset && g < offset + height, "Incorrect patch DOF owner");
-            peer.supplied.push_back(int(g - offset));
+            peer.supplied.push_back(g - offset);
          }
       }
       incoming_requests.clear();
@@ -703,14 +717,22 @@ public:
                      << it->first << " on rank " << rank <<
                      "; inspect mesh/coefficient or set --diagonal-shift");
          for (Global g : a.global) { patch.indices.push_back(all_dofs.at(g)); }
-         patch.rhs.SetSize(int(a.global.size()));
-         patch.solution.SetSize(int(a.global.size()));
+         patch.rhs.SetSize(a.global.size());
+         patch.solution.SetSize(a.global.size());
          factor_nonzeros += patch.factor->NumNonZeroElems();
          patch_unknowns += a.global.size();
          patches.push_back(std::move(patch));
          // The factor and DOF indices now own everything needed by this patch.
          it = assembled.erase(it);
       }
+      // Keep patches needing only owned residual DOFs ahead of remote patches.
+      const auto first_remote = std::stable_partition(
+                                   patches.begin(), patches.end(), [this](const Patch &patch)
+      {
+         return std::all_of(patch.indices.begin(), patch.indices.end(),
+         [this](int i) { return local_indices[i] >= 0; });
+      });
+      local_patch_count = first_remote - patches.begin();
    }
    ~PatchSolver() override { MPI_Comm_free(&comm); }
    void SetOperator(const Operator &) override { MFEM_ABORT("Reconstruct PatchSolver"); }
@@ -721,36 +743,33 @@ public:
       for (auto &entry : peers)
       {
          auto &peer = entry.second;
-         for (int i = 0; i < int(peer.supplied.size()); ++i) { peer.send[i] = x[peer.supplied[i]]; }
-         MPI_Irecv(peer.receive.data(), int(peer.receive.size()),
+         for (size_t i = 0; i < peer.supplied.size(); ++i) { peer.send[i] = x[peer.supplied[i]]; }
+         MPI_Irecv(peer.receive.data(), peer.receive.size(),
                    MPITypeMap<real_t>::mpi_type,
                    entry.first, 1, comm, &requests[k++]);
-         MPI_Isend(peer.send.data(), int(peer.send.size()), MPITypeMap<real_t>::mpi_type,
+         MPI_Isend(peer.send.data(), peer.send.size(), MPITypeMap<real_t>::mpi_type,
                    entry.first, 1, comm, &requests[k++]);
       }
       for (int i = 0; i < extended.Size(); ++i)
       { if (local_indices[i] >= 0) { extended[i] = x[local_indices[i]]; } }
+      correction = 0.;
+      // Solve local patches while remote residuals are in flight.
+      ApplyPatches(0, local_patch_count);
       MPI_Waitall(k, requests.data(), MPI_STATUSES_IGNORE);
       for (const auto &entry : peers)
       {
          const auto &peer = entry.second;
-         for (int i = 0; i < int(peer.requested.size()); ++i) { extended[peer.requested[i]] = peer.receive[i]; }
+         for (size_t i = 0; i < peer.requested.size(); ++i) { extended[peer.requested[i]] = peer.receive[i]; }
       }
-      correction = 0.;
-      for (const auto &patch : patches)
-      {
-         for (int i = 0; i < int(patch.indices.size()); ++i) { patch.rhs[i] = extended[patch.indices[i]]; }
-         patch.factor->Mult(patch.rhs, patch.solution);
-         for (int i = 0; i < int(patch.indices.size()); ++i) { correction[patch.indices[i]] += patch.solution[i]; }
-      }
+      ApplyPatches(local_patch_count, patches.size());
       k = 0;
       for (auto &entry : peers)
       {
          auto &peer = entry.second;
-         for (int i = 0; i < int(peer.requested.size()); ++i) { peer.receive[i] = correction[peer.requested[i]]; }
-         MPI_Irecv(peer.send.data(), int(peer.send.size()), MPITypeMap<real_t>::mpi_type,
+         for (size_t i = 0; i < peer.requested.size(); ++i) { peer.receive[i] = correction[peer.requested[i]]; }
+         MPI_Irecv(peer.send.data(), peer.send.size(), MPITypeMap<real_t>::mpi_type,
                    entry.first, 2, comm, &requests[k++]);
-         MPI_Isend(peer.receive.data(), int(peer.receive.size()),
+         MPI_Isend(peer.receive.data(), peer.receive.size(),
                    MPITypeMap<real_t>::mpi_type,
                    entry.first, 2, comm, &requests[k++]);
       }
@@ -761,7 +780,7 @@ public:
       for (const auto &entry : peers)
       {
          const auto &peer = entry.second;
-         for (int i = 0; i < int(peer.supplied.size()); ++i) { y[peer.supplied[i]] += peer.send[i]; }
+         for (size_t i = 0; i < peer.supplied.size(); ++i) { y[peer.supplied[i]] += peer.send[i]; }
       }
       y *= damping;
    }
@@ -938,7 +957,7 @@ struct Preconditioner::Impl
          }
          const int *ai = el.matrix->GetI(), *aj = el.matrix->GetJ();
          const real_t *av = el.matrix->GetData();
-         for (int i = 0; i < int(el.lex.size()); ++i)
+         for (size_t i = 0; i < el.lex.size(); ++i)
             for (int k = ai[i]; k < ai[i + 1]; ++k)
             { local_matrix->Add(el.dofs[i], el.dofs[aj[k]], av[k] * el.signs[i] * el.signs[aj[k]]); }
       }
