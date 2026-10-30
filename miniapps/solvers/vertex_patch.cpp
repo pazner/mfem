@@ -350,7 +350,8 @@ std::unique_ptr<SparseMatrix> AssembleElement(
 namespace
 {
 using Global = HYPRE_BigInt;
-struct Message : VarMessage<17>
+constexpr int patch_message_tag = 17;
+struct Message : VarMessage<patch_message_tag>
 {
    void Encode(int) override { }
    void Decode(int) override { }
@@ -368,7 +369,17 @@ Messages Exchange(Messages &send, MPI_Comm comm)
    Messages recv;
    for (auto &entry : send) { recv[entry.first]; }
    Message::IsendAll(send, comm);
-   Message::RecvAll(recv, comm);
+   // Receive exactly once from each neighbor. RecvAll probes MPI_ANY_SOURCE
+   // and can consume a fast neighbor's next exchange before a slow neighbor's
+   // current exchange, since the setup phases reuse the same tag.
+   for (auto &entry : recv)
+   {
+      MPI_Status status;
+      MPI_Probe(entry.first, patch_message_tag, comm, &status);
+      int size;
+      MPI_Get_count(&status, MPI_BYTE, &size);
+      entry.second.Recv(entry.first, size, comm);
+   }
    Message::WaitAllSent(send);
    // Keep the neighbor keys for the next exchange, but release sent storage.
    for (auto &entry : send) { std::string().swap(entry.second.data); }
