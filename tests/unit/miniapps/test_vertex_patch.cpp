@@ -141,10 +141,13 @@ TEST_CASE("FDM global changes of basis and parallel orientation",
             Vector local(fes.GetVSize()); fes.GetProlongationMatrix()->Mult(x, local);
             const int nd = fes.GetFE(0)->GetDof(); real_t auxiliary_energy = 0.;
             Vector el(nd), applied(nd);
+            change.Signs().HostRead(); change.ModalMap().HostRead();
+            local.HostReadWrite();
             for (int e = 0; e < mesh.GetNE(); ++e)
             {
                auto a = AssembleElement(*Basis::Get(p), *mesh.GetElementTransformation(e),
                                         one);
+               el.HostWrite();
                for (int i = 0; i < nd; ++i) { el[i] = change.Signs()[e * nd + i] * local[change.ModalMap()[e * nd + i]]; }
                a->Mult(el, applied); auxiliary_energy += el * applied;
             }

@@ -47,10 +47,12 @@ class BasisChange : public Operator
    ParFiniteElementSpace &fes;
    std::shared_ptr<const Basis> basis;
    int dim, nd;
-   Array<int> nodal, modal, signs, mask;
-   mutable Vector local_in, local_out, element, result, scratch1, scratch2;
-   void Apply(const Vector &, Vector &, bool inverse, bool transpose) const;
+   Array<int> nodal, modal, signs, mask, true_dofs;
+   mutable Vector local_in, local_out, element, result;
 public:
+   // Internal kernels are public because nvcc takes their enclosing function address.
+   void BuildMaps();
+   void Apply(const Vector &, Vector &, bool inverse, bool transpose) const;
    BasisChange(ParFiniteElementSpace &space,
                std::shared_ptr<const Basis> reference_basis);
    void Mult(const Vector &x, Vector &y) const override { Apply(x, y, false, false); }
@@ -80,8 +82,11 @@ std::unique_ptr<SparseMatrix> CondenseElement(
     Mult is a fixed symmetric linear action on standard H1 true DOFs. */
 class Preconditioner : public Solver
 {
+public:
+   // Public declarations permit CUDA extended lambdas in the implementations.
    class PatchSolver;
    class CoarseTransfer;
+private:
    ParFiniteElementSpace &fes;
    MPI_Comm comm;
    Options options;
@@ -91,10 +96,11 @@ class Preconditioner : public Solver
    std::unique_ptr<FiniteElementCollection> trace_collection;
    std::unique_ptr<ParFiniteElementSpace> coarse_space, trace_space;
    std::unique_ptr<ParBilinearForm> coarse_form;
+   OperatorHandle coarse_handle;
    std::unique_ptr<HypreParMatrix> coarse_matrix, auxiliary, coupling;
    std::unique_ptr<HypreBoomerAMG> coarse_solver;
    std::unique_ptr<SparseMatrix> trace;
-   std::unique_ptr<PRefinementTransferOperator> interpolation;
+   std::unique_ptr<Operator> interpolation;
    std::unique_ptr<CoarseTransfer> transfer;
    std::unique_ptr<PatchSolver> patches;
    std::unique_ptr<Multigrid> multigrid;
@@ -102,10 +108,14 @@ class Preconditioner : public Solver
    mutable Vector rhs, interior, reduced, trace_solution, solution, temp;
    long long auxiliary_nonzeros = 0;
    int degree;
+   real_t setup_timings[6] = {};
 
    void BuildCoarse(Coefficient &coefficient, const Array<int> &ess_bdr,
                     Array<int> &coarse_essential);
+public:
+   // Internal setup entry point; public for CUDA extended-lambda compilation.
    void BuildAuxiliary(Coefficient &coefficient, const Array<int> &ess_bdr);
+private:
    void BuildMultigrid(const Array<int> &coarse_essential);
 public:
    Preconditioner(ParFiniteElementSpace &space, Coefficient &coefficient,

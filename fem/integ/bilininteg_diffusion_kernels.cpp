@@ -281,7 +281,8 @@ void PADiffusionSetup3D(const int Q1D,
       return const_c ? C(i,0,0,0,0) : C(i,qx,qy,qz,e);
    };
 
-   mfem::forall_3D(NE, Q1D, Q1D, Q1D, [=] MFEM_HOST_DEVICE (int e)
+   const int threads = std::min(Q1D, 8);
+   mfem::forall_3D(NE, threads, threads, threads, [=] MFEM_HOST_DEVICE (int e)
    {
       MFEM_FOREACH_THREAD(qx,x,Q1D)
       {

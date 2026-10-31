@@ -41,6 +41,44 @@ static void DLFEvalAssemble(const FiniteElementSpace &fes,
    const real_t *detJ = geom->detJ.Read();
    const real_t *W = ir->GetWeights().Read();
    real_t *Y = y.ReadWrite();
+   const auto &limits = DeviceDofQuadLimits::Get();
+   if (d > limits.MAX_D1D || q > limits.MAX_Q1D)
+   {
+      int nq = 1;
+      for (int axis = 0; axis < dim; ++axis) { nq *= q; }
+      Vector u(ne*vdim*nq), v; u.UseDevice(true); v.UseDevice(true);
+      const real_t *C = coeff.Read(); const bool constant = coeff.Size() == vdim;
+      real_t *U = u.Write();
+      mfem::forall(u.Size(), [=] MFEM_HOST_DEVICE (int k)
+      {
+         const int iq = k%nq, c = k/nq%vdim, e = k/(nq*vdim);
+         const real_t det = map_type == FiniteElement::VALUE ? detJ[iq+nq*e] : 1.;
+         U[k] = M[e] ? W[iq]*det*C[constant ? c : c+vdim*(iq+nq*e)] : 0.;
+      });
+      int sizes[3] = {q,q,q};
+      for (int axis = 0; axis < dim; ++axis)
+      {
+         int before = 1, after = 1;
+         for (int a = 0; a < axis; ++a) { before *= sizes[a]; }
+         for (int a = axis+1; a < dim; ++a) { after *= sizes[a]; }
+         const int src_size = before*q*after, dst_size = before*d*after;
+         v.SetSize(ne*vdim*dst_size);
+         const real_t *src = u.Read(); real_t *dst = v.Write();
+         mfem::forall(v.Size(), [=] MFEM_HOST_DEVICE (int k)
+         {
+            const int batch = k/dst_size, i = k%before;
+            const int j = k/before%d, outer = k%dst_size/(before*d);
+            real_t value = 0.;
+            for (int l = 0; l < q; ++l)
+            { value += B[l+q*j]*src[batch*src_size+i+before*(l+q*outer)]; }
+            dst[k] = value;
+         });
+         u.Swap(v); sizes[axis] = d;
+      }
+      const real_t *result = u.Read();
+      mfem::forall(u.Size(), [=] MFEM_HOST_DEVICE (int k) { Y[k] += result[k]; });
+      return;
+   }
    DomainLFIntegrator::AssembleKernels::Run(dim, d, q, vdim, ne, d, q, map_type,
                                             M, B, detJ, W, coeff, Y);
 }

@@ -223,6 +223,111 @@ ImplEval1D<false>(const int NE, const int vdim, const QVectorLayout q_layout,
 
 } // namespace internal
 
+namespace
+{
+// Runtime-sized tensor evaluation for orders outside the tuned device buffers.
+void TensorEvaluateDynamic(const DofToQuad &maps, int dim, int vdim, int ne,
+                           QVectorLayout layout, unsigned flags,
+                           const GeometricFactors *geom, const Vector &input,
+                           Vector &values, Vector &derivatives, Vector &determinants)
+{
+   const int nd1 = maps.ndof, nq1 = maps.nqpt;
+   int nq = 1;
+   for (int d = 0; d < dim; ++d) { nq *= nq1; }
+   const real_t *B = maps.B.Read(), *G = maps.G.Read();
+   Vector u, v, gradients;
+   u.UseDevice(true); v.UseDevice(true); gradients.UseDevice(true);
+   const bool need_grad = flags & (QuadratureInterpolator::DERIVATIVES |
+                                   QuadratureInterpolator::PHYSICAL_DERIVATIVES |
+                                   QuadratureInterpolator::DETERMINANTS);
+   if (need_grad) { gradients.SetSize(ne*nq*vdim*dim); }
+   real_t *grad = need_grad ? gradients.Write() : nullptr;
+   for (int derivative = -1; derivative < dim; ++derivative)
+   {
+      if (derivative == -1 && !(flags & (QuadratureInterpolator::VALUES |
+                                         QuadratureInterpolator::PHYSICAL_VALUES))) { continue; }
+      if (derivative >= 0 && !need_grad) { break; }
+      u = input; int sizes[3] = {nd1,nd1,nd1};
+      for (int axis = 0; axis < dim; ++axis)
+      {
+         int before = 1, after = 1;
+         for (int d = 0; d < axis; ++d) { before *= sizes[d]; }
+         for (int d = axis+1; d < dim; ++d) { after *= sizes[d]; }
+         const int ni = sizes[axis], no = nq1;
+         const int src_size = before*ni*after, dst_size = before*no*after;
+         v.SetSize(ne*vdim*dst_size);
+         const real_t *M = axis == derivative ? G : B, *U = u.Read();
+         real_t *V = v.Write();
+         mfem::forall(v.Size(), [=] MFEM_HOST_DEVICE (int k)
+         {
+            const int batch = k/dst_size, i = k%before;
+            const int j = k/before%no, outer = k%dst_size/(before*no);
+            real_t sum = 0.;
+            for (int l = 0; l < ni; ++l)
+            { sum += M[j+no*l]*U[batch*src_size+i+before*(l+ni*outer)]; }
+            V[k] = sum;
+         });
+         u.Swap(v); sizes[axis] = no;
+      }
+      const real_t *U = u.Read();
+      if (derivative < 0)
+      {
+         real_t *V = values.Write();
+         mfem::forall(ne*vdim*nq, [=] MFEM_HOST_DEVICE (int k)
+         {
+            const int q = k%nq, c = k/nq%vdim, e = k/(nq*vdim);
+            V[layout == QVectorLayout::byNODES ? k : c+vdim*(q+nq*e)] = U[k];
+         });
+      }
+      else
+      {
+         mfem::forall(ne*vdim*nq, [=] MFEM_HOST_DEVICE (int k)
+         {
+            const int q = k%nq, c = k/nq%vdim, e = k/(nq*vdim);
+            grad[q+nq*(c+vdim*(derivative+dim*e))] = U[k];
+         });
+      }
+   }
+   if (flags & (QuadratureInterpolator::DERIVATIVES |
+                QuadratureInterpolator::PHYSICAL_DERIVATIVES))
+   {
+      const bool phys = flags & QuadratureInterpolator::PHYSICAL_DERIVATIVES;
+      const real_t *J = phys ? geom->J.Read() : nullptr;
+      real_t *Y = derivatives.Write();
+      mfem::forall(ne*vdim*nq, [=] MFEM_HOST_DEVICE (int k)
+      {
+         const int q = k%nq, c = k/nq%vdim, e = k/(nq*vdim);
+         real_t du[3], jac[9], inv[9];
+         for (int d = 0; d < dim; ++d) { du[d] = grad[q+nq*(c+vdim*(d+dim*e))]; }
+         if (phys)
+         {
+            for (int j = 0; j < dim*dim; ++j) { jac[j] = J[q+nq*(j+dim*dim*e)]; }
+            if (dim == 2) { kernels::CalcInverse<2>(jac,inv); }
+            else { kernels::CalcInverse<3>(jac,inv); }
+         }
+         for (int d = 0; d < dim; ++d)
+         {
+            real_t value = du[d];
+            if (phys) { value = 0.; for (int j = 0; j < dim; ++j) { value += inv[j+dim*d]*du[j]; } }
+            Y[layout == QVectorLayout::byNODES ? q+nq*(c+vdim*(d+dim*e))
+                     : c+vdim*(d+dim*(q+nq*e))] = value;
+         }
+      });
+   }
+   if (flags & QuadratureInterpolator::DETERMINANTS)
+   {
+      real_t *D = determinants.Write();
+      mfem::forall(ne*nq, [=] MFEM_HOST_DEVICE (int k)
+      {
+         const int q = k%nq, e = k/nq;
+         real_t jac[9];
+         for (int j = 0; j < dim*dim; ++j) { jac[j] = grad[q+nq*(j+dim*dim*e)]; }
+         D[k] = dim == 2 ? kernels::Det<2>(jac) : kernels::Det<3>(jac);
+      });
+   }
+}
+}
+
 void QuadratureInterpolator::Mult(const Vector &e_vec,
                                   unsigned eval_flags,
                                   Vector &q_val,
@@ -277,6 +382,18 @@ void QuadratureInterpolator::Mult(const Vector &e_vec,
    MFEM_ASSERT(fespace->GetMesh()->GetNumGeometries(
                   fespace->GetMesh()->Dimension()) == 1,
                "mixed meshes are not supported");
+
+   const auto &limits = DeviceDofQuadLimits::Get();
+   if (use_tensor_eval && (dim == 2 || dim == 3) && sdim == dim &&
+       fe->GetMapType() == FiniteElement::MapType::VALUE &&
+       (!(eval_flags & DETERMINANTS) || vdim == dim) &&
+       (nd > limits.MAX_D1D || nq > limits.MAX_Q1D ||
+        (Device::Allows(Backend::DEVICE_MASK) && dim == 3 && nq > 10)))
+   {
+      TensorEvaluateDynamic(maps,dim,vdim,ne,q_layout,eval_flags,geom,
+                            e_vec,q_val,q_der,q_det);
+      return;
+   }
 
    if (use_tensor_eval)
    {

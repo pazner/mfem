@@ -62,6 +62,7 @@ vertex_patch: vertex_patch_main.o vertex_patch_solver.o
 	$(MFEM_CXX) $(MFEM_LINK_FLAGS) -o $@ $^ $(MFEM_LIBS)
 
 vertex_patch_main.o vertex_patch_solver.o: $(SRC)vertex_patch_solver.hpp
+vertex_patch_solver.o: $(SRC)vertex_patch_kernels.hpp $(SRC)vertex_patch_assembly.hpp
 
 lor_elast: $(LOR_ELAST_OBJ)
 	$(MFEM_CXX) $(MFEM_LINK_FLAGS) -o $@ $(LOR_ELAST_OBJ) $(MFEM_LIBS)
@@ -119,3 +120,11 @@ vertex_patch-condensed: vertex_patch
 	@$(call mfem-test,$<, $(RUN_MPI), Condensed FDM vertex patches,-m ../../data/beam-hex.mesh -o 3 -sc,1)
 vertex_patch-full: vertex_patch
 	@$(call mfem-test,$<, $(RUN_MPI), Full FDM vertex patches,-m ../../data/beam-hex.mesh -o 3 -no-sc,1)
+
+ifeq ($(MFEM_USE_CUDA),YES)
+vertex_patch-test-gpu: vertex_patch-gpu-condensed vertex_patch-gpu-full
+vertex_patch-gpu-condensed: vertex_patch
+	@$(call mfem-test,$<, $(RUN_MPI), GPU condensed FDM vertex patches,-m ../../data/inline-hex.mesh -o 4 -sc -d cuda,1)
+vertex_patch-gpu-full: vertex_patch
+	@$(call mfem-test,$<, $(RUN_MPI), GPU full FDM vertex patches,-m ../../data/inline-hex.mesh -o 4 -no-sc -d cuda,1)
+endif

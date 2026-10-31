@@ -10,11 +10,21 @@
 // CONTRIBUTING.md for details.
 
 #include "vertex_patch_solver.hpp"
+#include "../../general/forall.hpp"
 #if defined(MFEM_USE_MPI) && defined(MFEM_USE_LAPACK) && defined(MFEM_USE_METIS) && defined(MFEM_USE_METIS_5)
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <map>
+#include <array>
+#include <limits>
+#include <tuple>
+#ifdef MFEM_USE_CUDA
+#include <thrust/sort.h>
+#include <thrust/unique.h>
+#include <thrust/execution_policy.h>
+#endif
+#include "../../linalg/kernels.hpp"
 #include <metis.h>
 
 namespace mfem
@@ -23,12 +33,14 @@ namespace vertex_patch
 {
 namespace
 {
-int Power(int n, int d) { int v = 1; while (d--) { v *= n; } return v; }
-void Coordinates(int i, int n, int dim, int *a)
+#include "vertex_patch_kernels.hpp"
+
+MFEM_HOST_DEVICE int Power(int n, int d) { int v = 1; while (d--) { v *= n; } return v; }
+MFEM_HOST_DEVICE void Coordinates(int i, int n, int dim, int *a)
 { for (int d = 0; d < dim; ++d) { a[d] = i % n; i /= n; } }
-int Index(const int *a, int n, int dim)
+MFEM_HOST_DEVICE int Index(const int *a, int n, int dim)
 { int i = 0; for (int d = dim - 1; d >= 0; --d) { i = i * n + a[d]; } return i; }
-bool Interior(int i, int n, int dim)
+MFEM_HOST_DEVICE bool Interior(int i, int n, int dim)
 {
    int a[3]; Coordinates(i, n, dim, a);
    for (int d = 0; d < dim; ++d) { if (a[d] == 0 || a[d] == n - 1) { return false; } }
@@ -155,54 +167,61 @@ BasisChange::BasisChange(ParFiniteElementSpace &space,
                          std::shared_ptr<const Basis> reference_basis)
    : Operator(space.GetTrueVSize()), fes(space), basis(reference_basis),
      dim(space.GetMesh()->Dimension()), nd(Power(basis->p + 1, dim))
+{ BuildMaps(); }
+
+void BasisChange::BuildMaps()
 {
+   BuildTrueDofMap(fes,true_dofs);
    const int n = basis->p + 1, ne = fes.GetNE();
    const auto *restriction = dynamic_cast<const ElementRestriction*>(
                                 fes.GetElementRestriction(ElementDofOrdering::LEXICOGRAPHIC));
    MFEM_VERIFY(restriction, "Expected conforming H1 element restriction");
    nodal = restriction->GatherMap();
-   modal.SetSize(ne * nd); signs.SetSize(ne * nd);
-   mask.SetSize(ne * nd);
-   Array<int> seen(fes.GetVSize()); seen = 0;
-   Array<HYPRE_BigInt> vertices;
+   modal.SetSize(ne*nd); signs.SetSize(ne*nd); mask.SetSize(ne*nd);
+   Array<int> first(fes.GetVSize()); first = std::numeric_limits<int>::max();
+   Array<HYPRE_BigInt> vertices, corners(ne*(1<<dim));
    fes.GetParMesh()->GetGlobalVertexIndices(vertices);
    Array<int> ev;
    for (int e = 0; e < ne; ++e)
    {
-      fes.GetMesh()->GetElementVertices(e, ev);
-      const IntegrationRule *vr = Geometries.GetVertices(
-                                     fes.GetMesh()->GetElementGeometry(e));
-      HYPRE_BigInt corners[8];
+      fes.GetMesh()->GetElementVertices(e,ev);
+      const auto *vr = Geometries.GetVertices(fes.GetMesh()->GetElementGeometry(e));
       for (int j = 0; j < ev.Size(); ++j)
       {
          const auto &v = vr->IntPoint(j);
-         const int bit = int(v.x) + 2 * int(v.y) + (dim == 3 ? 4 * int(v.z) : 0);
-         corners[bit] = vertices[ev[j]];
-      }
-      for (int i = 0; i < nd; ++i)
-      {
-         int a[3], slot[3]; Coordinates(i, n, dim, a);
-         int origin = -1;
-         for (int v = 0; v < (1 << dim); ++v)
-         {
-            bool belongs = true;
-            for (int d = 0; d < dim; ++d)
-            { if ((a[d] == 0 || a[d] == n - 1) && ((v >> d) & 1) != (a[d] == n - 1)) { belongs = false; } }
-            if (belongs && (origin < 0 || corners[v] < corners[origin])) { origin = v; }
-         }
-         int sign = 1;
-         for (int d = 0; d < dim; ++d)
-         {
-            slot[d] = a[d];
-            if (a[d] > 0 && a[d] < n - 1 && ((origin >> d) & 1))
-            { slot[d] = n - 1 - a[d]; sign *= basis->parity[a[d]]; }
-         }
-         const int k = e * nd + i;
-         modal[k] = nodal[e * nd + Index(slot, n, dim)]; signs[k] = sign;
-         // Both orderings use the same first incident element of this entity.
-         mask[k] = !seen[nodal[k]]; seen[nodal[k]] = 1;
+         const int bit = int(v.x)+2*int(v.y)+(dim == 3 ? 4*int(v.z) : 0);
+         corners[e*(1<<dim)+bit] = vertices[ev[j]];
       }
    }
+   const int *N = nodal.Read(), *parity = basis->parity.Read();
+   int *F = first.ReadWrite(), *M = modal.Write(), *S = signs.Write(),
+        *K = mask.Write();
+   const auto *V = corners.Read(); const int dimension = dim, dofs = nd;
+   mfem::forall(ne*nd, [=] MFEM_HOST_DEVICE (int k) { AtomicMinIndex(F[N[k]],k); });
+   mfem::forall(ne*nd, [=] MFEM_HOST_DEVICE (int k)
+   {
+      const int e = k/dofs, i = k%dofs;
+      int a[3], slot[3]; Coordinates(i,n,dimension,a);
+      int origin = -1;
+      for (int v = 0; v < (1<<dimension); ++v)
+      {
+         bool belongs = true;
+         for (int d = 0; d < dimension; ++d)
+         { if ((a[d] == 0 || a[d] == n-1) && ((v>>d)&1) != (a[d] == n-1)) { belongs = false; } }
+         if (belongs && (origin < 0 ||
+                         V[e*(1<<dimension)+v] < V[e*(1<<dimension)+origin])) { origin=v; }
+      }
+      int sign = 1;
+      for (int d = 0; d < dimension; ++d)
+      {
+         slot[d] = a[d];
+         if (a[d] > 0 && a[d] < n-1 && ((origin>>d)&1))
+         { slot[d] = n-1-a[d]; sign *= parity[a[d]]; }
+      }
+      M[k] = N[e*dofs+Index(slot,n,dimension)]; S[k] = sign;
+      K[k] = F[N[k]] == k;
+   });
+
 }
 
 void BasisChange::Apply(const Vector &x, Vector &y, bool invert,
@@ -211,36 +230,56 @@ void BasisChange::Apply(const Vector &x, Vector &y, bool invert,
    const auto &in = invert ? nodal : modal;
    const auto &out = invert ? modal : nodal;
    const DenseMatrix &s = invert ? basis->inverse : basis->S;
-   std::vector<const DenseMatrix*> matrices(dim, &s);
    local_in.SetSize(fes.GetVSize()); local_out.SetSize(fes.GetVSize());
-   if (transpose) { fes.GetRestrictionMatrix()->MultTranspose(x, local_in); }
+   local_in.UseDevice(true); local_out.UseDevice(true);
+   if (transpose) { RestrictTrueDofs(true_dofs,x,local_in,true); }
    else { fes.GetProlongationMatrix()->Mult(x, local_in); }
-   local_out = 0.; element.SetSize(nd);
-   for (int e = 0; e < fes.GetNE(); ++e)
+   local_out = 0.;
+   const int count = fes.GetNE()*nd, n = basis->p+1, dofs = nd;
+   element.SetSize(count); result.SetSize(count);
+   element.UseDevice(true); result.UseDevice(true);
+   const int *im = in.Read(), *om = out.Read(), *sg = signs.Read(),
+              *mk = mask.Read();
+   const real_t *li = local_in.Read();
+   real_t *el = element.Write();
+   mfem::forall(count, [=] MFEM_HOST_DEVICE (int k)
    {
-      for (int i = 0; i < nd; ++i)
+      el[k] = transpose ? li[om[k]]*mk[k]*(invert ? sg[k] : 1)
+              : li[im[k]]*(invert ? 1 : sg[k]);
+   });
+   const real_t *S = s.Read();
+   int stride = 1;
+   for (int axis = 0; axis < dim; ++axis)
+   {
+      const real_t *u = element.Read(); real_t *v = result.Write();
+      const int step = stride;
+      mfem::forall(count, [=] MFEM_HOST_DEVICE (int k)
       {
-         const int k = e * nd + i;
-         element[i] = transpose ? local_in[out[k]] * mask[k] * (invert ? signs[k] : 1)
-                      : local_in[in[k]] * (invert ? 1 : signs[k]);
-      }
-      Tensor(element, result, matrices, transpose, scratch1, scratch2);
-      for (int i = 0; i < nd; ++i)
-      {
-         const int k = e * nd + i;
-         if (transpose) { local_out[in[k]] += result[i] * (invert ? 1 : signs[k]); }
-         else if (mask[k]) { local_out[out[k]] = result[i] * (invert ? signs[k] : 1); }
-      }
+         const int i = (k % dofs / step) % n;
+         real_t value = 0.;
+         for (int j = 0; j < n; ++j)
+         { value += u[k+(j-i)*step]*S[transpose ? j+n*i : i+n*j]; }
+         v[k] = value;
+      });
+      element.Swap(result); stride *= n;
    }
+   const real_t *r = element.Read(); real_t *lo = local_out.ReadWrite();
+   mfem::forall(count, [=] MFEM_HOST_DEVICE (int k)
+   {
+      if (transpose) { AtomicAdd(lo[im[k]], r[k]*(invert ? 1 : sg[k])); }
+      else if (mk[k]) { lo[om[k]] = r[k]*(invert ? sg[k] : 1); }
+   });
    y.SetSize(height);
    if (transpose) { fes.GetProlongationMatrix()->MultTranspose(local_out, y); }
-   else { fes.GetRestrictionMatrix()->Mult(local_out, y); }
+   else { RestrictTrueDofs(true_dofs,local_out,y,false); }
 }
 
 std::unique_ptr<SparseMatrix> AssembleElement(
    const Basis &basis, ElementTransformation &trans, Coefficient &coefficient)
 {
    const int p = basis.p, n = p + 1, dim = trans.GetDimension();
+   basis.S.HostRead(); basis.G.HostRead(); basis.derivative.HostRead();
+   basis.eigenvalues.HostRead();
    IntegrationRules rules(0, Quadrature1D::GaussLobatto);
    const IntegrationRule &ir = rules.Get(Geometry::SEGMENT, 3 * p);
    const int nq = ir.GetNPoints();
@@ -355,7 +394,6 @@ Messages Exchange(Messages &send, MPI_Comm comm)
 }
 struct ElementData
 {
-   std::unique_ptr<SparseMatrix> matrix;
    std::vector<int> lex, dofs, signs;
 };
 
@@ -367,7 +405,8 @@ std::unique_ptr<SparseMatrix> Condense(const SparseMatrix &a, int n, int dim,
    for (int i = 0; i < nd; ++i) if (!Interior(i, n, dim))
       { index[i] = boundary.size(); boundary.push_back(i); }
    auto matrix = std::make_unique<SparseMatrix>(boundary.size());
-   const int *ai = a.GetI(), *aj = a.GetJ(); const real_t *av = a.GetData();
+   const int *ai = a.HostReadI(), *aj = a.HostReadJ();
+   const real_t *av = a.HostReadData();
    for (int i = 0; i < nd; ++i)
    {
       if (index[i] >= 0)
@@ -420,6 +459,7 @@ struct PatchAssembly
    std::vector<Global> global;
    std::vector<bool> interior;
    std::unique_ptr<SparseMatrix> matrix;
+   std::vector<int> element_maps, element_signs, element_sources;
    int Insert(Global g, bool cell)
    {
       const auto it = index.find(g);
@@ -429,40 +469,37 @@ struct PatchAssembly
    }
 };
 void ReceivePatches(const std::string &s,
-                    std::map<Global, PatchAssembly> &patches, bool assemble)
+                    std::map<Global, PatchAssembly> &patches, bool assemble,
+                    int nd, int base = 0)
 {
-   size_t pos = 0;
+   size_t pos = sizeof(int);
    while (pos < s.size())
    {
-      const Global vertex = Unpack<Global>(s, pos);
+      const Global vertex = Unpack<Global>(s,pos);
       auto &patch = patches[vertex];
-      const int n = Unpack<int>(s, pos);
-      std::vector<int> local(n);
+      const int n = Unpack<int>(s,pos), source = Unpack<int>(s,pos);
+      const int start = patch.element_maps.size();
+      if (assemble)
+      {
+         patch.element_maps.resize(start+nd,-1); patch.element_signs.resize(start+nd,0);
+         patch.element_sources.push_back(base+source);
+      }
       for (int i = 0; i < n; ++i)
       {
-         Global g = Unpack<Global>(s, pos); int interior = Unpack<int>(s, pos);
-         local[i] = assemble ? patch.index.at(g) : patch.Insert(g, interior != 0);
-      }
-      const int nz = Unpack<int>(s, pos);
-      if (!assemble)
-      {
-         const size_t record_size = 2 * sizeof(int) + sizeof(real_t);
-         MFEM_VERIFY(nz >= 0 && size_t(nz) <= (s.size() - pos) / record_size,
-                     "Invalid patch matrix message");
-         pos += size_t(nz) * record_size;
-         continue;
-      }
-      for (int k = 0; k < nz; ++k)
-      {
-         const int i = Unpack<int>(s, pos), j = Unpack<int>(s, pos);
-         const real_t value = Unpack<real_t>(s, pos);
-         patch.matrix->Add(local[i], local[j], value);
+         const Global g = Unpack<Global>(s,pos);
+         const int interior = Unpack<int>(s,pos), local = Unpack<int>(s,pos),
+                   sign = Unpack<int>(s,pos);
+         MFEM_VERIFY(local >= 0 && local < nd,"Invalid patch element index");
+         if (assemble)
+         { patch.element_maps[start+local] = patch.index.at(g); patch.element_signs[start+local] = sign; }
+         else { patch.Insert(g,interior != 0); }
       }
    }
 }
 Array<int> PatchOrdering(const SparseMatrix &pattern,
                          const std::vector<bool> &interior)
 {
+   pattern.HostReadI(); pattern.HostReadJ();
    std::vector<int> interface, inverse(pattern.Height(), -1);
    Array<int> permutation(pattern.Height()); int first = 0;
    for (int i = 0; i < pattern.Height(); ++i)
@@ -504,9 +541,8 @@ class Preconditioner::PatchSolver : public Solver
 {
    struct Patch
    {
-      std::unique_ptr<IncompleteCholeskySolver> factor;
+      int factor;
       Array<int> indices;
-      mutable Vector rhs, solution;
    };
    struct Peer
    {
@@ -519,23 +555,20 @@ class Preconditioner::PatchSolver : public Solver
    std::vector<Patch> patches;
    int local_patch_count = 0;
    std::map<int, Peer> peers;
-   std::vector<int> local_indices;
+   Array<int> local_indices, patch_order;
+   PatchFactors factors;
    mutable Vector extended, correction;
    mutable std::vector<MPI_Request> requests;
    real_t damping = 1.;
    void ApplyPatches(int begin, int end) const
    {
-      for (int k = begin; k < end; ++k)
-      {
-         const auto &patch = patches[k];
-         extended.GetSubVector(patch.indices, patch.rhs);
-         patch.factor->Mult(patch.rhs, patch.solution);
-         correction.AddElementVector(patch.indices, patch.solution);
-      }
+      factors.Apply(extended, correction, patch_order, begin, end);
    }
+public:
    std::map<Global, PatchAssembly> AssemblePatches(
       ParFiniteElementSpace &fes, const std::vector<ElementData> &elements,
-      const Array<int> &ess_bdr, int p, Messages &send)
+      const Array<int> &ess_bdr, int p, Messages &send, const Vector &element_values,
+      const SparseMatrix &pattern, const Array<int> &entry_rows)
    {
       ParMesh &mesh = *fes.GetParMesh();
       const int dim = mesh.Dimension(), n = p + 1;
@@ -550,59 +583,120 @@ class Preconditioner::PatchSolver : public Solver
       Array<int> essential; fes.GetEssentialVDofs(ess_bdr, essential);
       Array<int> ev;
       std::string local_records;
+      std::map<int,std::vector<int>> sources;
+      std::map<int,std::map<int,int>> slots;
+      const int nnz = pattern.NumNonZeroElems(), nd = pattern.Height();
       for (int e = 0; e < mesh.GetNE(); ++e)
       {
          const auto &el = elements[e];
-         const int *ai = el.matrix->GetI(), *aj = el.matrix->GetJ();
-         const real_t *av = el.matrix->GetData();
          mesh.GetElementVertices(e, ev);
          const auto *vr = Geometries.GetVertices(mesh.GetElementGeometry(e));
          for (int vertex = 0; vertex < ev.Size(); ++vertex)
          {
             const auto &ip = vr->IntPoint(vertex);
             const int corner[3] = {int(ip.x)*p, int(ip.y)*p, int(ip.z)*p};
-            std::vector<int> selected, inverse(el.lex.size(), -1);
+            std::vector<int> selected;
             for (size_t i = 0; i < el.lex.size(); ++i)
             {
                int a[3]; Coordinates(el.lex[i], n, dim, a);
                bool inside = !essential[el.dofs[i]];
                for (int d = 0; d < dim; ++d)
                { if ((a[d] == 0 || a[d] == p) && a[d] != corner[d]) { inside = false; } }
-               if (inside) { inverse[i] = selected.size(); selected.push_back(i); }
+               if (inside) { selected.push_back(i); }
             }
             if (selected.empty()) { continue; }
             const int root = owner[ev[vertex]];
             std::string &buffer = root == rank ? local_records : send[root].data;
-            // Counts and interior flags use int in the serialized format.
-            Pack(buffer, vertices[ev[vertex]]); Pack(buffer, int(selected.size()));
+            auto slot = slots[root].find(e);
+            if (slot == slots[root].end())
+            {
+               slot = slots[root].emplace(e,sources[root].size()).first;
+               sources[root].push_back(e);
+            }
+            Pack(buffer,vertices[ev[vertex]]); Pack(buffer,int(selected.size()));
+            Pack(buffer,slot->second*nnz);
             for (int i : selected)
-            { Pack(buffer, fes.GetGlobalTDofNumber(el.dofs[i])); Pack(buffer, int(Interior(el.lex[i], n, dim))); }
-            int nz = 0;
-            for (int i : selected) for (int k = ai[i]; k < ai[i + 1]; ++k)
-               { if (inverse[aj[k]] >= 0) { ++nz; } }
-            Pack(buffer, nz);
-            for (int i : selected) for (int k = ai[i]; k < ai[i + 1]; ++k)
-               {
-                  const int j = aj[k];
-                  if (inverse[j] >= 0)
-                  { Pack(buffer, inverse[i]); Pack(buffer, inverse[j]); Pack(buffer, av[k]*el.signs[i]*el.signs[j]); }
-               }
+            {
+               Pack(buffer,fes.GetGlobalTDofNumber(el.dofs[i]));
+               Pack(buffer,int(Interior(el.lex[i],n,dim))); Pack(buffer,i);
+               Pack(buffer,el.signs[i]);
+            }
          }
       }
-      auto received = Exchange(send, comm);
-      std::map<Global, PatchAssembly> assembled;
-      // Establish complete patch DOF numbering before allocating the matrices.
-      ReceivePatches(local_records, assembled, false);
-      for (const auto &entry : received)
-      { ReceivePatches(entry.second.data, assembled, false); }
-      for (auto &entry : assembled)
-      { entry.second.matrix = std::make_unique<SparseMatrix>(entry.second.global.size()); }
-      ReceivePatches(local_records, assembled, true);
-      std::string().swap(local_records);
-      for (auto &entry : received)
+      // Metadata is exchanged separately from numerical values. Only message
+      // buffers are staged when MPI cannot consume device pointers.
+      for (auto &entry : send)
       {
-         ReceivePatches(entry.second.data, assembled, true);
-         std::string().swap(entry.second.data);
+         std::string header; Pack(header,int(sources[entry.first].size())*nnz);
+         entry.second.data.insert(0,header);
+      }
+      std::string header; Pack(header,int(sources[rank].size())*nnz);
+      local_records.insert(0,header);
+      auto received = Exchange(send, comm);
+      received[rank].data = std::move(local_records);
+      std::map<int,int> bases;
+      std::map<int,Vector> incoming, outgoing;
+      int total = 0;
+      for (const auto &entry : received)
+      {
+         size_t pos = 0; const int count = Unpack<int>(entry.second.data,pos);
+         bases[entry.first] = total; total += count;
+         incoming[entry.first].SetSize(count); incoming[entry.first].UseDevice(true);
+      }
+      const bool gpu_mpi = Device::GetGPUAwareMPI();
+      std::vector<MPI_Request> req;
+      const real_t *V = element_values.Read();
+      for (const auto &entry : received)
+      {
+         const int peer = entry.first;
+         Array<int> src(sources[peer].data(),sources[peer].size());
+         Vector &buffer = peer == rank ? incoming[peer] : outgoing[peer];
+         buffer.SetSize(src.Size()*nnz); buffer.UseDevice(true);
+         const int *S = src.Read(); real_t *B = buffer.Write();
+         mfem::forall(buffer.Size(), [=] MFEM_HOST_DEVICE (int k) { B[k] = V[S[k/nnz]*nnz+k%nnz]; });
+         if (peer == rank) { continue; }
+         auto &in = incoming[peer]; MPI_Request r;
+         MPI_Irecv(gpu_mpi ? in.Write() : in.HostWrite(),in.Size(),
+                   MPITypeMap<real_t>::mpi_type,peer,3,comm,&r); req.push_back(r);
+         if (gpu_mpi) { MFEM_STREAM_SYNC; }
+         MPI_Isend(gpu_mpi ? buffer.Read() : buffer.HostRead(),buffer.Size(),
+                   MPITypeMap<real_t>::mpi_type,peer,3,comm,&r); req.push_back(r);
+      }
+      MPI_Waitall(req.size(),req.data(),MPI_STATUSES_IGNORE);
+      Vector numerical(total); numerical.UseDevice(true);
+      real_t *N = numerical.Write();
+      for (const auto &entry : incoming)
+      {
+         const int base = bases[entry.first]; const real_t *B = entry.second.Read();
+         mfem::forall(entry.second.Size(), [=] MFEM_HOST_DEVICE (int k) { N[base+k] = B[k]; });
+      }
+      std::map<Global, PatchAssembly> assembled;
+      for (const auto &entry : received) { ReceivePatches(entry.second.data,assembled,false,nd); }
+      for (const auto &entry : received)
+      { ReceivePatches(entry.second.data,assembled,true,nd,bases[entry.first]); }
+      const int *ER = entry_rows.Read(), *EC = pattern.ReadJ();
+      for (auto &entry : assembled)
+      {
+         auto &a = entry.second;
+         Array<int> map(a.element_maps.data(),a.element_maps.size());
+         Array<int> sign(a.element_signs.data(),a.element_signs.size());
+         Array<int> src(a.element_sources.data(),a.element_sources.size());
+         const int count = src.Size()*nnz;
+         Array<int> rows(count), cols(count), indices(count); Vector weights(count);
+         weights.UseDevice(true);
+         const int *M = map.Read(), *G = sign.Read(), *B = src.Read();
+         int *R = rows.Write(), *C = cols.Write(), *S = indices.Write();
+         real_t *W = weights.Write();
+         mfem::forall(count, [=] MFEM_HOST_DEVICE (int k)
+         {
+            const int e = k/nnz, j = k%nnz, i0 = e*nd+ER[j], i1 = e*nd+EC[j];
+            const int row = M[i0], col = M[i1];
+            R[k] = row < 0 || col < 0 ? -1 : row; C[k] = col;
+            S[k] = B[e]+j; W[k] = G[i0]*G[i1];
+         });
+         SparseAccumulator accumulator(a.global.size(),a.global.size());
+         accumulator.Assemble(numerical,rows,cols,indices,weights);
+         a.matrix = std::move(accumulator.matrix);
       }
       return assembled;
    }
@@ -626,7 +720,8 @@ class Preconditioner::PatchSolver : public Solver
       int count = 0;
       for (auto &entry : all_dofs) { entry.second = count++; }
       extended.SetSize(count); correction.SetSize(count);
-      local_indices.resize(count, -1);
+      extended.UseDevice(true); correction.UseDevice(true);
+      local_indices.SetSize(count); local_indices = -1;
       for (const auto &entry : all_dofs)
       {
          if (entry.first >= offset && entry.first < offset + height)
@@ -658,6 +753,7 @@ class Preconditioner::PatchSolver : public Solver
          auto &peer = entry.second;
          peer.receive.SetSize(peer.requested.Size());
          peer.send.SetSize(peer.supplied.Size());
+         peer.receive.UseDevice(true); peer.send.UseDevice(true);
          communication_values += 2 * peer.supplied.Size();
       }
       requests.resize(2 * peers.size());
@@ -670,36 +766,10 @@ class Preconditioner::PatchSolver : public Solver
       {
          auto &a = it->second;
          auto matrix = std::move(a.matrix);
-         // Structural zeros carry the ICC fill in the numerical matrix itself.
-         // Only interface rows change, so the interior rows can be read in LIL form.
-         Array<int> cols;
-         Vector values;
-         for (int i = 0; i < matrix->Height(); ++i)
-         {
-            if (!a.interior[i]) { continue; }
-            matrix->GetRow(i, cols, values);
-            for (int j : cols)
-            {
-               if (a.interior[j]) { continue; }
-               for (int k : cols)
-               {
-                  if (!a.interior[k]) { matrix->Add(j, k, 0.); }
-               }
-            }
-         }
-         matrix->Finalize(0); matrix->SortColumnIndices();
          Array<int> ordering = PatchOrdering(*matrix, a.interior);
-         Patch patch; patch.factor = std::make_unique<IncompleteCholeskySolver>();
-         const int failed = patch.factor->Factor(*matrix, *matrix, ordering,
-                                                 diagonal_shift);
-         MFEM_VERIFY(failed < 0, "ICC nonpositive pivot " << failed <<
-                     " in vertex patch "
-                     << it->first << " on rank " << rank <<
-                     "; inspect mesh/coefficient or set --diagonal-shift");
+         Patch patch;
          for (Global g : a.global) { patch.indices.Append(all_dofs.at(g)); }
-         patch.rhs.SetSize(a.global.size());
-         patch.solution.SetSize(a.global.size());
-         factor_nonzeros += patch.factor->NumNonZeroElems();
+         patch.factor = factors.Add(*matrix, ordering, patch.indices, it->first);
          patch_unknowns += a.global.size();
          patches.push_back(std::move(patch));
          // The factor and DOF indices now own everything needed by this patch.
@@ -713,22 +783,30 @@ class Preconditioner::PatchSolver : public Solver
          [this](int i) { return local_indices[i] >= 0; });
       });
       local_patch_count = first_remote - patches.begin();
+      patch_order.SetSize(patches.size());
+      for (int i = 0; i < patch_order.Size(); ++i) { patch_order[i] = patches[i].factor; }
+      factor_nonzeros = factors.Nonzeros();
+      factors.Factor(diagonal_shift, rank);
    }
 public:
    long long factor_nonzeros = 0, patch_unknowns = 0, communication_values = 0;
    long long NumPatches() const { return patches.size(); }
+   long long StorageBytes() const { return factors.StorageBytes()+sizeof(int)*patch_order.Size(); }
    real_t GetDamping() const { return damping; }
    void SetDamping(real_t value) { damping = value; }
    PatchSolver(ParFiniteElementSpace &fes,
                const std::vector<ElementData> &elements,
-               const Array<int> &ess_bdr, int p, const Options &options)
+               const Array<int> &ess_bdr, int p, const Options &options,
+               const Vector &element_values,
+               const SparseMatrix &pattern, const Array<int> &entry_rows)
       : Solver(fes.GetTrueVSize()), offset(fes.GetMyTDofOffset())
    {
       MPI_Comm_dup(fes.GetComm(), &comm); MPI_Comm_rank(comm, &rank);
       const auto &gt = fes.GetParMesh()->gtopo;
       Messages send;
       for (int i = 1; i < gt.GetNumNeighbors(); ++i) { send[gt.GetNeighborRank(i)]; }
-      auto assembled = AssemblePatches(fes, elements, ess_bdr, p, send);
+      auto assembled = AssemblePatches(fes, elements, ess_bdr, p, send,
+                                       element_values, pattern, entry_rows);
       auto all_dofs = BuildExchange(assembled, send);
       FactorPatches(assembled, all_dofs, options.diagonal_shift);
    }
@@ -737,19 +815,25 @@ public:
    void MultTranspose(const Vector &x, Vector &y) const override { Mult(x, y); }
    void Mult(const Vector &x, Vector &y) const override
    {
+      const bool gpu_mpi = Device::GetGPUAwareMPI();
       int k = 0;
       for (auto &entry : peers)
       {
          auto &peer = entry.second;
          x.GetSubVector(peer.supplied, peer.send);
-         MPI_Irecv(peer.receive.GetData(), peer.receive.Size(),
+         MPI_Irecv(gpu_mpi ? peer.receive.Write() : peer.receive.HostWrite(),
+                   peer.receive.Size(),
                    MPITypeMap<real_t>::mpi_type,
                    entry.first, 1, comm, &requests[k++]);
-         MPI_Isend(peer.send.GetData(), peer.send.Size(), MPITypeMap<real_t>::mpi_type,
+         if (gpu_mpi) { MFEM_STREAM_SYNC; }
+         MPI_Isend(gpu_mpi ? peer.send.Read() : peer.send.HostRead(), peer.send.Size(),
+                   MPITypeMap<real_t>::mpi_type,
                    entry.first, 1, comm, &requests[k++]);
       }
-      for (int i = 0; i < extended.Size(); ++i)
-      { if (local_indices[i] >= 0) { extended[i] = x[local_indices[i]]; } }
+      const int *indices = local_indices.Read();
+      const real_t *X = x.Read(); real_t *E = extended.ReadWrite();
+      mfem::forall(extended.Size(), [=] MFEM_HOST_DEVICE (int i)
+      { if (indices[i] >= 0) { E[i] = X[indices[i]]; } });
       correction = 0.;
       // Solve local patches while remote residuals are in flight.
       ApplyPatches(0, local_patch_count);
@@ -765,15 +849,19 @@ public:
       {
          auto &peer = entry.second;
          correction.GetSubVector(peer.requested, peer.receive);
-         MPI_Irecv(peer.send.GetData(), peer.send.Size(), MPITypeMap<real_t>::mpi_type,
+         MPI_Irecv(gpu_mpi ? peer.send.Write() : peer.send.HostWrite(), peer.send.Size(),
+                   MPITypeMap<real_t>::mpi_type,
                    entry.first, 2, comm, &requests[k++]);
-         MPI_Isend(peer.receive.GetData(), peer.receive.Size(),
+         if (gpu_mpi) { MFEM_STREAM_SYNC; }
+         MPI_Isend(gpu_mpi ? peer.receive.Read() : peer.receive.HostRead(),
+                   peer.receive.Size(),
                    MPITypeMap<real_t>::mpi_type,
                    entry.first, 2, comm, &requests[k++]);
       }
-      y.SetSize(height); y = 0.;
-      for (int i = 0; i < correction.Size(); ++i)
-      { if (local_indices[i] >= 0) { y[local_indices[i]] += correction[i]; } }
+      y.SetSize(height); y.UseDevice(true); y = 0.;
+      const real_t *C = correction.Read(); real_t *Y = y.ReadWrite();
+      mfem::forall(correction.Size(), [=] MFEM_HOST_DEVICE (int i)
+      { if (indices[i] >= 0) { Y[indices[i]] += C[i]; } });
       MPI_Waitall(k, requests.data(), MPI_STATUSES_IGNORE);
       for (const auto &entry : peers)
       {
@@ -796,7 +884,8 @@ public:
                   const Array<int> &fine, const Array<int> &coarse)
       : Operator(t ? t->Width() : s.Height(), p.Width()), interpolation(p), basis(s),
         trace(t),
-        fine_essential(fine), coarse_essential(coarse) { }
+        fine_essential(fine), coarse_essential(coarse)
+   { a.UseDevice(true); b.UseDevice(true); c.UseDevice(true); }
    void Mult(const Vector &x, Vector &y) const override
    {
       a = x; a.SetSubVector(coarse_essential, 0.);
@@ -827,6 +916,8 @@ std::unique_ptr<SparseMatrix> CondenseElement(
    return Condense(matrix, degree + 1, dimension, boundary);
 }
 
+#include "vertex_patch_assembly.hpp"
+
 Preconditioner::Preconditioner(ParFiniteElementSpace &space,
                                Coefficient &coefficient,
                                const Array<int> &ess_bdr, const Options &opts)
@@ -835,6 +926,11 @@ Preconditioner::Preconditioner(ParFiniteElementSpace &space,
      degree(space.GetMaxElementOrder())
 {
    ParMesh &mesh = *space.GetParMesh(); const int dim = mesh.Dimension();
+   for (Vector *v :
+        {
+           &rhs, &interior, &reduced, &trace_solution, &solution, &temp,
+           &inverse_interior
+        }) { v->UseDevice(true); }
    const auto *collection = dynamic_cast<const H1_FECollection*>(space.FEColl());
    MFEM_VERIFY((dim == 2 || dim == 3) && mesh.SpaceDimension() == dim &&
                !space.Nonconforming() && !space.IsVariableOrder() &&
@@ -854,11 +950,15 @@ Preconditioner::Preconditioner(ParFiniteElementSpace &space,
    MPI_Allreduce(MPI_IN_PLACE, &nessential, 1, MPI_LONG_LONG, MPI_SUM, comm);
    MFEM_VERIFY(nessential > 0,
                "Pure Neumann problems require nullspace handling and are not supported");
+   StopWatch stage; stage.Start();
    Array<int> coarse_essential;
    BuildCoarse(coefficient, ess_bdr, coarse_essential);
+   MFEM_STREAM_SYNC; stage.Stop(); setup_timings[0] = stage.RealTime();
    if (degree == 1) { return; }
    BuildAuxiliary(coefficient, ess_bdr);
+   stage.Clear(); stage.Start();
    BuildMultigrid(coarse_essential);
+   MFEM_STREAM_SYNC; stage.Stop(); setup_timings[5] = stage.RealTime();
 }
 
 void Preconditioner::BuildCoarse(Coefficient &coefficient,
@@ -871,13 +971,19 @@ void Preconditioner::BuildCoarse(Coefficient &coefficient,
    coarse_space.reset(new ParFiniteElementSpace(&mesh, coarse_collection.get()));
    coarse_space->GetEssentialTrueDofs(ess_bdr, coarse_essential);
    coarse_form.reset(new ParBilinearForm(coarse_space.get()));
+   coarse_form->SetAssemblyLevel(AssemblyLevel::FULL);
    coarse_form->AddDomainIntegrator(new DiffusionIntegrator(coefficient));
    coarse_form->Assemble();
    coarse_matrix.reset(new HypreParMatrix);
-   coarse_form->FormSystemMatrix(coarse_essential, *coarse_matrix);
+   coarse_form->FormSystemMatrix(coarse_essential, coarse_handle);
+   coarse_matrix->MakeRef(*coarse_handle.As<HypreParMatrix>());
    coarse_solver.reset(new HypreBoomerAMG(*coarse_matrix));
    coarse_solver->SetPrintLevel(0); coarse_solver->SetMaxIter(1);
-   coarse_solver->SetTol(0.); coarse_solver->SetRelaxType(6);
+   coarse_solver->SetTol(0.);
+   coarse_solver->SetRelaxType(Device::Allows(Backend::DEVICE_MASK) ? 18 : 6);
+   Vector zero(coarse_space->GetTrueVSize()), probe(zero.Size());
+   zero.UseDevice(true); probe.UseDevice(true); zero = 0.;
+   coarse_solver->Mult(zero,probe);
 }
 
 void Preconditioner::BuildAuxiliary(Coefficient &coefficient,
@@ -887,7 +993,8 @@ void Preconditioner::BuildAuxiliary(Coefficient &coefficient,
    const int dim = mesh.Dimension();
    auto reference = Basis::Get(degree);
    basis.reset(new BasisChange(fes, reference));
-   const int n = degree + 1, nd = Power(n, dim);
+   basis->ModalMap().HostRead(); basis->Signs().HostRead();
+   const int nd = Power(degree+1, dim);
    ParFiniteElementSpace *active = &fes;
    Array<int> full_to_trace(fes.GetVSize()); full_to_trace = -1;
    if (options.static_condensation)
@@ -904,72 +1011,86 @@ void Preconditioner::BuildAuxiliary(Coefficient &coefficient,
       active = trace_space.get();
    }
    active->GetEssentialTrueDofs(ess_bdr, active_essential);
-   auto local_matrix = std::make_unique<SparseMatrix>(active->GetVSize());
-   std::unique_ptr<SparseMatrix> local_cross;
-   if (options.static_condensation)
-   { local_cross = std::make_unique<SparseMatrix>(active->GetVSize(), fes.GetVSize()); }
-   Vector local_inverse(fes.GetVSize()); local_inverse = 0.;
-   std::vector<ElementData> elements(mesh.GetNE());
-   for (int e = 0; e < mesh.GetNE(); ++e)
+   StopWatch stage; stage.Start();
+   auto batch_owner = ElementBatch::Get(*reference, dim,
+                                        options.static_condensation);
+   auto &batch = *batch_owner;
+   stage.Stop(); setup_timings[1] = stage.RealTime(); stage.Clear(); stage.Start();
+   batch.Assemble(mesh, coefficient, options.static_condensation);
+   MFEM_STREAM_SYNC; stage.Stop(); setup_timings[2] = stage.RealTime();
+   stage.Clear(); stage.Start();
+   SparseAccumulator local(active->GetVSize(), active->GetVSize());
+   SparseAccumulator cross(active->GetVSize(), fes.GetVSize());
+   Vector local_inverse(fes.GetVSize()); local_inverse.UseDevice(true);
+   local_inverse = 0.;
+   const int ne = mesh.GetNE(), active_nd = batch.pattern->Height(),
+             an = batch.active_nz;
+   const int *modal = basis->ModalMap().Read(), *signs = basis->Signs().Read();
+   const int *lex = batch.lex_map.Read(), *trace_map = full_to_trace.Read();
+   const bool condensed = options.static_condensation;
+   Array<int> element_dofs(ne*active_nd), element_signs(ne*active_nd);
+   int *ED = element_dofs.Write(), *ES = element_signs.Write();
+   mfem::forall(ne*active_nd, [=] MFEM_HOST_DEVICE (int k)
    {
-      auto matrix = AssembleElement(*reference, *mesh.GetElementTransformation(e),
-                                    coefficient);
-      auto &el = elements[e];
-      if (options.static_condensation)
-      {
-         const int *ai = matrix->GetI(), *aj = matrix->GetJ();
-         const real_t *av = matrix->GetData();
-         for (int i = 0; i < nd; ++i) if (Interior(i, n, dim))
-            {
-               const int col = basis->ModalMap()[e * nd + i],
-                         sign = basis->Signs()[e * nd + i];
-               for (int k = ai[i]; k < ai[i + 1]; ++k)
-               {
-                  const int j = aj[k];
-                  if (j == i) { local_inverse[col] = 1. / av[k]; }
-                  else if (!Interior(j, n, dim))
-                  {
-                     const int row = full_to_trace[basis->ModalMap()[e * nd + j]];
-                     local_cross->Add(row, col, av[k] * sign * basis->Signs()[e * nd + j]);
-                  }
-               }
-            }
-         el.matrix = CondenseElement(*matrix, degree, dim, el.lex);
-      }
-      else
-      {
-         el.matrix = std::move(matrix); el.lex.resize(nd);
-         for (int i = 0; i < nd; ++i) { el.lex[i] = i; }
-      }
-      for (int i : el.lex)
-      {
-         int dof = basis->ModalMap()[e * nd + i];
-         if (options.static_condensation) { dof = full_to_trace[dof]; }
-         MFEM_VERIFY(dof >= 0, "Invalid trace mapping");
-         el.dofs.push_back(dof); el.signs.push_back(basis->Signs()[e * nd + i]);
-      }
-      const int *ai = el.matrix->GetI(), *aj = el.matrix->GetJ();
-      const real_t *av = el.matrix->GetData();
-      for (size_t i = 0; i < el.lex.size(); ++i)
-         for (int k = ai[i]; k < ai[i + 1]; ++k)
-         { local_matrix->Add(el.dofs[i], el.dofs[aj[k]], av[k] * el.signs[i] * el.signs[aj[k]]); }
+      const int e = k/active_nd, i = lex[k%active_nd], dof = modal[e*nd+i];
+      ED[k] = condensed ? trace_map[dof] : dof; ES[k] = signs[e*nd+i];
+   });
+   Array<int> rows(ne*an), cols(ne*an), sources(ne*an); Vector weights(ne*an);
+   weights.UseDevice(true);
+   int *R = rows.Write(), *C = cols.Write(), *S = sources.Write();
+   real_t *W = weights.Write();
+   const int *ER = batch.entry_rows.Read(), *EC = batch.pattern->ReadJ();
+   mfem::forall(ne*an, [=] MFEM_HOST_DEVICE (int k)
+   {
+      const int e = k/an, a = k%an, i = e*active_nd+ER[a], j = e*active_nd+EC[a];
+      R[k] = ED[i]; C[k] = ED[j]; S[k] = k; W[k] = ES[i]*ES[j];
+   });
+   local.Assemble(batch.active_values,rows,cols,sources,weights);
+   // MPI ownership metadata is built once from the device-generated maps.
+   const int *dh = element_dofs.HostRead(), *sh = element_signs.HostRead();
+   std::vector<ElementData> elements(ne);
+   for (int e = 0; e < ne; ++e)
+   {
+      auto &el = elements[e]; el.lex = batch.lex;
+      el.dofs.assign(dh+e*active_nd,dh+(e+1)*active_nd);
+      el.signs.assign(sh+e*active_nd,sh+(e+1)*active_nd);
    }
-   local_matrix->Finalize(0); local_matrix->SortColumnIndices();
    ParBilinearForm form(active);
-   auxiliary.reset(form.ParallelAssemble(local_matrix.get()));
-   local_matrix.reset();
+   auxiliary.reset(form.ParallelAssemble(local.matrix.get()));
    delete auxiliary->EliminateRowsCols(active_essential);
    auxiliary_nonzeros = auxiliary->NNZ();
    if (options.static_condensation)
    {
-      local_cross->Finalize(0); local_cross->SortColumnIndices();
+      const int cn = batch.cross_sources.Size(), fn = batch.nz;
+      rows.SetSize(ne*cn); cols.SetSize(ne*cn); sources.SetSize(ne*cn);
+      weights.SetSize(ne*cn);
+      R = rows.Write(); C = cols.Write(); S = sources.Write(); W = weights.Write();
+      const int *CR = batch.cross_rows.Read(), *CC = batch.cross_cols.Read(),
+                 *CS = batch.cross_sources.Read();
+      mfem::forall(ne*cn, [=] MFEM_HOST_DEVICE (int k)
+      {
+         const int e = k/cn, a = k%cn, i = e*nd+CR[a], j = e*nd+CC[a];
+         R[k] = trace_map[modal[i]]; C[k] = modal[j]; S[k] = e*fn+CS[a];
+         W[k] = signs[i]*signs[j];
+      });
+      cross.Assemble(batch.full_values,rows,cols,sources,weights);
       ParMixedBilinearForm mixed(&fes, active);
-      coupling.reset(mixed.ParallelAssemble(local_cross.get()));
-      local_cross.reset();
+      coupling.reset(mixed.ParallelAssemble(cross.matrix.get()));
+      const int count = batch.interior_sources.Size();
+      const int *I = batch.interior_dofs.Read(), *IS = batch.interior_sources.Read();
+      const real_t *V = batch.full_values.Read();
+      real_t *D = local_inverse.ReadWrite();
+      mfem::forall(ne*count, [=] MFEM_HOST_DEVICE (int k)
+      { const int e = k/count, a = k%count; D[modal[e*nd+I[a]]] = 1./V[e*fn+IS[a]]; });
       inverse_interior.SetSize(fes.GetTrueVSize());
       fes.GetRestrictionMatrix()->Mult(local_inverse, inverse_interior);
    }
-   patches.reset(new PatchSolver(*active, elements, ess_bdr, degree, options));
+   MFEM_STREAM_SYNC; stage.Stop(); setup_timings[3] = stage.RealTime();
+   stage.Clear(); stage.Start();
+   patches.reset(new PatchSolver(*active, elements, ess_bdr, degree, options,
+                                 batch.active_values, *batch.pattern, batch.entry_rows));
+   MFEM_STREAM_SYNC; stage.Stop(); setup_timings[4] = stage.RealTime();
+   batch.full_values.Destroy(); batch.active_values.Destroy();
 }
 
 void Preconditioner::BuildMultigrid(const Array<int> &coarse_essential)
@@ -990,8 +1111,8 @@ void Preconditioner::BuildMultigrid(const Array<int> &coarse_essential)
       damping = 1. / (1.2 * largest);
    }
    patches->SetDamping(damping);
-   interpolation.reset(new PRefinementTransferOperator(*coarse_space, fes, true));
-   transfer.reset(new CoarseTransfer(*interpolation->GetTrueTransferOperator(),
+   interpolation.reset(new LinearCoarseTransfer(*coarse_space, fes));
+   transfer.reset(new CoarseTransfer(*interpolation,
                                      *basis, trace.get(), active_essential, coarse_essential));
    Array<Operator*> operators(2), prolongations(1);
    Array<Solver*> smoothers(2);
@@ -1030,22 +1151,28 @@ void Preconditioner::Mult(const Vector &x, Vector &y) const
       solution.SetSize(rhs.Size()); multigrid->Mult(rhs, solution);
    }
    basis->Mult(solution, y);
-   for (int i : essential) { y[i] = x[i]; }
+   const int *ess = essential.Read();
+   const real_t *X = x.Read(); real_t *Y = y.ReadWrite();
+   mfem::forall(essential.Size(), [=] MFEM_HOST_DEVICE (int k)
+   { const int i = ess[k]; Y[i] = X[i]; });
 }
 
 Preconditioner::~Preconditioner() = default;
 
 void Preconditioner::PrintStatistics(std::ostream &os) const
 {
-   long long stats[4] = {0, 0, 0, 0};
+   long long stats[5] = {0, 0, 0, 0, 0};
+   real_t times[6];
+   MPI_Allreduce(setup_timings,times,6,MPITypeMap<real_t>::mpi_type,MPI_MAX,comm);
    if (patches)
    {
       stats[0] = patches->NumPatches();
       stats[1] = patches->patch_unknowns;
       stats[2] = patches->factor_nonzeros;
       stats[3] = patches->communication_values;
+      stats[4] = patches->StorageBytes();
    }
-   MPI_Allreduce(MPI_IN_PLACE, stats, 4, MPI_LONG_LONG, MPI_SUM, comm);
+   MPI_Allreduce(MPI_IN_PLACE, stats, 5, MPI_LONG_LONG, MPI_SUM, comm);
    int rank; MPI_Comm_rank(comm, &rank);
    if (rank == 0)
    {
@@ -1053,10 +1180,13 @@ void Preconditioner::PrintStatistics(std::ostream &os) const
          << ", factor nonzeros: " << stats[2] << '\n'
          << "Auxiliary nonzeros: " << auxiliary_nonzeros << '\n'
          << "Factor arrays including solve workspace (bytes): "
-         << (stats[2] + stats[1])*(sizeof(real_t) + sizeof(int)) + stats[0]*sizeof(
-            int) << '\n'
+         << stats[4] << '\n'
          << "Patch exchange values per smoothing step (gather + scatter): " << stats[3]
          << '\n'
+         << "Setup stages (MPI max seconds): coarse=" << times[0]
+         << ", reference=" << times[1] << ", elements=" << times[2]
+         << ", global assembly=" << times[3] << ", patches=" << times[4]
+         << ", damping/transfer=" << times[5] << '\n'
          << "Smoother damping: " << (patches ? patches->GetDamping() : 1.) <<
          std::endl;
    }

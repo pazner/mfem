@@ -279,16 +279,22 @@ clean: clean-exec
 	rm -f $(SEQ_UNIT_TESTS) $(PAR_UNIT_TESTS) *.o */*.o */*~ *~
 	rm -rf *.dSYM
 
-# Focused CPU/MPI tests for the sparse FDM miniapp and reusable ICC solver.
+# Focused CPU/GPU MPI tests for the sparse FDM miniapp and reusable ICC solver.
 ifeq ($(MFEM_USE_MPI)$(MFEM_USE_LAPACK)$(MFEM_USE_METIS)$(MFEM_USE_METIS_5),YESYESYESYES)
-vertex_patch_tests: $(MFEM_DIR)/miniapps/solvers/vertex_patch_solver.cpp $(MFEM_DIR)/miniapps/solvers/vertex_patch_solver.hpp $(PAR_MAIN_OBJ) linalg/test_incomplete_cholesky.o fem/test_pa_diffusion_high_order.o miniapps/test_vertex_patch.o $(MFEM_LIB_FILE)
+vertex_patch_tests: $(MFEM_DIR)/miniapps/solvers/vertex_patch_kernels.hpp $(MFEM_DIR)/miniapps/solvers/vertex_patch_assembly.hpp $(MFEM_DIR)/miniapps/solvers/vertex_patch_solver.cpp $(MFEM_DIR)/miniapps/solvers/vertex_patch_solver.hpp miniapps/vertex_patch_test_main.o linalg/test_incomplete_cholesky.o fem/test_pa_diffusion_high_order.o miniapps/test_vertex_patch.o miniapps/test_vertex_patch_kernels.o $(MFEM_LIB_FILE)
 	$(MAKE) -C $(MFEM_DIR)/miniapps/solvers vertex_patch_solver.o
-	$(CCC) $(MFEM_LINK_FLAGS) $(PAR_MAIN_OBJ) linalg/test_incomplete_cholesky.o fem/test_pa_diffusion_high_order.o miniapps/test_vertex_patch.o $(MFEM_DIR)/miniapps/solvers/vertex_patch_solver.o $(MFEM_LIBS) -o $@
+	$(CCC) $(MFEM_LINK_FLAGS) miniapps/vertex_patch_test_main.o linalg/test_incomplete_cholesky.o fem/test_pa_diffusion_high_order.o miniapps/test_vertex_patch.o miniapps/test_vertex_patch_kernels.o $(MFEM_DIR)/miniapps/solvers/vertex_patch_solver.o $(MFEM_LIBS) -o $@
 miniapps/test_vertex_patch.o: $(SRC)miniapps/test_vertex_patch.cpp $(MFEM_DIR)/miniapps/solvers/vertex_patch_solver.hpp $(HEADER_FILES) $(CONFIG_MK)
 	$(CCC) $(MFEM_FLAGS) $(INCLUDES) -c $< -o $@
 endif
 
 clean-vertex-patch-tests:
-	rm -f vertex_patch_tests miniapps/test_vertex_patch.o
+	rm -f vertex_patch_tests miniapps/test_vertex_patch.o miniapps/test_vertex_patch_kernels.o miniapps/vertex_patch_test_main.o
 clean: clean-vertex-patch-tests
 .PHONY: clean-vertex-patch-tests
+
+miniapps/vertex_patch_test_main.o: $(SRC)miniapps/vertex_patch_test_main.cpp $(HEADER_FILES) $(CONFIG_MK)
+	$(CCC) $(MFEM_FLAGS) $(INCLUDES) -c $< -o $@
+
+miniapps/test_vertex_patch_kernels.o: $(SRC)miniapps/test_vertex_patch_kernels.cpp $(MFEM_DIR)/miniapps/solvers/vertex_patch_kernels.hpp $(MFEM_DIR)/miniapps/solvers/vertex_patch_assembly.hpp $(MFEM_DIR)/miniapps/solvers/vertex_patch_solver.hpp $(HEADER_FILES) $(CONFIG_MK)
+	$(CCC) $(MFEM_FLAGS) $(INCLUDES) -c $< -o $@

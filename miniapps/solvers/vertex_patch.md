@@ -7,7 +7,9 @@ degree*, arXiv:2211.14284v2, Sections 2.2, 3, and 4.4–4.5.
 ## Build and run
 
 Use the existing MFEM make configuration. The miniapp requires MPI, LAPACK,
-METIS 5, and hypre. It runs on the CPU; SuiteSparse is not required.
+METIS 5, and hypre. CPU and CUDA execution use the same make configuration;
+CUDA execution also requires a CUDA-enabled MFEM and hypre. SuiteSparse is not
+required.
 
 ```sh
 make -j4
@@ -16,6 +18,8 @@ cd miniapps/solvers
 mpirun -np 4 ./vertex_patch -m ../../data/inline-hex.mesh -o 4
 mpirun -np 4 ./vertex_patch -m ../../data/inline-hex.mesh -o 4 -no-sc
 mpirun -np 4 ./vertex_patch -m ../../data/star.mesh -o 7 -c 1
+mpirun -np 4 ./vertex_patch -d cuda -m ../../data/inline-hex.mesh -o 8 -sc
+mpirun -np 4 ./vertex_patch -d cuda -m ../../data/inline-hex.mesh -o 8 -no-sc
 ```
 
 Supported spaces are scalar Gauss–Lobatto H1 spaces of uniform degree on
@@ -30,6 +34,10 @@ Important options:
 
 | Option | Meaning |
 | --- | --- |
+| `-d`, `--device` | MFEM backend, default `cpu`; use `cuda` for GPUs |
+| `-did`, `--device-id` | GPU index; default selects node-local rank modulo visible GPU count |
+| `-gmpi`, `-no-gmpi` | Device MPI buffers or staged communication buffers; default staged |
+| `-profile` | CUDA profiler markers around warmed applications and CG |
 | `-o`, `--order` | Polynomial degree; default 3 |
 | `-rs`, `-rp` | Serial and parallel uniform refinements; default 0 |
 | `-sc`, `-no-sc` | Enable/disable auxiliary static condensation; default enabled |
@@ -48,7 +56,12 @@ patch/factor counts, owned factor-array storage including its triangular-solve
 workspace, and the number of scalar values exchanged by patch gather/scatter per
 smoothing step. A V(1,1) cycle has two such steps. The communication count excludes
 basis conversion, matrix applications, coarse-grid communication, and setup.
-Factor storage is not a measurement of total or peak process memory.
+Factor storage includes the lower factor, transpose indices, dependency levels,
+permutations, and solve workspace. It is not total or peak process memory.
+Setup timings separately report coarse setup, reference templates, numerical
+element assembly, global assembly, patch setup, and damping/transfer setup.
+Mesh/space construction is outside these stages. Timed applications are warmed,
+and GPU timings synchronize before stopping the clock.
 
 ## Implementation
 
@@ -56,7 +69,8 @@ The physical operator remains MFEM's partially assembled diffusion operator in
 the standard nodal basis. The preconditioner converts residuals/corrections with
 transpose-consistent sum-factorized FDM basis operators. Reference data are
 computed using MFEM's LAPACK eigensolver once per degree and cached in memory.
-There is no on-disk basis cache.
+Reference sparsity, condensation maps, and quadrature tables are also cached
+by degree, dimension, and condensation mode. There is no on-disk cache.
 
 Canonical entity orientations use global vertex IDs. Interior eigenfunctions
 transform with their reflection parity, rather than with nodal reversal alone.
@@ -65,30 +79,39 @@ communication; no new finite-element collection is necessary.
 
 The sparse auxiliary operator uses diagonal weighted mass approximations in the
 broken orthonormal basis from equation (3.9). Quadrature is tensor Gauss–Lobatto
-of order at least `3*p`. MFEM's sparse tensor products and `Mult_AtDA` assemble
-the weighted contributions. Sparse assembly and condensation never form dense
-high-order element matrices. Cell interiors are diagonal. Before factorization,
+of order at least `3*p`. Batched device contractions compute the weighted
+diagonals; reference sparse contribution maps generate element entries and
+Schur updates on device. CUDA sorting and deduplication build the global and
+patch CSR graphs. Sparse assembly and condensation never form dense high-order
+element matrices. The standalone `AssembleElement` and `CondenseElement`
+functions remain CPU reference implementations. Cell interiors are diagonal. Before factorization,
 the uncondensed patch matrix receives structural zeros for the fill induced by
 eliminating interiors; this same matrix supplies both the values and the ICC
 graph. Trace injection is a local sparse map between owned true DOFs, since the
 trace and volume spaces share entity owners.
 
 Each vertex star has one owner, the lowest participating MPI rank. Shared-vertex
-neighbors exchange sparse element contributions during setup, including
-edge-only and vertex-only contacts. Cached, deduplicated communication schedules
+neighbors exchange element metadata and numerical element buffers during setup,
+including edge-only and vertex-only contacts. Each cell's numerical buffer is
+sent once per destination rank; the GPU expands its contributions into patches. Cached, deduplicated communication schedules
 gather residuals and scatter summed patch corrections. Condensation removes
 cell-interior unknowns from these exchanges. Essential DOFs are excluded from
 patches, but boundary-centered patches are retained when they have free DOFs.
 Patches using only locally owned residual DOFs are solved during the gather;
 the remaining patches are solved after the remote residuals arrive.
 
-Patch factors use MFEM's prescribed-pattern `IncompleteCholeskySolver`, with
-interiors ordered first and a METIS nested-dissection ordering of the interface
-graph. A failed pivot reports its patch and rank. No dense or direct fallback is
-used. A user-specified shift changes the patch preconditioner only.
+Patch factors implement the same prescribed-pattern ICC as MFEM's CPU
+`IncompleteCholeskySolver`, with interiors first and a METIS nested-dissection
+ordering of the interface graph. Factors and workspaces are packed into device
+arrays. Rows at the same dependency level execute concurrently, with patches
+batched across GPU blocks. The transpose solve gathers through a stored
+transpose graph. A failed pivot reports its original patch-local row, global
+vertex, and rank. A user-specified shift changes the patch preconditioner only.
 
 MFEM's multigrid composes a symmetric V(1,1) cycle with direct p-coarsening to a
-rediscretized order-one problem and one symmetric BoomerAMG cycle. In condensed
+rediscretized order-one problem and one symmetric BoomerAMG cycle. The coarse
+operator uses device full assembly; GPU BoomerAMG uses l1-Jacobi relaxation.
+Order-one interpolation is evaluated directly from cell vertices on device. In condensed
 mode the cycle acts on the interface Schur complement, surrounded by interior
 elimination and recovery. Damping is fixed after setup using `PowerMethod` and
 a 1.2 safety factor, unless explicitly supplied. An excessive user-supplied
@@ -100,11 +123,26 @@ The reusable miniapp API is `mfem::vertex_patch::Preconditioner` in
 construct a new preconditioner after changing them. Like many MFEM solvers, instances use
 mutable work buffers and are not reentrant.
 
-The CPU diffusion application in the library has a dynamically sized,
-sum-factorized fallback for orders beyond its tuned kernels' fixed buffers. GPU
-kernels and ordinary-order CPU dispatch remain unchanged. This extends operator
-application; it does not remove fixed-order limits from every MFEM PA operation
-(for example, diagonal assembly).
+GPU execution keeps basis transforms, interior elimination/recovery, patch
+factorization/solves, coarse transfer, and vector operations on device. MPI uses
+device buffers with `-gmpi`; otherwise only communication buffers are staged.
+The one-dimensional reference calculations, mesh/ownership metadata, METIS
+ordering, and factor dependency analysis remain on CPU. Their setup costs are
+included in the reported timings. CPU execution dispatches the numerical kernels
+through MFEM's CPU backend.
+
+Coefficients are evaluated through `Coefficient::Project(QuadratureFunction&)`.
+The driver's constant/variable diffusion and manufactured load implement device
+projection. General coefficients retain MFEM's host projection fallback;
+applications requiring device evaluation should override `Project` or supply a
+quadrature-function coefficient. A host callback is not automatically a GPU
+function.
+
+The library has runtime-sized device/CPU tensor fallbacks for high-order
+diffusion application, value-mapped quadrature evaluation on square/cube volume
+meshes, and domain load assembly. These avoid the tuned kernels' fixed buffers
+and excessive GPU block sizes. They do not remove limits from unrelated MFEM
+operations such as diffusion diagonal assembly.
 
 ## Tests and performance validation
 
@@ -114,6 +152,10 @@ mpirun -np 1 tests/unit/vertex_patch_tests
 mpirun -np 2 tests/unit/vertex_patch_tests
 mpirun -np 4 tests/unit/vertex_patch_tests
 make -C miniapps/solvers vertex_patch-test-par
+make -C miniapps/solvers vertex_patch-test-gpu
+MFEM_VERTEX_PATCH_DEVICE=cuda mpirun -np 1 tests/unit/vertex_patch_tests
+MFEM_VERTEX_PATCH_DEVICE=cuda mpirun -np 2 tests/unit/vertex_patch_tests
+MFEM_VERTEX_PATCH_DEVICE=cuda mpirun -np 4 tests/unit/vertex_patch_tests
 ```
 
 The focused suite checks reference basis identities and parity, transpose and
@@ -121,8 +163,12 @@ inverse operations, Cartesian auxiliary energies, rotated element orientations,
 complete distributed patches, preconditioner symmetry and positivity, dense
 Schur-complement comparisons, curved cells with variable diffusion, both
 condensation modes, and the all-essential-interface case. The reusable ICC
-solver and CPU diffusion fallback have independent reference tests in the
-library's unit-test directories.
+solver and runtime-sized diffusion fallback have independent reference tests in the
+library's unit-test directories. The focused executable also checks batched ICC
+against the CPU solver (including shifts and overlapping patch scatter), both
+quadrature layouts, physical/reference derivatives, determinants, and high-order
+load assembly. Set `MFEM_VERTEX_PATCH_DEVICE=debug` to check memory access through
+MFEM's debug backend.
 
 For degree scaling, hold a small mesh fixed and run both modes at degrees
 2, 4, 8, 12, 16, and 24. Record factor nonzeros, storage, setup time, solve time,
@@ -178,3 +224,49 @@ in 3D, and the measured application growth is consistent with that bound over
 these degrees. The transition to dynamically sized CPU diffusion kernels at
 high order also affects the physical operator and total solve timing. No dense
 high-order production matrices or GPU kernels were used.
+
+### GPU development validation, 2026-10-31
+
+The existing CUDA Makefile configuration was preserved (`MFEM_DEBUG=YES`,
+`-g`, `sm_80`, CUDA 12.9, GPU-enabled hypre 3.1). CPU and CUDA regression suites
+passed on one, two, and four MPI ranks. The four registered CPU/GPU make smoke
+tests passed, as did a four-rank GPU-aware MPI symmetry/solve check. Batched
+auxiliary matrices and Schur complements are also compared entry by entry with
+the CPU reference on curved quadrilateral/hexahedral cells with variable
+coefficients. Conforming H1 restriction uses direct device gathers/scatters;
+this avoids a cuSPARSE restriction-multiply failure found by the two-rank
+basis-inverse regression in this configuration.
+
+Compute Sanitizer reported zero memory errors for degree-eight condensed and
+full solves, and zero racecheck hazards for the batched ICC test. The memory
+runs used `OMPI_MCA_accelerator=null` with staged MPI to disable Open MPI's
+intentional CUDA pointer-probing API failures. This does not disable MFEM CUDA
+kernels. Nsight Systems captures bracketed by `-profile` showed no host/device
+copies in warmed single-GPU applications and CG. In the two-GPU-aware-MPI
+capture, all 394 host/device copies on rank zero occurred inside MPI calls;
+the largest was 10,976 bytes. The MPI implementation can stage device buffers
+internally even when the application supplies device pointers.
+
+On two NVIDIA A30 GPUs, the fixed 2-by-2-by-2 box sweep passed the independent
+`1e-8` true-residual check at degrees 2, 4, 8, 12, 16, and 24 in both modes.
+Condensed/full iteration counts were respectively 9/11, 13/15, 16/19, 19/21,
+20/22, and 22/25. Factor nonzero counts match the earlier CPU table. At degree
+24, factor storage including transpose indices and dependency schedules is
+13,013,168 / 61,291,996 bytes; application times were 0.0109 / 0.0273 seconds.
+
+A separate degree-16 comparison using the current code, two MPI ranks,
+`OPENBLAS_NUM_THREADS=1`, and the same box gives seconds below:
+
+| Backend | Mode | Setup | One application | CG solve |
+| --- | --- | ---: | ---: | ---: |
+| CPU | Condensed | 1.938 | 0.0263 | 1.947 |
+| CUDA | Condensed | 0.798 | 0.00361 | 0.111 |
+| CPU | Full | 1.820 | 0.0385 | 2.434 |
+| CUDA | Full | 1.157 | 0.00727 | 0.228 |
+
+These are small local debug-build measurements, not optimized scaling results.
+CPU symbolic ordering and cached reference construction still contribute to
+setup. Mesh/finite-element-space construction is outside the preconditioner
+setup timer; at very high degrees, MFEM's general H1 collection also constructs
+unused non-tensor reference elements on CPU. The GPU port does not change that
+collection initialization.

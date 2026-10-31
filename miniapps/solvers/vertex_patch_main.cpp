@@ -19,17 +19,74 @@
 // The physical operator uses partial assembly. Static condensation changes
 // only the preconditioner. No high-order dense element matrices are formed.
 #include "vertex_patch_solver.hpp"
+#include "../../general/forall.hpp"
 #include <cmath>
 #include <iostream>
+#ifdef MFEM_USE_CUDA
+#include <cuda_profiler_api.h>
+#endif
 
 using namespace mfem;
 
 #if defined(MFEM_USE_MPI) && defined(MFEM_USE_LAPACK) && defined(MFEM_USE_METIS) && defined(MFEM_USE_METIS_5)
+// Device projection keeps coefficient evaluation out of host quadrature loops.
+class DriverCoefficient : public Coefficient
+{
+   int kind;
+   bool load, manufactured;
+public:
+   DriverCoefficient(int k, bool rhs = false, bool ms = false)
+      : kind(k), load(rhs), manufactured(ms) { }
+   MFEM_HOST_DEVICE static real_t Value(const real_t *x, int dim, int kind,
+                                        bool load, bool manufactured)
+   {
+      real_t alpha = 1.;
+      if (kind) for (int d = 0; d < dim; ++d) { alpha += x[d]*x[d]; }
+      if (!load) { return alpha; }
+      if (!manufactured) { return 1.; }
+      const real_t pi = 3.14159265358979323846;
+      real_t u = 1., gradient = 0.;
+      for (int d = 0; d < dim; ++d) { u *= sin(pi*x[d]); }
+      if (kind) for (int d = 0; d < dim; ++d)
+         {
+            real_t du = pi*cos(pi*x[d]);
+            for (int j = 0; j < dim; ++j) if (j != d) { du *= sin(pi*x[j]); }
+            gradient += 2.*x[d]*du;
+         }
+      return dim*pi*pi*alpha*u-gradient;
+   }
+   real_t Eval(ElementTransformation &T, const IntegrationPoint &ip) override
+   {
+      Vector x; T.Transform(ip,x);
+      return Value(x.GetData(),x.Size(),kind,load,manufactured);
+   }
+   void Project(QuadratureFunction &qf) override
+   {
+      auto &qs = *qf.GetSpace(); auto &mesh = *qs.GetMesh();
+      if (!mesh.GetNE()) { return; }
+      const auto &ir = qs.GetIntRule(0); const int nq = ir.GetNPoints();
+      const int dim = mesh.Dimension(), k = kind;
+      const bool rhs = load, ms = manufactured;
+      const auto *geom = mesh.GetGeometricFactors(ir,GeometricFactors::COORDINATES);
+      const auto X = Reshape(geom->X.Read(),nq,dim,mesh.GetNE());
+      real_t *V = qf.Write();
+      mfem::forall(qf.Size(), [=] MFEM_HOST_DEVICE (int i)
+      {
+         real_t x[3];
+         for (int d = 0; d < dim; ++d) { x[d] = X(i%nq,d,i/nq); }
+         V[i] = Value(x,dim,k,rhs,ms);
+      });
+   }
+};
+
 int main(int argc, char *argv[])
 {
-   Mpi::Init(argc, argv); Hypre::Init(); Device device("cpu");
+   Mpi::Init(argc, argv);
    const int rank = Mpi::WorldRank();
    const char *mesh_file = "../../data/beam-hex.mesh";
+   const char *device_config = "cpu";
+   int device_id = -1;
+   bool gpu_aware_mpi = false, profile = false;
    int order = 3, serial_refinements = 0, parallel_refinements = 0,
        max_iterations = 500;
    int coefficient_kind = 0;
@@ -38,6 +95,13 @@ int main(int argc, char *argv[])
    Array<int> attributes;
    vertex_patch::Options options;
    OptionsParser args(argc, argv);
+   args.AddOption(&device_config, "-d", "--device", "MFEM device backend.");
+   args.AddOption(&device_id, "-did", "--device-id",
+                  "GPU index; -1 selects by node-local MPI rank.");
+   args.AddOption(&gpu_aware_mpi, "-gmpi", "--gpu-aware-mpi", "-no-gmpi",
+                  "--no-gpu-aware-mpi", "Use device buffers in GPU-aware MPI.");
+   args.AddOption(&profile, "-profile", "--profile", "-no-profile", "--no-profile",
+                  "Bracket the warmed application/solve with CUDA profiler markers.");
    args.AddOption(&mesh_file, "-m", "--mesh", "Quadrilateral or hexahedral mesh.");
    args.AddOption(&order, "-o", "--order", "Uniform polynomial degree.");
    args.AddOption(&serial_refinements, "-rs", "--serial-refinements",
@@ -63,6 +127,23 @@ int main(int argc, char *argv[])
                   "Maximum CG iterations.");
    args.Parse();
    if (!args.Good()) { if (!rank) { args.PrintUsage(std::cout); } return 1; }
+   if (device_id < 0)
+   {
+      MPI_Comm local; int local_rank;
+      MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, rank,
+                          MPI_INFO_NULL, &local);
+      MPI_Comm_rank(local, &local_rank); MPI_Comm_free(&local);
+      int count = 0;
+#ifdef MFEM_USE_CUDA
+      if (std::string(device_config).find("cuda") != std::string::npos ||
+          std::string(device_config).find("gpu") != std::string::npos)
+      { MFEM_GPU_CHECK(cudaGetDeviceCount(&count)); }
+#endif
+      device_id = count ? local_rank % count : 0;
+   }
+   Device device(device_config, device_id);
+   Device::SetGPUAwareMPI(gpu_aware_mpi); Hypre::Init();
+   if (!rank) { device.Print(); }
    if (!rank) { args.PrintOptions(std::cout); }
    MFEM_VERIFY(order >= 1 && serial_refinements >= 0 &&
                parallel_refinements >= 0 &&
@@ -92,28 +173,15 @@ int main(int argc, char *argv[])
    { MFEM_VERIFY(attr > 0 && attr <= ess_bdr.Size(), "Invalid essential attribute"); ess_bdr[attr - 1] = 1; }
    MFEM_VERIFY(!manufactured || attributes.Size() == 0,
                "The manufactured driver case uses all-Dirichlet unit-box boundaries");
-   FunctionCoefficient diffusion([coefficient_kind](const Vector & x)
-   { return coefficient_kind ? 1. + x * x : 1.; });
+   DriverCoefficient diffusion(coefficient_kind);
    const real_t pi = std::acos(-1.);
    FunctionCoefficient exact([pi](const Vector & x)
-   { real_t u = 1.; for (int i = 0; i < x.Size(); ++i) { u *= std::sin(pi * x[i]); } return u; });
-   FunctionCoefficient load([ = ](const Vector & x)
-   {
-      if (!manufactured) { return real_t(1.); }
-      real_t u = 1., gradient = 0.;
-      for (int i = 0; i < dim; ++i) { u *= std::sin(pi * x[i]); }
-      if (coefficient_kind) for (int i = 0; i < dim; ++i)
-         {
-            real_t du = pi * std::cos(pi * x[i]);
-            for (int j = 0; j < dim; ++j) if (j != i) { du *= std::sin(pi * x[j]); }
-            gradient += 2.*x[i] * du;
-         }
-      return dim * pi * pi * (coefficient_kind ? 1. + x*x : 1.) * u - gradient;
-   });
+   { real_t u = 1.; for (int i = 0; i < x.Size(); ++i) { u *= std::sin(pi*x[i]); } return u; });
+   DriverCoefficient load(coefficient_kind, true, manufactured);
    Array<int> essential; fes.GetEssentialTrueDofs(ess_bdr, essential);
    ParGridFunction x(&fes); x = 0.;
    ParLinearForm b(&fes); b.AddDomainIntegrator(new DomainLFIntegrator(load));
-   b.Assemble();
+   b.UseFastAssembly(true); b.Assemble();
    ParBilinearForm a(&fes); a.SetAssemblyLevel(AssemblyLevel::PARTIAL);
    IntegrationRules rules(0, Quadrature1D::GaussLobatto);
    auto *integrator = new DiffusionIntegrator(diffusion);
@@ -124,18 +192,27 @@ int main(int argc, char *argv[])
    a.FormLinearSystem(essential, x, b, A, X, B);
    StopWatch timer; timer.Start();
    vertex_patch::Preconditioner prec(fes, diffusion, ess_bdr, options);
+   MFEM_STREAM_SYNC;
    timer.Stop(); real_t setup_time = timer.RealTime();
    prec.PrintStatistics(std::cout);
    Vector probe(B.Size());
+   prec.Mult(B,probe); MFEM_STREAM_SYNC;
+#ifdef MFEM_USE_CUDA
+   if (profile && Device::Allows(Backend::CUDA_MASK)) { MFEM_GPU_CHECK(cudaProfilerStart()); }
+#endif
    timer.Clear(); timer.Start();
    for (int i = 0; i < 3; ++i) { prec.Mult(B, probe); }
+   MFEM_STREAM_SYNC;
    timer.Stop(); real_t application_time = timer.RealTime()/3.;
    CGSolver cg(MPI_COMM_WORLD);
    cg.SetOperator(*A); cg.SetPreconditioner(prec); cg.SetMaxIter(max_iterations);
    // CG's stopping norm is preconditioned; verify the true residual separately.
    cg.SetRelTol(tolerance * 0.01); cg.SetAbsTol(0.); cg.SetPrintLevel(1);
-   timer.Clear(); timer.Start(); cg.Mult(B, X); timer.Stop();
+   timer.Clear(); timer.Start(); cg.Mult(B, X); MFEM_STREAM_SYNC; timer.Stop();
    real_t solve_time = timer.RealTime();
+#ifdef MFEM_USE_CUDA
+   if (profile && Device::Allows(Backend::CUDA_MASK)) { MFEM_GPU_CHECK(cudaProfilerStop()); }
+#endif
    Vector residual(B.Size()); A->Mult(X, residual); residual -= B;
    const real_t bnorm = std::sqrt(InnerProduct(MPI_COMM_WORLD, B, B));
    const real_t relative = std::sqrt(InnerProduct(MPI_COMM_WORLD, residual,

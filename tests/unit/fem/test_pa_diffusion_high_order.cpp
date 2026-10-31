@@ -15,10 +15,9 @@
 
 using namespace mfem;
 
-TEST_CASE("CPU diffusion PA beyond fixed quadrature buffers",
+TEST_CASE("Diffusion PA beyond fixed quadrature buffers",
           "[DiffusionPA][Parallel]")
 {
-   if (Device::Allows(Backend::DEVICE_MASK)) { return; }
    for (int dim : {2, 3}) for (bool symmetric : {false, true})
       {
          Mesh mesh = dim == 2 ? Mesh::MakeCartesian2D(1, 1, Element::QUADRILATERAL, true,
@@ -36,7 +35,8 @@ TEST_CASE("CPU diffusion PA beyond fixed quadrature buffers",
          const auto geom = mesh.GetElementGeometry(0);
          // A modest trial space with a deliberately oversized quadrature rule
          // permits an independent, dense element assembly reference.
-         const IntegrationRule &ir = IntRules.Get(geom, 2 * DofQuadLimits::MAX_Q1D + 1);
+         const IntegrationRule &ir = IntRules.Get(geom,
+                                                  2 * DeviceDofQuadLimits::Get().MAX_Q1D + 1);
          DenseMatrix tensor(dim); tensor = 0.;
          for (int i = 0; i < dim; ++i)
          {
@@ -59,11 +59,10 @@ TEST_CASE("CPU diffusion PA beyond fixed quadrature buffers",
       }
 }
 
-TEST_CASE("CPU diffusion PA beyond fixed degree buffers",
+TEST_CASE("Diffusion PA beyond fixed degree buffers",
           "[DiffusionPA][Parallel]")
 {
-   if (Device::Allows(Backend::DEVICE_MASK)) { return; }
-   const int p = DofQuadLimits::MAX_D1D, n = p + 1;
+   const int p = DeviceDofQuadLimits::Get().MAX_D1D, n = p + 1;
    H1_SegmentElement segment(p);
    const auto &map1 = segment.GetDofMap();
    DenseMatrix mass(n), stiffness(n), gradient(n, 1); mass = 0.; stiffness = 0.;
@@ -95,6 +94,7 @@ TEST_CASE("CPU diffusion PA beyond fixed degree buffers",
       Vector x(nd), y(nd), reference(nd), u(nd), v(nd); x.Randomize(23);
       reference = 0.;
       pa.Mult(x, y);
+      x.HostReadWrite();
       // Independent Cartesian stiffness assembled as a sum of Kronecker
       // products of exact one-dimensional mass and stiffness matrices.
       for (int component = 0; component < dim; ++component)
@@ -116,5 +116,78 @@ TEST_CASE("CPU diffusion PA beyond fixed degree buffers",
          for (int i = 0; i < nd; ++i) { reference[dofs[map[i]]] += u[i]; }
       }
       y -= reference; REQUIRE(y.Norml2() < 1.e-10 * reference.Norml2());
+   }
+}
+
+TEST_CASE("Runtime tensor quadrature values derivatives and determinants",
+          "[DiffusionPA][Parallel]")
+{
+   for (int dim : {2,3})
+   {
+      Mesh mesh = dim == 2 ? Mesh::MakeCartesian2D(1,1,Element::QUADRILATERAL,true,2.,
+                                                   3.)
+                  : Mesh::MakeCartesian3D(1,1,1,Element::HEXAHEDRON,2.,3.,4.);
+      H1_FECollection fec(2,dim); FiniteElementSpace fes(&mesh,&fec,dim);
+      VectorFunctionCoefficient coefficient(dim, [](const Vector &x, Vector &y)
+      { for (int d = 0; d < x.Size(); ++d) { y[d] = (d+1)*x[d]; } });
+      GridFunction field(&fes); field.ProjectCoefficient(coefficient);
+      const auto &ir = IntRules.Get(mesh.GetElementGeometry(0),
+                                    2*DeviceDofQuadLimits::Get().MAX_Q1D+3);
+      const int nq = ir.GetNPoints();
+      const auto *restriction = fes.GetElementRestriction(
+                                   ElementDofOrdering::LEXICOGRAPHIC);
+      Vector element(restriction->Height()); restriction->Mult(field,element);
+      auto *interpolator = fes.GetQuadratureInterpolator(ir);
+      for (auto layout : {QVectorLayout::byNODES,QVectorLayout::byVDIM})
+      {
+         interpolator->SetOutputLayout(layout);
+         Vector values(nq*dim), derivatives(nq*dim*dim), determinants(nq);
+         interpolator->Mult(element,QuadratureInterpolator::VALUES |
+                            QuadratureInterpolator::DERIVATIVES |
+                            QuadratureInterpolator::DETERMINANTS,
+                            values,derivatives,determinants);
+         const real_t *v = values.HostRead(), *g = derivatives.HostRead(),
+                       *det = determinants.HostRead();
+         real_t error = 0., exact_det = 1.;
+         for (int d = 0; d < dim; ++d) { exact_det *= (d+1)*(d+2); }
+         for (int q = 0; q < nq; ++q)
+         {
+            const auto &ip = ir.IntPoint(q); const real_t x[3] = {ip.x,ip.y,ip.z};
+            error = std::max(error,std::abs(det[q]-exact_det));
+            for (int c = 0; c < dim; ++c)
+            {
+               const int i = layout == QVectorLayout::byNODES ? q+nq*c : c+dim*q;
+               error = std::max(error,std::abs(v[i]-(c+1)*(c+2)*x[c]));
+               for (int d = 0; d < dim; ++d)
+               {
+                  const int j = layout == QVectorLayout::byNODES ? q+nq*(c+dim*d) : c+dim*
+                                (d+dim*q);
+                  error = std::max(error,std::abs(g[j]-(c == d ? (c+1)*(c+2) : 0.)));
+               }
+            }
+         }
+         REQUIRE(error < 1.e-10);
+         interpolator->Mult(element,QuadratureInterpolator::PHYSICAL_DERIVATIVES,values,
+                            derivatives,determinants);
+         g = derivatives.HostRead(); error = 0.;
+         for (int q = 0; q < nq; ++q) for (int c = 0; c < dim; ++c) for (int d = 0;
+                                                                               d < dim; ++d)
+               {
+                  const int j = layout == QVectorLayout::byNODES ? q+nq*(c+dim*d) : c+dim*
+                                (d+dim*q);
+                  error = std::max(error,std::abs(g[j]-(c == d ? c+1. : 0.)));
+               }
+         REQUIRE(error < 1.e-11);
+      }
+      // The oversized quadrature rule also exercises the dynamic load kernel.
+      FiniteElementSpace scalar(&mesh,&fec);
+      FunctionCoefficient load([](const Vector &x) { return 1.+x*x; });
+      LinearForm fast(&scalar), reference(&scalar);
+      auto *fi = new DomainLFIntegrator(load), *ri = new DomainLFIntegrator(load);
+      fi->SetIntRule(&ir); ri->SetIntRule(&ir);
+      fast.AddDomainIntegrator(fi); reference.AddDomainIntegrator(ri);
+      fast.UseFastAssembly(true); fast.Assemble(); reference.Assemble();
+      fast -= reference;
+      REQUIRE(fast.Norml2() < 1.e-11*reference.Norml2());
    }
 }
