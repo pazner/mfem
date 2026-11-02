@@ -127,7 +127,8 @@ int main(int argc, char *argv[])
    if (mesh.ncmesh && (RT || ND))
    { MFEM_ABORT("LOR AMS and ADS solvers are not supported with AMR meshes."); }
 
-   FunctionCoefficient f_coeff(f(1.0)), u_coeff(u);
+   LORScalarLoadCoefficient f_coeff(1.0);
+   FunctionCoefficient u_coeff(u);
    VectorFunctionCoefficient f_vec_coeff(sdim, f_vec(RT)),
                              u_vec_coeff(sdim, u_vec);
 
@@ -181,7 +182,16 @@ int main(int argc, char *argv[])
    b.Assemble();
 
    ParGridFunction x(&fes);
-   if (H1 || L2) { x.ProjectCoefficient(u_coeff);}
+   if (H1)
+   {
+      // FormLinearSystem discards the interior initial values. Only the
+      // essential boundary data are needed for this solve.
+      x = 0.0;
+      Array<int> ess_bdr(mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0);
+      ess_bdr = 1;
+      x.ProjectBdrCoefficient(u_coeff, ess_bdr);
+   }
+   else if (L2) { x.ProjectCoefficient(u_coeff); }
    else { x.ProjectCoefficient(u_vec_coeff); }
 
    Vector X, B;

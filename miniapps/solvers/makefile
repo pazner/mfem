@@ -62,7 +62,11 @@ vertex_patch: vertex_patch_main.o vertex_patch_solver.o
 	$(MFEM_CXX) $(MFEM_LINK_FLAGS) -o $@ $^ $(MFEM_LIBS)
 
 vertex_patch_main.o vertex_patch_solver.o: $(SRC)vertex_patch_solver.hpp
-vertex_patch_solver.o: $(SRC)vertex_patch_kernels.hpp $(SRC)vertex_patch_assembly.hpp
+# Optimize the host symbolic setup without changing the configured MFEM library
+# or its debug checks. Set VERTEX_PATCH_CXXFLAGS= for unoptimized host debugging.
+VERTEX_PATCH_CXXFLAGS ?= -O3
+vertex_patch_solver.o: $(SRC)vertex_patch_solver.cpp $(SRC)vertex_patch_kernels.hpp $(SRC)vertex_patch_assembly.hpp $(MFEM_LIB_FILE) $(CONFIG_MK)
+	$(MFEM_CXX) $(MFEM_FLAGS) $(VERTEX_PATCH_CXXFLAGS) -c $< -o $@
 
 lor_elast: $(LOR_ELAST_OBJ)
 	$(MFEM_CXX) $(MFEM_LINK_FLAGS) -o $@ $(LOR_ELAST_OBJ) $(MFEM_LIBS)

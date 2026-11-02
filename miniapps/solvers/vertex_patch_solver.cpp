@@ -453,12 +453,20 @@ std::unique_ptr<SparseMatrix> BuildTraceInjection(
    return injection;
 }
 
+struct AssemblyBatchPatch { int entries, values, terms, sources, signs; };
+struct AssemblyTerm { int element, entry, sign0, sign1; };
+struct PatchTemplate
+{
+   std::unique_ptr<SparseMatrix> graph;
+   Array<int> ordering;
+};
 struct PatchAssembly
 {
    std::map<Global, int> index;
    std::vector<Global> global;
    std::vector<bool> interior;
-   std::unique_ptr<SparseMatrix> matrix;
+   std::shared_ptr<PatchTemplate> pattern;
+   int values_offset = 0;
    std::vector<int> element_maps, element_signs, element_sources;
    int Insert(Global g, bool cell)
    {
@@ -557,6 +565,7 @@ class Preconditioner::PatchSolver : public Solver
    std::map<int, Peer> peers;
    Array<int> local_indices, patch_order;
    PatchFactors factors;
+   Vector patch_values;
    mutable Vector extended, correction;
    mutable std::vector<MPI_Request> requests;
    real_t damping = 1.;
@@ -568,7 +577,7 @@ public:
    std::map<Global, PatchAssembly> AssemblePatches(
       ParFiniteElementSpace &fes, const std::vector<ElementData> &elements,
       const Array<int> &ess_bdr, int p, Messages &send, const Vector &element_values,
-      const SparseMatrix &pattern, const Array<int> &entry_rows)
+      const SparseMatrix &pattern)
    {
       ParMesh &mesh = *fes.GetParMesh();
       const int dim = mesh.Dimension(), n = p + 1;
@@ -674,30 +683,108 @@ public:
       for (const auto &entry : received) { ReceivePatches(entry.second.data,assembled,false,nd); }
       for (const auto &entry : received)
       { ReceivePatches(entry.second.data,assembled,true,nd,bases[entry.first]); }
-      const int *ER = entry_rows.Read(), *EC = pattern.ReadJ();
+      // Cache the symbolic assembly by element-to-patch incidence, including
+      // essential exclusions and the interior flags used by the ordering.
+      // Coefficients, geometry, signs, and global DOF numbers are not keys.
+      struct Cached
+      {
+         std::shared_ptr<PatchTemplate> pattern;
+         int terms;
+      };
+      std::map<std::vector<int>,Cached> cache;
+      std::vector<int> term_offsets, sources_all, signs_all;
+      std::vector<AssemblyTerm> terms;
+      std::vector<AssemblyBatchPatch> batch;
+      int total_values = 0;
+      const int *ei = pattern.HostReadI(), *ej = pattern.HostReadJ();
       for (auto &entry : assembled)
       {
          auto &a = entry.second;
-         Array<int> map(a.element_maps.data(),a.element_maps.size());
-         Array<int> sign(a.element_signs.data(),a.element_signs.size());
-         Array<int> src(a.element_sources.data(),a.element_sources.size());
-         const int count = src.Size()*nnz;
-         Array<int> rows(count), cols(count), indices(count); Vector weights(count);
-         weights.UseDevice(true);
-         const int *M = map.Read(), *G = sign.Read(), *B = src.Read();
-         int *R = rows.Write(), *C = cols.Write(), *S = indices.Write();
-         real_t *W = weights.Write();
-         mfem::forall(count, [=] MFEM_HOST_DEVICE (int k)
+         std::vector<int> key{int(a.global.size()),int(a.element_sources.size())};
+         key.insert(key.end(),a.element_maps.begin(),a.element_maps.end());
+         for (bool interior : a.interior) { key.push_back(interior); }
+         auto found = cache.find(key);
+         if (found == cache.end())
          {
-            const int e = k/nnz, j = k%nnz, i0 = e*nd+ER[j], i1 = e*nd+EC[j];
-            const int row = M[i0], col = M[i1];
-            R[k] = row < 0 || col < 0 ? -1 : row; C[k] = col;
-            S[k] = B[e]+j; W[k] = G[i0]*G[i1];
-         });
-         SparseAccumulator accumulator(a.global.size(),a.global.size());
-         accumulator.Assemble(numerical,rows,cols,indices,weights);
-         a.matrix = std::move(accumulator.matrix);
+            Cached c; c.pattern = std::make_shared<PatchTemplate>();
+            auto &graph = c.pattern->graph;
+            graph.reset(new SparseMatrix(a.global.size()));
+            const int nc = a.element_sources.size();
+            for (int e = 0; e < nc; ++e) for (int i = 0; i < nd; ++i)
+               {
+                  const int r = a.element_maps[e*nd+i];
+                  if (r < 0) { continue; }
+                  for (int j = ei[i]; j < ei[i+1]; ++j)
+                  {
+                     const int col = a.element_maps[e*nd+ej[j]];
+                     if (col >= 0) { graph->Add(r,col,0.); }
+                  }
+               }
+            graph->Finalize(0); graph->SortColumnIndices();
+            c.pattern->ordering = PatchOrdering(*graph,a.interior);
+            const int *gi = graph->HostReadI(), *gj = graph->HostReadJ();
+            std::vector<std::vector<AssemblyTerm>> contributions(graph->NumNonZeroElems());
+            for (int e = 0; e < nc; ++e) for (int i = 0; i < nd; ++i)
+               {
+                  const int r = a.element_maps[e*nd+i];
+                  if (r < 0) { continue; }
+                  for (int j = ei[i]; j < ei[i+1]; ++j)
+                  {
+                     const int col = a.element_maps[e*nd+ej[j]];
+                     if (col < 0) { continue; }
+                     const int k = std::lower_bound(gj+gi[r],gj+gi[r+1],col)-gj;
+                     contributions[k].push_back({e,j,e*nd+i,e*nd+ej[j]});
+                  }
+               }
+            c.terms = term_offsets.size(); term_offsets.push_back(terms.size());
+            for (const auto &row : contributions)
+            {
+               terms.insert(terms.end(),row.begin(),row.end());
+               term_offsets.push_back(terms.size());
+            }
+            found = cache.emplace(std::move(key),std::move(c)).first;
+         }
+         a.pattern = found->second.pattern; a.values_offset = total_values;
+         const int entries = a.pattern->graph->NumNonZeroElems();
+         MFEM_VERIFY(static_cast<long long>(total_values)+entries <=
+                     std::numeric_limits<int>::max(),
+                     "Patch value storage exceeds the local index range");
+         batch.push_back({entries,total_values,found->second.terms,
+                          int(sources_all.size()),int(signs_all.size())});
+         total_values += entries;
+         sources_all.insert(sources_all.end(),a.element_sources.begin(),
+                            a.element_sources.end());
+         signs_all.insert(signs_all.end(),a.element_signs.begin(),a.element_signs.end());
+         // Ownership and the final patch map are all that subsequent setup uses.
+         std::vector<int>().swap(a.element_maps);
+         std::vector<int>().swap(a.element_signs);
+         std::vector<int>().swap(a.element_sources); a.index.clear();
       }
+      Array<AssemblyBatchPatch> device_batch; CopyArray(batch,device_batch);
+      Array<AssemblyTerm> device_terms; CopyArray(terms,device_terms);
+      Array<int> device_offsets, device_sources, device_signs;
+      CopyArray(term_offsets,device_offsets); CopyArray(sources_all,device_sources);
+      CopyArray(signs_all,device_signs);
+      patch_values.SetSize(total_values); patch_values.UseDevice(true);
+      const auto *B = device_batch.Read(); const auto *T = device_terms.Read();
+      const int *O = device_offsets.Read(), *S = device_sources.Read(),
+                 *G = device_signs.Read();
+      const real_t *A = numerical.Read(); real_t *Y = patch_values.Write();
+      mfem::forall_2D(batch.size(),128,1,[=] MFEM_HOST_DEVICE (int p)
+      {
+         const auto b = B[p];
+         MFEM_FOREACH_THREAD(i,x,b.entries)
+         {
+            real_t value = 0.;
+            for (int k = O[b.terms+i]; k < O[b.terms+i+1]; ++k)
+            {
+               const auto t = T[k];
+               value += G[b.signs+t.sign0]*G[b.signs+t.sign1]*A[S[b.sources+t.element]
+                                                                +t.entry];
+            }
+            Y[b.values+i] = value;
+         }
+      });
       return assembled;
    }
    std::map<Global, int> BuildExchange(
@@ -762,14 +849,20 @@ public:
    void FactorPatches(std::map<Global, PatchAssembly> &assembled,
                       const std::map<Global, int> &all_dofs, real_t diagonal_shift)
    {
+      std::map<std::shared_ptr<PatchTemplate>,int> templates;
       for (auto it = assembled.begin(); it != assembled.end(); )
       {
          auto &a = it->second;
-         auto matrix = std::move(a.matrix);
-         Array<int> ordering = PatchOrdering(*matrix, a.interior);
+         auto found = templates.find(a.pattern);
+         if (found == templates.end())
+         {
+            found = templates.emplace(a.pattern,factors.AddPattern(
+                                         *a.pattern->graph,a.pattern->ordering)).first;
+         }
          Patch patch;
          for (Global g : a.global) { patch.indices.Append(all_dofs.at(g)); }
-         patch.factor = factors.Add(*matrix, ordering, patch.indices, it->first);
+         patch.factor = factors.AddInstance(found->second,patch.indices,a.values_offset,
+                                            it->first);
          patch_unknowns += a.global.size();
          patches.push_back(std::move(patch));
          // The factor and DOF indices now own everything needed by this patch.
@@ -786,11 +879,15 @@ public:
       patch_order.SetSize(patches.size());
       for (int i = 0; i < patch_order.Size(); ++i) { patch_order[i] = patches[i].factor; }
       factor_nonzeros = factors.Nonzeros();
-      factors.Factor(diagonal_shift, rank);
+      factors.Factor(patch_values,diagonal_shift,rank);
+      factors.Prepare(patch_order,local_patch_count);
+      patch_values.Destroy();
+      for (auto &patch : patches) { patch.indices.DeleteAll(); }
    }
 public:
    long long factor_nonzeros = 0, patch_unknowns = 0, communication_values = 0;
    long long NumPatches() const { return patches.size(); }
+   int NumPatterns() const { return factors.NumPatterns(); }
    long long StorageBytes() const { return factors.StorageBytes()+sizeof(int)*patch_order.Size(); }
    real_t GetDamping() const { return damping; }
    void SetDamping(real_t value) { damping = value; }
@@ -798,7 +895,7 @@ public:
                const std::vector<ElementData> &elements,
                const Array<int> &ess_bdr, int p, const Options &options,
                const Vector &element_values,
-               const SparseMatrix &pattern, const Array<int> &entry_rows)
+               const SparseMatrix &pattern)
       : Solver(fes.GetTrueVSize()), offset(fes.GetMyTDofOffset())
    {
       MPI_Comm_dup(fes.GetComm(), &comm); MPI_Comm_rank(comm, &rank);
@@ -806,7 +903,7 @@ public:
       Messages send;
       for (int i = 1; i < gt.GetNumNeighbors(); ++i) { send[gt.GetNeighborRank(i)]; }
       auto assembled = AssemblePatches(fes, elements, ess_bdr, p, send,
-                                       element_values, pattern, entry_rows);
+                                       element_values, pattern);
       auto all_dofs = BuildExchange(assembled, send);
       FactorPatches(assembled, all_dofs, options.diagonal_shift);
    }
@@ -1088,7 +1185,7 @@ void Preconditioner::BuildAuxiliary(Coefficient &coefficient,
    MFEM_STREAM_SYNC; stage.Stop(); setup_timings[3] = stage.RealTime();
    stage.Clear(); stage.Start();
    patches.reset(new PatchSolver(*active, elements, ess_bdr, degree, options,
-                                 batch.active_values, *batch.pattern, batch.entry_rows));
+                                 batch.active_values, *batch.pattern));
    MFEM_STREAM_SYNC; stage.Stop(); setup_timings[4] = stage.RealTime();
    batch.full_values.Destroy(); batch.active_values.Destroy();
 }
@@ -1161,7 +1258,7 @@ Preconditioner::~Preconditioner() = default;
 
 void Preconditioner::PrintStatistics(std::ostream &os) const
 {
-   long long stats[5] = {0, 0, 0, 0, 0};
+   long long stats[6] = {};
    real_t times[6];
    MPI_Allreduce(setup_timings,times,6,MPITypeMap<real_t>::mpi_type,MPI_MAX,comm);
    if (patches)
@@ -1171,13 +1268,15 @@ void Preconditioner::PrintStatistics(std::ostream &os) const
       stats[2] = patches->factor_nonzeros;
       stats[3] = patches->communication_values;
       stats[4] = patches->StorageBytes();
+      stats[5] = patches->NumPatterns();
    }
-   MPI_Allreduce(MPI_IN_PLACE, stats, 5, MPI_LONG_LONG, MPI_SUM, comm);
+   MPI_Allreduce(MPI_IN_PLACE, stats, 6, MPI_LONG_LONG, MPI_SUM, comm);
    int rank; MPI_Comm_rank(comm, &rank);
    if (rank == 0)
    {
       os << "Vertex patches: " << stats[0] << ", patch unknowns: " << stats[1]
          << ", factor nonzeros: " << stats[2] << '\n'
+         << "Distinct patch templates (sum over ranks): " << stats[5] << '\n'
          << "Auxiliary nonzeros: " << auxiliary_nonzeros << '\n'
          << "Factor arrays including solve workspace (bytes): "
          << stats[4] << '\n'

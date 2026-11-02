@@ -12,6 +12,8 @@
 #ifndef MFEM_LOR_MMS_HPP
 #define MFEM_LOR_MMS_HPP
 
+#include "../../general/forall.hpp"
+
 namespace mfem
 {
 
@@ -44,6 +46,50 @@ std::function<real_t(const Vector &)> f(real_t mass_coeff)
       }
    };
 }
+
+// Batched evaluation of the scalar manufactured load at volume quadrature
+// points. Keep the pointwise callback for other geometries and face rules.
+class LORScalarLoadCoefficient : public FunctionCoefficient
+{
+   real_t mass;
+
+public:
+   explicit LORScalarLoadCoefficient(real_t mass_coeff)
+      : FunctionCoefficient(f(mass_coeff)), mass(mass_coeff) { }
+
+   void Project(QuadratureFunction &qf) override
+   {
+      auto *qs = dynamic_cast<QuadratureSpace*>(qf.GetSpace());
+      if (!qs || qs->GetMesh()->GetNumGeometries(qs->GetMesh()->Dimension()) != 1)
+      {
+         Coefficient::Project(qf);
+         return;
+      }
+      if (qs->GetNE() == 0) { return; }
+      const auto geometry = qs->GetGeometry(0);
+      if (geometry != Geometry::SQUARE && geometry != Geometry::CUBE)
+      {
+         Coefficient::Project(qf);
+         return;
+      }
+      Mesh &mesh = *qs->GetMesh();
+      const IntegrationRule &ir = qs->GetIntRule(0);
+      const int nq = ir.GetNPoints(), sdim = mesh.SpaceDimension();
+      const auto *geom = mesh.GetGeometricFactors(ir, GeometricFactors::COORDINATES);
+      const auto X = Reshape(geom->X.Read(), nq, sdim, mesh.GetNE());
+      const real_t scale = mass + sdim*pi2;
+      real_t *values = qf.Write();
+      mfem::forall(qs->GetSize(), [=] MFEM_HOST_DEVICE (int i)
+      {
+         real_t value = 1.;
+         for (int d = 0; d < sdim; ++d)
+         {
+            value *= sin(M_PI*X(i%nq, d, i/nq));
+         }
+         values[i] = scale*value;
+      });
+   }
+};
 
 // Exact solution for definite Maxwell and grad-div problems with RHS
 // corresponding to f_vec below.

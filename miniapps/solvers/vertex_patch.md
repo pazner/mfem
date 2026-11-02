@@ -9,7 +9,11 @@ degree*, arXiv:2211.14284v2, Sections 2.2, 3, and 4.4–4.5.
 Use the existing MFEM make configuration. The miniapp requires MPI, LAPACK,
 METIS 5, and hypre. CPU and CUDA execution use the same make configuration;
 CUDA execution also requires a CUDA-enabled MFEM and hypre. SuiteSparse is not
-required.
+required. The Makefile adds `-O3` to `vertex_patch_solver.o` for its host symbolic
+setup; it preserves the configured MFEM library and debug checks. To debug that
+object without optimization, remove it and rebuild with
+`make VERTEX_PATCH_CXXFLAGS= vertex_patch`. Changing this variable requires
+rebuilding the object explicitly.
 
 ```sh
 make -j4
@@ -38,6 +42,7 @@ Important options:
 | `-did`, `--device-id` | GPU index; default selects node-local rank modulo visible GPU count |
 | `-gmpi`, `-no-gmpi` | Device MPI buffers or staged communication buffers; default staged |
 | `-profile` | CUDA profiler markers around warmed applications and CG |
+| `-oq`, `--overintegrate` | Force auxiliary GLL quadrature for physical diffusion |
 | `-o`, `--order` | Polynomial degree; default 3 |
 | `-rs`, `-rp` | Serial and parallel uniform refinements; default 0 |
 | `-sc`, `-no-sc` | Enable/disable auxiliary static condensation; default enabled |
@@ -56,8 +61,10 @@ patch/factor counts, owned factor-array storage including its triangular-solve
 workspace, and the number of scalar values exchanged by patch gather/scatter per
 smoothing step. A V(1,1) cycle has two such steps. The communication count excludes
 basis conversion, matrix applications, coarse-grid communication, and setup.
-Factor storage includes the lower factor, transpose indices, dependency levels,
-permutations, and solve workspace. It is not total or peak process memory.
+Factor storage includes numerical factors, shared graph and dependency arrays,
+per-patch maps, batched level schedules, and solve workspace. Distinct template
+counts are summed across ranks; templates are not shared across MPI ranks.
+Factor storage is not total or peak process memory.
 Setup timings separately report coarse setup, reference templates, numerical
 element assembly, global assembly, patch setup, and damping/transfer setup.
 Mesh/space construction is outside these stages. Timed applications are warmed,
@@ -66,7 +73,12 @@ and GPU timings synchronize before stopping the clock.
 ## Implementation
 
 The physical operator remains MFEM's partially assembled diffusion operator in
-the standard nodal basis. The preconditioner converts residuals/corrections with
+the standard nodal basis. For unit diffusion on verified affine tensor cells
+without mesh nodes, the driver uses Gauss quadrature of order `2*p` (`p+1`
+points per direction). Non-affine/curved cells and variable diffusion retain
+the auxiliary GLL rule of order `3*p`. The `-oq` flag forces that higher rule
+also on affine cells, for comparisons. Auxiliary assembly always keeps its
+original quadrature. The preconditioner converts residuals/corrections with
 transpose-consistent sum-factorized FDM basis operators. Reference data are
 computed using MFEM's LAPACK eigensolver once per degree and cached in memory.
 Reference sparsity, condensation maps, and quadrature tables are also cached
@@ -81,8 +93,11 @@ The sparse auxiliary operator uses diagonal weighted mass approximations in the
 broken orthonormal basis from equation (3.9). Quadrature is tensor Gauss–Lobatto
 of order at least `3*p`. Batched device contractions compute the weighted
 diagonals; reference sparse contribution maps generate element entries and
-Schur updates on device. CUDA sorting and deduplication build the global and
-patch CSR graphs. Sparse assembly and condensation never form dense high-order
+Schur updates on device. CUDA sorting and deduplication build the global CSR graph. Patch incidence
+maps identify reusable symbolic templates: their CSR graph, ordering, and
+assembly contribution maps are computed once, on CPU. One batched device
+pass assembles all patch values through those maps, without per-patch GPU
+sorts, allocations, or a copy of each patch graph. Sparse assembly and condensation never form dense high-order
 element matrices. The standalone `AssembleElement` and `CondenseElement`
 functions remain CPU reference implementations. Cell interiors are diagonal. Before factorization,
 the uncondensed patch matrix receives structural zeros for the fill induced by
@@ -102,16 +117,27 @@ the remaining patches are solved after the remote residuals arrive.
 
 Patch factors implement the same prescribed-pattern ICC as MFEM's CPU
 `IncompleteCholeskySolver`, with interiors first and a METIS nested-dissection
-ordering of the interface graph. Factors and workspaces are packed into device
-arrays. Rows at the same dependency level execute concurrently, with patches
-batched across GPU blocks. The transpose solve gathers through a stored
-transpose graph. A failed pivot reports its original patch-local row, global
+ordering of the interface graph. Numerical factors and workspaces are packed into device arrays. Matching
+patches share their permutation, lower and transpose graphs, source-entry
+maps, and dependency schedules. Template reuse includes essential exclusions
+and interior flags, and never reuses numerical values, coefficients, or global
+DOF maps. These caches are scoped to preconditioner construction, so rebuilding
+after changing the space or boundary conditions cannot retain stale ownership.
+
+Large batches with short dependency chains solve one dependency level across
+all patches at a time, using eight lanes per sparse row. Smaller batches and
+deep chains use one block per patch. Patches of up to 1,024 unknowns use shared
+solve workspace in the block path; larger patches use runtime-sized global
+workspace. The local and remote MPI batches have separate level schedules.
+The transpose solve gathers through the shared transpose graph. A failed pivot reports its original patch-local row, global
 vertex, and rank. A user-specified shift changes the patch preconditioner only.
 
 MFEM's multigrid composes a symmetric V(1,1) cycle with direct p-coarsening to a
 rediscretized order-one problem and one symmetric BoomerAMG cycle. The coarse
 operator uses device full assembly; GPU BoomerAMG uses l1-Jacobi relaxation.
-Order-one interpolation is evaluated directly from cell vertices on device. In condensed
+Order-one interpolation is evaluated directly from cell vertices on device.
+Its transpose first reduces nodal contributions within each cell, then issues
+only one atomic update per cell vertex. In condensed
 mode the cycle acts on the interface Schur complement, surrounded by interior
 elimination and recovery. Damping is fixed after setup using `PowerMethod` and
 a 1.2 safety factor, unless explicitly supplied. An excessive user-supplied
@@ -270,3 +296,60 @@ setup. Mesh/finite-element-space construction is outside the preconditioner
 setup timer; at very high degrees, MFEM's general H1 collection also constructs
 unused non-tensor reference elements on CPU. The GPU port does not change that
 collection initialization.
+
+### Patch setup and solve optimization, 2026-10-31
+
+The following measurements use one NVIDIA A30, one MPI rank,
+`OPENBLAS_NUM_THREADS=1`, and the existing CUDA Makefile configuration. Only the
+solver object now adds `-O3` for host setup. Run from `miniapps/solvers`:
+
+```sh
+OPENBLAS_NUM_THREADS=1 ./vertex_patch \
+  -m ../../data/beam-hex.mesh -o 7 -rs 3 -rp 0 -d cuda
+```
+
+This problem has 4,096 cells, 1,458,801 true DOFs, and 5,257 vertex patches.
+Two repeated runs of the optimized code gave the ranges below. The baseline
+is the preceding GPU implementation with per-patch symbolic setup and assembly.
+
+| Measurement | Before | After |
+| --- | ---: | ---: |
+| Preconditioner setup | 23.93 s | 3.56–3.68 s |
+| One warmed preconditioner application | 14.45 ms | 10.81–11.11 ms |
+| CG solve | 0.492 s | 0.234–0.235 s |
+| Whole process | 25.44 s | 4.73–4.79 s |
+| Factor arrays and solve workspace | 469.3 MB | 215.0 MB |
+| CG iterations | 19 | 19 |
+
+True relative residuals are approximately `7.4e-10`. There are only 22 distinct
+patch templates, shared within this preconditioner construction; numerical
+values, signs, and gather maps remain patch-specific. Factor nonzeros remain
+22,396,395. Template reuse removes repeated METIS ordering and symbolic factor
+construction. One batched GPU accumulation replaces per-patch sparse assembly,
+and device factorization reads these packed values directly.
+
+The solve improvement includes using exact eight-point Gauss quadrature for
+the physical operator on this affine, constant-coefficient problem, replacing
+the twelve-point auxiliary GLL rule. With `-oq`, setup was 3.52 s, one
+application was 11.79 ms, and CG took 0.418 s with the same 19 iterations.
+Thus the patch optimizations alone do not account for the full CG speedup.
+Curved/non-affine meshes and variable coefficients keep the original rule.
+
+Global auxiliary CSR assembly is now the largest setup stage, at 1.83–1.95 s;
+patch setup takes approximately 1.14 s. Sparse triangular solves remain the
+largest smoother cost. Batching independent rows by dependency level reduces
+block barrier overhead on large patch batches; smaller batches retain the
+block-per-patch path to avoid excessive kernel launches. Coarse transpose
+interpolation reduces within each cell before updating shared vertices.
+These measurements are local development results, not multi-node scaling or
+an equal-problem comparison with `plor_solvers`.
+
+After optimization, the vertex-patch regression tests passed on CPU and CUDA
+with one, two, and four MPI ranks, including four-rank GPU-aware MPI. Additional
+tests verify shared symbolic factors with different numerical values/maps,
+both triangular-solve schedules, linear-field interpolation, and the global
+coarse-transfer adjoint identity. All four registered CPU/GPU make smoke tests
+passed. Degree-24 condensed and full solves passed on two GPUs, as did variable
+diffusion on distorted cells and a manufactured-solution run. Compute Sanitizer
+reported zero memory errors for the full-size condensed beam case and a smaller
+full-space case, and zero racecheck hazards for the batched factor/solve test.

@@ -22,6 +22,7 @@
 #include "../../general/forall.hpp"
 #include <cmath>
 #include <iostream>
+#include <limits>
 #ifdef MFEM_USE_CUDA
 #include <cuda_profiler_api.h>
 #endif
@@ -79,6 +80,40 @@ public:
    }
 };
 
+// Standard Gauss quadrature is exact for constant diffusion on affine tensor
+// cells. Preserve the higher quadrature on curved/non-affine cells and for
+// variable coefficients. Test before device geometry creates mesh nodes.
+bool AffineTensorMesh(ParMesh &mesh)
+{
+   int affine = mesh.GetNodes() ? 0 : 1;
+   const int dim = mesh.Dimension(); Array<int> vertices;
+   for (int e = 0; affine && e < mesh.GetNE(); ++e)
+   {
+      mesh.GetElementVertices(e,vertices);
+      const auto &reference = *Geometries.GetVertices(mesh.GetElementGeometry(e));
+      const real_t *corner[8] = {};
+      for (int j = 0; j < vertices.Size(); ++j)
+      {
+         const auto &ip = reference.IntPoint(j);
+         corner[int(ip.x)+2*int(ip.y)+(dim == 3 ? 4*int(ip.z) : 0)] = mesh.GetVertex(
+                                                                         vertices[j]);
+      }
+      real_t scale = 0.;
+      for (int v = 0; v < (1<<dim); ++v) for (int d = 0; d < dim; ++d)
+         { scale = std::max(scale,std::abs(corner[v][d]-corner[0][d])); }
+      const real_t tolerance = 64*std::numeric_limits<real_t>::epsilon()*scale;
+      for (int v = 0; v < (1<<dim); ++v) for (int d = 0; d < dim; ++d)
+         {
+            real_t value = 0.;
+            for (int a = 0; a < dim; ++a)
+            { if ((v>>a)&1) { value += corner[1<<a][d]-corner[0][d]; } }
+            if (std::abs(value-(corner[v][d]-corner[0][d])) > tolerance) { affine = 0; }
+         }
+   }
+   MPI_Allreduce(MPI_IN_PLACE,&affine,1,MPI_INT,MPI_MIN,mesh.GetComm());
+   return affine;
+}
+
 int main(int argc, char *argv[])
 {
    Mpi::Init(argc, argv);
@@ -86,7 +121,7 @@ int main(int argc, char *argv[])
    const char *mesh_file = "../../data/beam-hex.mesh";
    const char *device_config = "cpu";
    int device_id = -1;
-   bool gpu_aware_mpi = false, profile = false;
+   bool gpu_aware_mpi = false, profile = false, overintegrate = false;
    int order = 3, serial_refinements = 0, parallel_refinements = 0,
        max_iterations = 500;
    int coefficient_kind = 0;
@@ -100,6 +135,9 @@ int main(int argc, char *argv[])
                   "GPU index; -1 selects by node-local MPI rank.");
    args.AddOption(&gpu_aware_mpi, "-gmpi", "--gpu-aware-mpi", "-no-gmpi",
                   "--no-gpu-aware-mpi", "Use device buffers in GPU-aware MPI.");
+   args.AddOption(&overintegrate,"-oq","--overintegrate","-no-oq",
+                  "--no-overintegrate",
+                  "Always use auxiliary GLL quadrature for physical diffusion.");
    args.AddOption(&profile, "-profile", "--profile", "-no-profile", "--no-profile",
                   "Bracket the warmed application/solve with CUDA profiler markers.");
    args.AddOption(&mesh_file, "-m", "--mesh", "Quadrilateral or hexahedral mesh.");
@@ -165,6 +203,8 @@ int main(int argc, char *argv[])
                  MPI_COMM_WORLD);
    MFEM_VERIFY(!invalid_geometry,
                "The driver requires conforming quadrilateral or hexahedral volume meshes");
+   const bool standard_quadrature = !overintegrate && coefficient_kind == 0 &&
+                                    AffineTensorMesh(mesh);
    H1_FECollection fec(order, dim);
    ParFiniteElementSpace fes(&mesh, &fec);
    Array<int> ess_bdr(mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0);
@@ -185,8 +225,11 @@ int main(int argc, char *argv[])
    ParBilinearForm a(&fes); a.SetAssemblyLevel(AssemblyLevel::PARTIAL);
    IntegrationRules rules(0, Quadrature1D::GaussLobatto);
    auto *integrator = new DiffusionIntegrator(diffusion);
-   if (dim == 2 || dim == 3)
+   if (standard_quadrature)
+   { integrator->SetIntRule(&IntRules.Get(TensorBasisElement::GetTensorProductGeometry(dim),2*order)); }
+   else
    { integrator->SetIntRule(&rules.Get(TensorBasisElement::GetTensorProductGeometry(dim), 3 * order)); }
+   if (!rank) { std::cout << "Physical quadrature: " << (standard_quadrature ? "standard Gauss" : "auxiliary GLL") << std::endl; }
    a.AddDomainIntegrator(integrator); a.Assemble();
    OperatorPtr A; Vector X, B;
    a.FormLinearSystem(essential, x, b, A, X, B);

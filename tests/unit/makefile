@@ -298,3 +298,16 @@ miniapps/vertex_patch_test_main.o: $(SRC)miniapps/vertex_patch_test_main.cpp $(H
 
 miniapps/test_vertex_patch_kernels.o: $(SRC)miniapps/test_vertex_patch_kernels.cpp $(MFEM_DIR)/miniapps/solvers/vertex_patch_kernels.hpp $(MFEM_DIR)/miniapps/solvers/vertex_patch_assembly.hpp $(MFEM_DIR)/miniapps/solvers/vertex_patch_solver.hpp $(HEADER_FILES) $(CONFIG_MK)
 	$(CCC) $(MFEM_FLAGS) $(INCLUDES) -c $< -o $@
+
+# Focused tests for LOR manufactured data and high-quadrature mass application.
+LOR_MMS_TEST_OBJECTS = miniapps/test_lor_mms.o fem/test_pa_mass_high_order.o
+lor_mms_tests: $(SEQ_MAIN_OBJ) $(LOR_MMS_TEST_OBJECTS) $(MFEM_LIB_FILE)
+	$(CCC) $(MFEM_LINK_FLAGS) $(SEQ_MAIN_OBJ) $(LOR_MMS_TEST_OBJECTS) $(MFEM_LIBS) -o $@
+lor_mms_tests_gpu: $(GPU_MAIN_OBJ) $(LOR_MMS_TEST_OBJECTS) $(MFEM_LIB_FILE)
+	$(CCC) $(MFEM_LINK_FLAGS) $(GPU_MAIN_OBJ) $(LOR_MMS_TEST_OBJECTS) $(MFEM_LIBS) -o $@
+miniapps/test_lor_mms.o: $(SRC)miniapps/test_lor_mms.cpp $(MFEM_DIR)/miniapps/solvers/lor_mms.hpp $(HEADER_FILES) $(CONFIG_MK)
+	$(CCC) $(MFEM_FLAGS) $(INCLUDES) -c $< -o $@
+clean-lor-mms-tests:
+	rm -f lor_mms_tests lor_mms_tests_gpu $(LOR_MMS_TEST_OBJECTS)
+clean: clean-lor-mms-tests
+.PHONY: clean-lor-mms-tests

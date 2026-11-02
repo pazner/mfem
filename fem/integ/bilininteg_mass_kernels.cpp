@@ -69,6 +69,10 @@ MassIntegrator::Kernels::Kernels()
    MassIntegrator::AddSpecialization<3,2,4>();
    MassIntegrator::AddSpecialization<3,4,6>();
    MassIntegrator::AddSpecialization<3,5,8>();
+   // Degree seven on cubic geometry uses twelve Gauss points per direction.
+   // Register only application: its 2D thread block supports this rule, while
+   // the diagonal kernel would require 12^3 threads in one block.
+   MassIntegrator::ApplyPAKernels::Specialization<3,8,12>::Add();
 }
 
 namespace internal
