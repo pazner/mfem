@@ -26,6 +26,7 @@ int main(int argc, char *argv[])
    const char *mesh_file = "../../data/tet-edge-star.mesh";
    std::string grid_type = "isaac";
    int p = 3, enrichment = 2, ref_levels = 0;
+   bool pa = false;
 
    OptionsParser args(argc, argv);
    args.AddOption(&mesh_file, "-m", "--mesh",
@@ -36,6 +37,8 @@ int main(int argc, char *argv[])
                   "LOR point distribution: isaac or duffy.");
    args.AddOption(&ref_levels, "-r", "--refine",
                   "Number of uniform coarse mesh refinements.");
+   args.AddOption(&pa, "-pa", "--partial-assembly", "-no-pa",
+                  "--no-partial-assembly", "Use partial assembly for the high-order form.");
    args.ParseCheck();
    MFEM_VERIFY(p >= 1 && enrichment >= 0 && ref_levels >= 0,
                "Invalid order or refinement.");
@@ -52,11 +55,12 @@ int main(int argc, char *argv[])
    FiniteElementSpace high(&mesh, &bern), low(&mesh_lor, &linear);
    tetlor::PrintProblemSize(p, q, high.GetVSize(), low.GetVSize());
 
-   Array<int> ess, lor_ess;
-   high.GetBoundaryTrueDofs(ess);
-   low.GetBoundaryTrueDofs(lor_ess);
+   Array<int> ess_dofs, lor_ess_dofs;
+   high.GetBoundaryTrueDofs(ess_dofs);
+   low.GetBoundaryTrueDofs(lor_ess_dofs);
 
    BilinearForm a(&high);
+   if (pa) { a.SetAssemblyLevel(AssemblyLevel::PARTIAL); }
    a.SetDiagonalPolicy(Operator::DIAG_ONE);
    a.AddDomainIntegrator(new DiffusionIntegrator);
    a.Assemble();
@@ -68,11 +72,9 @@ int main(int argc, char *argv[])
 
    GridFunction x(&high);
    x = 0.0;
-   SparseMatrix A;
+   OperatorPtr A;
    Vector X, B;
-   a.FormLinearSystem(ess, x, b, A, X, B);
-   const real_t b_norm = B.Norml2();
-   MFEM_VERIFY(b_norm > 0, "No free polynomial unknowns for the Dirichlet load.");
+   a.FormLinearSystem(ess_dofs, x, b, A, X, B);
 
    BilinearForm w(&low);
    w.SetDiagonalPolicy(Operator::DIAG_ONE);
@@ -80,13 +82,14 @@ int main(int argc, char *argv[])
    SparseMatrix R(high.GetVSize(), low.GetVSize());
    tetlor::AssembleTransfer(high, w, R);
 
-   SparseMatrix W;
-   w.FormSystemMatrix(lor_ess, W);
-   UMFPackSolver inverse(W);
-   tetlor::FictitiousSpaceSolver prec(R, inverse, ess);
+   SparseMatrix Ahat;
+   w.FormSystemMatrix(lor_ess_dofs, Ahat);
+   UMFPackSolver Ahat_inv(Ahat);
+   tetlor::FictitiousSpaceSolver prec(R, Ahat_inv, ess_dofs);
+
    CGSolver cg;
    cg.SetPreconditioner(prec);
-   cg.SetOperator(A);
+   cg.SetOperator(*A);
    cg.SetRelTol(1e-10);
    cg.SetMaxIter(500);
    cg.SetPrintLevel(1);

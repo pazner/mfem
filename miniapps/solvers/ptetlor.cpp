@@ -34,6 +34,7 @@ int main(int argc, char *argv[])
    int p = 3;
    int enrichment = 2;
    int ref_levels = 0;
+   bool pa = false;
 
    OptionsParser args(argc, argv);
    args.AddOption(&mesh_file, "-m", "--mesh",
@@ -44,6 +45,8 @@ int main(int argc, char *argv[])
                   "LOR point distribution: isaac or duffy.");
    args.AddOption(&ref_levels, "-r", "--refine",
                   "Number of uniform coarse mesh refinements.");
+   args.AddOption(&pa, "-pa", "--partial-assembly", "-no-pa",
+                  "--no-partial-assembly", "Use partial assembly for the high-order form.");
    args.ParseCheck();
    const int q = p + enrichment;
 
@@ -75,11 +78,12 @@ int main(int argc, char *argv[])
    const auto nh = high.GlobalTrueVSize(), nl = low.GlobalTrueVSize();
    if (Mpi::Root()) { tetlor::PrintProblemSize(p, q, nh, nl); }
 
-   Array<int> ess, lor_ess;
-   high.GetBoundaryTrueDofs(ess);
-   low.GetBoundaryTrueDofs(lor_ess);
+   Array<int> ess_dofs, lor_ess_dofs;
+   high.GetBoundaryTrueDofs(ess_dofs);
+   low.GetBoundaryTrueDofs(lor_ess_dofs);
 
    ParBilinearForm a(&high);
+   if (pa) { a.SetAssemblyLevel(AssemblyLevel::PARTIAL); }
    a.SetDiagonalPolicy(Operator::DIAG_ONE);
    a.AddDomainIntegrator(new DiffusionIntegrator);
    a.Assemble();
@@ -91,11 +95,9 @@ int main(int argc, char *argv[])
 
    ParGridFunction x(&high);
    x = 0.0;
-   HypreParMatrix A;
+   OperatorPtr A;
    Vector X, B;
-   a.FormLinearSystem(ess, x, b, A, X, B);
-   const real_t b_norm = ParNormlp(B, 2.0, MPI_COMM_WORLD);
-   MFEM_VERIFY(b_norm > 0, "No free polynomial unknowns for the Dirichlet load.");
+   a.FormLinearSystem(ess_dofs, x, b, A, X, B);
 
    ParBilinearForm w(&low);
    w.SetDiagonalPolicy(Operator::DIAG_ONE);
@@ -105,14 +107,15 @@ int main(int argc, char *argv[])
    ParMixedBilinearForm transfer(&low, &high);
    std::unique_ptr<HypreParMatrix> R(transfer.ParallelAssemble(&local_R));
 
-   HypreParMatrix W;
-   w.FormSystemMatrix(lor_ess, W);
-   HypreBoomerAMG inverse(W);
-   inverse.SetPrintLevel(0);
-   tetlor::FictitiousSpaceSolver prec(*R, inverse, ess);
+   HypreParMatrix Ahat;
+   w.FormSystemMatrix(lor_ess_dofs, Ahat);
+   HypreBoomerAMG Ahat_inv(Ahat);
+   Ahat_inv.SetPrintLevel(1);
+   tetlor::FictitiousSpaceSolver prec(*R, Ahat_inv, ess_dofs);
+
    CGSolver cg(MPI_COMM_WORLD);
    cg.SetPreconditioner(prec);
-   cg.SetOperator(A);
+   cg.SetOperator(*A);
    cg.SetRelTol(1e-10);
    cg.SetMaxIter(500);
    cg.SetPrintLevel(1);
