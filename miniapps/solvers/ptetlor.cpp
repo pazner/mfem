@@ -14,13 +14,11 @@
 //
 //   make ptetlor
 //   mpirun -np 2 ./ptetlor -g isaac -p 4 -e 2
-//   mpirun -np 2 ./ptetlor -g duffy -p 4 -e 1
+//   mpirun -np 2 ./ptetlor -g duffy -p 4 -e 1 -ref-fit
 
 #include "lor_mesh.hpp"
 #include "tetlor.hpp"
 #include <algorithm>
-#include <memory>
-#include <limits>
 
 using namespace mfem;
 
@@ -34,7 +32,7 @@ int main(int argc, char *argv[])
    int p = 3;
    int enrichment = 2;
    int ref_levels = 0;
-   bool pa = false;
+   bool pa = false, reference_fit = false;
 
    OptionsParser args(argc, argv);
    args.AddOption(&mesh_file, "-m", "--mesh",
@@ -47,6 +45,9 @@ int main(int argc, char *argv[])
                   "Number of uniform coarse mesh refinements.");
    args.AddOption(&pa, "-pa", "--partial-assembly", "-no-pa",
                   "--no-partial-assembly", "Use partial assembly for the high-order form.");
+   args.AddOption(&reference_fit, "-ref-fit", "--reference-fit",
+                  "-phys-fit", "--physical-fit",
+                  "Fit in the reference tetrahedron energy on every patch.");
    args.ParseCheck();
    const int q = p + enrichment;
 
@@ -102,16 +103,13 @@ int main(int argc, char *argv[])
    ParBilinearForm w(&low);
    w.SetDiagonalPolicy(Operator::DIAG_ONE);
    w.AddDomainIntegrator(new DiffusionIntegrator);
-   SparseMatrix local_R(high.GetVSize(), low.GetVSize());
-   tetlor::AssembleTransfer(high, w, local_R);
-   ParMixedBilinearForm transfer(&low, &high);
-   std::unique_ptr<HypreParMatrix> R(transfer.ParallelAssemble(&local_R));
+   tetlor::ElementTransfer R(high, w, q, grid_type, reference_fit);
 
    HypreParMatrix Ahat;
    w.FormSystemMatrix(lor_ess_dofs, Ahat);
    HypreBoomerAMG Ahat_inv(Ahat);
    Ahat_inv.SetPrintLevel(1);
-   tetlor::FictitiousSpaceSolver prec(*R, Ahat_inv, ess_dofs);
+   tetlor::FictitiousSpaceSolver prec(R, Ahat_inv, ess_dofs);
 
    CGSolver cg(MPI_COMM_WORLD);
    cg.SetPreconditioner(prec);

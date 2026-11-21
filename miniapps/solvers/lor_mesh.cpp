@@ -49,6 +49,35 @@ static void IsaacNode(const int *alpha, int n, real_t *b)
    for (int i = 0; i < n; i++) { b[i] /= sum; }
 }
 
+void GetPatchVertices(const Mesh &mesh, int e, bool duffy, Array<int> &v)
+{
+   mesh.GetElementVertices(e, v);
+   if (duffy)
+   {
+      // A global vertex order gives the same collapse apex on every shared
+      // face. Reversing the first edge preserves the grid and fixes parity.
+      int inversions = 0;
+      for (int i = 0; i < 4; i++)
+      {
+         for (int j = 0; j < i; j++) { inversions += v[j] > v[i]; }
+      }
+      v.Sort();
+      if (inversions%2) { std::swap(v[0], v[1]); }
+   }
+}
+
+Mesh MakeReferenceLORMesh(int q, const std::string &grid_type)
+{
+   Mesh tet(3, 4, 1);
+   tet.AddVertex(0., 0., 0.);
+   tet.AddVertex(1., 0., 0.);
+   tet.AddVertex(0., 1., 0.);
+   tet.AddVertex(0., 0., 1.);
+   tet.AddTet(0, 1, 2, 3);
+   tet.FinalizeMesh(0, false);
+   return MakeLORMesh(tet, q, grid_type);
+}
+
 // Both refinements have q^3 children per macroelement. The low-order space
 // is ordinary H1 of order one on this mesh, including on the collapsed cells.
 Mesh MakeLORMesh(const Mesh &mesh, int q, const std::string &grid_type)
@@ -108,19 +137,7 @@ Mesh MakeLORMesh(const Mesh &mesh, int q, const std::string &grid_type)
    Array<int> v, ids(n);
    for (int e = 0; e < mesh.GetNE(); e++)
    {
-      mesh.GetElementVertices(e, v);
-      if (duffy)
-      {
-         // A global vertex order gives the same collapse apex on every shared
-         // face. Reversing the first edge preserves the grid and fixes parity.
-         int inversions = 0;
-         for (int i = 0; i < 4; i++)
-         {
-            for (int j = 0; j < i; j++) { inversions += v[j] > v[i]; }
-         }
-         v.Sort();
-         if (inversions%2) { std::swap(v[0], v[1]); }
-      }
+      GetPatchVertices(mesh, e, duffy, v);
       for (int l = 0; l < n; l++)
       {
          Key key{};

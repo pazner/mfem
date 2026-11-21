@@ -17,6 +17,12 @@
 namespace tetlor
 {
 
+/// Coarse vertices in the order used to map the reference LOR patch.
+void GetPatchVertices(const mfem::Mesh &mesh, int e, bool duffy,
+                      mfem::Array<int> &vertices);
+
+mfem::Mesh MakeReferenceLORMesh(int q, const std::string &grid_type);
+
 /// Each coarse tetrahedron has q^3 consecutive children in the returned mesh.
 mfem::Mesh MakeLORMesh(const mfem::Mesh &mesh, int q,
                        const std::string &grid_type);

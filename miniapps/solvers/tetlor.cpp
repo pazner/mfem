@@ -13,7 +13,7 @@
 //
 //   make tetlor
 //   ./tetlor -g isaac -p 4 -e 2
-//   ./tetlor -g duffy -p 4 -e 1
+//   ./tetlor -g duffy -p 4 -e 1 -ref-fit
 
 #include "lor_mesh.hpp"
 #include "tetlor.hpp"
@@ -26,7 +26,7 @@ int main(int argc, char *argv[])
    const char *mesh_file = "../../data/tet-edge-star.mesh";
    std::string grid_type = "isaac";
    int p = 3, enrichment = 2, ref_levels = 0;
-   bool pa = false;
+   bool pa = false, reference_fit = false;
 
    OptionsParser args(argc, argv);
    args.AddOption(&mesh_file, "-m", "--mesh",
@@ -39,6 +39,9 @@ int main(int argc, char *argv[])
                   "Number of uniform coarse mesh refinements.");
    args.AddOption(&pa, "-pa", "--partial-assembly", "-no-pa",
                   "--no-partial-assembly", "Use partial assembly for the high-order form.");
+   args.AddOption(&reference_fit, "-ref-fit", "--reference-fit",
+                  "-phys-fit", "--physical-fit",
+                  "Fit in the reference tetrahedron energy on every patch.");
    args.ParseCheck();
    MFEM_VERIFY(p >= 1 && enrichment >= 0 && ref_levels >= 0,
                "Invalid order or refinement.");
@@ -79,8 +82,7 @@ int main(int argc, char *argv[])
    BilinearForm w(&low);
    w.SetDiagonalPolicy(Operator::DIAG_ONE);
    w.AddDomainIntegrator(new DiffusionIntegrator);
-   SparseMatrix R(high.GetVSize(), low.GetVSize());
-   tetlor::AssembleTransfer(high, w, R);
+   tetlor::ElementTransfer R(high, w, q, grid_type, reference_fit);
 
    SparseMatrix Ahat;
    w.FormSystemMatrix(lor_ess_dofs, Ahat);

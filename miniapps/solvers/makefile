@@ -49,10 +49,10 @@ all: $(MINIAPPS)
 %: %.cpp
 %.o: %.cpp
 
-tetlor ptetlor: %: %.o lor_mesh.o
+tetlor ptetlor: %: %.o lor_mesh.o tetlor_transfer.o
 	$(MFEM_CXX) $(MFEM_LINK_FLAGS) $^ -o $@ $(MFEM_LIBS)
 
-tetlor.o ptetlor.o: $(SRC)tetlor.hpp $(SRC)lor_mesh.hpp
+tetlor.o ptetlor.o tetlor_transfer.o: $(SRC)tetlor.hpp $(SRC)lor_mesh.hpp
 lor_mesh.o: $(SRC)lor_mesh.hpp
 lor_solvers.o: $(SRC)lor_mms.hpp
 plor_solvers.o: $(SRC)lor_mms.hpp
@@ -95,7 +95,7 @@ plor_solvers-test-par: plor_solvers
 tetlor-test-seq: tetlor
 	@$(call mfem-test,$<,, Tetrahedral LOR miniapp,-g isaac,1)
 ptetlor-test-par: ptetlor
-	@$(call mfem-test,$<, $(RUN_MPI), Parallel tetrahedral LOR miniapp,-g duffy,1)
+	@$(call mfem-test,$<, $(RUN_MPI), Parallel tetrahedral LOR miniapp,-g duffy -ref-fit,1)
 
 # LOR elasticity miniapp tests
 lor_elast-test-par: lor_elast-tri lor_elast-hex
