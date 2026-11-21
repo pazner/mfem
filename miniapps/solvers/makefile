@@ -27,7 +27,10 @@ LOR_ELAST_SRC = block_fespace_operator.cpp lor_elast.cpp
 LOR_ELAST_OBJ = $(LOR_ELAST_SRC:.cpp=.o)
 
 SEQ_MINIAPPS = lor_solvers
-PAR_MINIAPPS = block-solvers plor_solvers lor_elast
+PAR_MINIAPPS = block-solvers plor_solvers lor_elast ptetlor
+ifeq ($(MFEM_USE_SUITESPARSE),YES)
+   SEQ_MINIAPPS += tetlor
+endif
 
 ifeq ($(MFEM_USE_MPI),NO)
    MINIAPPS = $(SEQ_MINIAPPS)
@@ -46,6 +49,11 @@ all: $(MINIAPPS)
 %: %.cpp
 %.o: %.cpp
 
+tetlor ptetlor: %: %.o lor_mesh.o
+	$(MFEM_CXX) $(MFEM_LINK_FLAGS) $^ -o $@ $(MFEM_LIBS)
+
+tetlor.o ptetlor.o: $(SRC)tetlor.hpp $(SRC)lor_mesh.hpp
+lor_mesh.o: $(SRC)lor_mesh.hpp
 lor_solvers.o: $(SRC)lor_mms.hpp
 plor_solvers.o: $(SRC)lor_mms.hpp
 
@@ -82,6 +90,12 @@ lor_solvers-test-seq: lor_solvers
 plor_solvers-test-par: plor_solvers
 	@$(call mfem-test,$<, $(RUN_MPI), Parallel LOR solvers miniapp,-fe n\
 	  -m ../../data/fichera.mesh)
+
+# Tetrahedral fictitious-space solvers
+tetlor-test-seq: tetlor
+	@$(call mfem-test,$<,, Tetrahedral LOR miniapp,-g isaac,1)
+ptetlor-test-par: ptetlor
+	@$(call mfem-test,$<, $(RUN_MPI), Parallel tetrahedral LOR miniapp,-g duffy,1)
 
 # LOR elasticity miniapp tests
 lor_elast-test-par: lor_elast-tri lor_elast-hex
