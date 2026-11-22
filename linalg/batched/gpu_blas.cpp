@@ -101,7 +101,7 @@ void GPUBlasBatchedLinAlg::AddMult(const DenseTensor &A, const Vector &x,
 
    const blasStatus_t status = MFEM_GPUBLAS_PREFIX(gemmStridedBatched)(
                                   GPUBlas::Handle(), op_A, op_B, m, k, n,
-                                  &alpha, d_A, m, m*n, d_x, n, n*k, &beta, d_y,
+                                  &alpha, d_A, A.SizeI(), m*n, d_x, n, n*k, &beta, d_y,
                                   m, m*k, n_mat);
    MFEM_VERIFY(status == MFEM_BLAS_SUCCESS, "GPU BLAS error.");
 }

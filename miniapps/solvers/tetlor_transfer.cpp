@@ -107,8 +107,10 @@ class LocalTransfer : public Operator
    Array<int> high_dofs, lor_dofs;
    Vector inv_multiplicity;
    DenseTensor fits;
+   mutable Vector packed_high, packed_lor;
 
 public:
+   void ApplyReference(const Vector &x, Vector &y, bool transpose) const;
    LocalTransfer(FiniteElementSpace &high, BatchedLOR &lor,
                  bool reference_fit);
    using Operator::SetupRAP;
@@ -169,6 +171,12 @@ LocalTransfer::LocalTransfer(FiniteElementSpace &high, BatchedLOR &lor,
 
    high_dofs.SetSize(mesh.GetNE()*nh);
    lor_dofs.SetSize(mesh.GetNE()*nl);
+   if (reference_fit && BatchedLinAlg::IsAvailable(BatchedLinAlg::GPU_BLAS))
+   {
+      const auto mt = Device::GetDeviceMemoryType();
+      packed_high.SetSize(high_dofs.Size(), mt);
+      packed_lor.SetSize(lor_dofs.Size(), mt);
+   }
    inv_multiplicity = 0.0;
    Array<int> hd, lor_boundary;
    GetBoundaryMarker(lor.Space(), lor_boundary);
@@ -207,8 +215,45 @@ LocalTransfer::LocalTransfer(FiniteElementSpace &high, BatchedLOR &lor,
    InvertInteriorMultiplicity(inv_multiplicity, high_boundary);
 }
 
+// Pack one column per element. The shared reference fit acts on all columns
+// in a single GEMM. Apply multiplicity weights on the high-order side only.
+void LocalTransfer::ApplyReference(const Vector &x, Vector &y,
+                                   bool transpose) const
+{
+   Vector &src = transpose ? packed_high : packed_lor;
+   Vector &dst = transpose ? packed_lor : packed_high;
+   const auto gather = (transpose ? high_dofs : lor_dofs).Read();
+   const auto scatter = (transpose ? lor_dofs : high_dofs).Read();
+   const auto weight = inv_multiplicity.Read();
+   const auto input = x.Read();
+   auto columns = src.Write();
+   mfem::forall(src.Size(), [=] MFEM_HOST_DEVICE (int k)
+   {
+      const int d = gather[k];
+      columns[k] = d < 0 ? 0.0 : (transpose ? weight[d]*input[d] : input[d]);
+   });
+
+   const auto &blas = BatchedLinAlg::Get(BatchedLinAlg::GPU_BLAS);
+   if (transpose) { blas.MultTranspose(fits, src, dst); }
+   else { blas.Mult(fits, src, dst); }
+
+   y.UseDevice(true);
+   y = 0.0;
+   auto output = y.ReadWrite();
+   const auto values = dst.Read();
+   mfem::forall(dst.Size(), [=] MFEM_HOST_DEVICE (int k)
+   {
+      const int d = scatter[k];
+      if (d >= 0)
+      {
+         AtomicAdd(output[d], transpose ? values[k] : weight[d]*values[k]);
+      }
+   });
+}
+
 void LocalTransfer::Mult(const Vector &x, Vector &y) const
 {
+   if (packed_high.Size()) { ApplyReference(x, y, false); return; }
    const int nh = fits.SizeI(), nl = fits.SizeJ();
    const auto fit = Reshape(fits.Read(), nh, nl, fits.SizeK());
    const bool shared = fits.SizeK() == 1;
@@ -232,6 +277,7 @@ void LocalTransfer::Mult(const Vector &x, Vector &y) const
 
 void LocalTransfer::MultTranspose(const Vector &x, Vector &y) const
 {
+   if (packed_high.Size()) { ApplyReference(x, y, true); return; }
    const int nh = fits.SizeI(), nl = fits.SizeJ();
    const auto fit = Reshape(fits.Read(), nh, nl, fits.SizeK());
    const bool shared = fits.SizeK() == 1;

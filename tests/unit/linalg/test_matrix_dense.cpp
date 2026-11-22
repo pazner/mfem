@@ -400,6 +400,26 @@ TEST_CASE("LUFactors RightSolve", "[DenseMatrix]")
    REQUIRE(C.MaxMaxNorm() < tol);
 }
 
+TEST_CASE("GPU BLAS rectangular transpose with multiple right-hand sides",
+          "[DenseMatrix][GPU]")
+{
+   if (!BatchedLinAlg::IsAvailable(BatchedLinAlg::GPU_BLAS)) { return; }
+   DenseTensor A(2, 3, 1);
+   for (int j = 0; j < 3; ++j)
+   {
+      A(0)(0,j) = j + 1;
+      A(0)(1,j) = 4 - j;
+   }
+   Vector x({1.0, 2.0, 3.0, 4.0}), y(6);
+   BatchedLinAlg::Get(BatchedLinAlg::GPU_BLAS).MultTranspose(A, x, y);
+   y.HostRead();
+   for (int j = 0; j < 3; ++j)
+   {
+      CHECK(y[j] == MFEM_Approx((j + 1) + 2*(4 - j)));
+      CHECK(y[3+j] == MFEM_Approx(3*(j + 1) + 4*(4 - j)));
+   }
+}
+
 TEST_CASE("Batched Linear Algebra",
           "[DenseMatrix][GPU]")
 {
