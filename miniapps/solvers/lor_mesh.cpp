@@ -66,44 +66,18 @@ void GetPatchVertices(const Mesh &mesh, int e, bool duffy, Array<int> &v)
    }
 }
 
-Mesh MakeReferenceLORMesh(int q, const std::string &grid_type)
+Mesh MakeReferenceLORMesh(int q, const std::string &grid_type,
+                          std::vector<BarycentricLabel> &labels)
 {
-   Mesh tet(3, 4, 1);
-   tet.AddVertex(0., 0., 0.);
-   tet.AddVertex(1., 0., 0.);
-   tet.AddVertex(0., 1., 0.);
-   tet.AddVertex(0., 0., 1.);
-   tet.AddTet(0, 1, 2, 3);
-   tet.FinalizeMesh(0, false);
-   return MakeLORMesh(tet, q, grid_type);
-}
-
-// Both refinements have q^3 children per macroelement. The low-order space
-// is ordinary H1 of order one on this mesh, including on the collapsed cells.
-Mesh MakeLORMesh(const Mesh &mesh, int q, const std::string &grid_type)
-{
-   MFEM_VERIFY(mesh.Dimension() == 3 && mesh.SpaceDimension() == 3 &&
-               mesh.Conforming() && mesh.GetNE() && mesh.GetNumGeometries(3) == 1 &&
-               mesh.GetElementGeometry(0) == Geometry::TETRAHEDRON,
-               "Expected a conforming tetrahedral mesh.");
-   IsoparametricTransformation T;
-   for (int e = 0; e < mesh.GetNE(); e++)
-   {
-      mesh.GetElementTransformation(e, &T);
-      MFEM_VERIFY(T.OrderJ() == 0, "Expected affine tetrahedra.");
-   }
-   MFEM_VERIFY(mesh.GetNBE(), "Expected exterior Dirichlet boundary elements.");
-   MFEM_VERIFY(q >= 1, "Expected positive LOR order.");
-   MFEM_VERIFY(grid_type == "isaac" || grid_type == "duffy",
-               "Expected isaac or duffy.");
-   MFEM_VERIFY(mesh.GetNE() <= std::numeric_limits<int>::max()/q/q/q,
-               "The LOR mesh exceeds the MFEM element index range.");
+   MFEM_VERIFY(q > 0 && (grid_type == "isaac" || grid_type == "duffy"),
+               "Expected a positive LOR order and an isaac or duffy grid.");
+   MFEM_VERIFY(q <= std::numeric_limits<int>::max()/q/q, "LOR order overflow.");
    const bool duffy = grid_type == "duffy";
    GeometryRefiner refiner;
    auto &rg = *refiner.Refine(duffy ? Geometry::CUBE : Geometry::TETRAHEDRON, q);
    const int n = rg.RefPts.GetNPoints();
    std::vector<std::array<real_t,4>> bary(n);
-   std::vector<std::array<long long,4>> label(n);
+   std::vector<BarycentricLabel> label(n);
    const real_t *gll = poly1d.ClosedPoints(q);
    for (int l = 0; l < n; l++)
    {
@@ -129,52 +103,36 @@ Mesh MakeLORMesh(const Mesh &mesh, int q, const std::string &grid_type)
       }
    }
 
-   Mesh mesh_lor(3, 0, mesh.GetNE()*q*q*q);
-   // Integer barycentric labels on the uniform lattice identify shared nodes
-   // exactly, including the coincident nodes on collapsed tensor fibers.
-   using Key = std::array<std::pair<int,long long>,4>;
-   std::map<Key,int> vertex;
-   Array<int> v, ids(n);
-   for (int e = 0; e < mesh.GetNE(); e++)
+   Mesh mesh_lor(3, 0, q*q*q);
+   std::map<BarycentricLabel,int> vertex;
+   Array<int> ids(n);
+   labels.clear();
+   for (int l = 0; l < n; l++)
    {
-      GetPatchVertices(mesh, e, duffy, v);
-      for (int l = 0; l < n; l++)
+      auto entry = vertex.emplace(label[l], mesh_lor.GetNV());
+      ids[l] = entry.first->second;
+      if (entry.second)
       {
-         Key key{};
-         for (int d = 0; d < 4; d++)
-         {
-            if (label[l][d]) { key[d] = {v[d],label[l][d]}; }
-         }
-         std::sort(key.begin(), key.end());
-         auto entry = vertex.emplace(key, mesh_lor.GetNV());
-         ids[l] = entry.first->second;
-         if (entry.second)
-         {
-            real_t x[3] = {};
-            for (int d = 0; d < 4; d++)
-            {
-               for (int s = 0; s < 3; s++) { x[s] += bary[l][d]*mesh.GetVertex(v[d])[s]; }
-            }
-            mesh_lor.AddVertex(x);
-         }
+         mesh_lor.AddVertex(bary[l].data()+1);
+         labels.push_back(label[l]);
       }
+   }
 
-      const int nv = duffy ? 8 : 4;
-      for (int l = 0; l < rg.RefGeoms.Size(); l += nv)
-      {
-         int t[8];
-         for (int d = 0; d < nv; d++) { t[d] = ids[rg.RefGeoms[l+d]]; }
-         if (!duffy) { mesh_lor.AddTet(t[1], t[0], t[2], t[3]); }
-         else if (t[2] == t[3] && t[4] == t[5]) { mesh_lor.AddTet(t[0],t[1],t[2],t[4]); }
-         else if (t[4] == t[5]) { mesh_lor.AddPyramid(t); }
-         else if (t[2] == t[3]) { mesh_lor.AddWedge(t[0],t[1],t[2],t[4],t[5],t[6]); }
-         else { mesh_lor.AddHex(t); }
-      }
+   const int nv = duffy ? 8 : 4;
+   for (int l = 0; l < rg.RefGeoms.Size(); l += nv)
+   {
+      int t[8];
+      for (int d = 0; d < nv; d++) { t[d] = ids[rg.RefGeoms[l+d]]; }
+      if (!duffy) { mesh_lor.AddTet(t[1], t[0], t[2], t[3]); }
+      else if (t[2] == t[3] && t[4] == t[5]) { mesh_lor.AddTet(t[0],t[1],t[2],t[4]); }
+      else if (t[4] == t[5]) { mesh_lor.AddPyramid(t); }
+      else if (t[2] == t[3]) { mesh_lor.AddWedge(t[0],t[1],t[2],t[4],t[5],t[6]); }
+      else { mesh_lor.AddHex(t); }
    }
    mesh_lor.FinalizeMesh(0, false);
    MFEM_VERIFY(mesh_lor.CheckElementOrientation(false) == 0,
                "Inverted LOR element.");
-   MFEM_VERIFY(mesh_lor.GetNBE() == mesh.GetNBE()*q*q, "Incompatible LOR faces.");
+   MFEM_VERIFY(mesh_lor.GetNBE() == 4*q*q, "Incompatible LOR faces.");
    return mesh_lor;
 }
 

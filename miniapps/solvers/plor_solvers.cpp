@@ -65,7 +65,7 @@
 //  * mpirun -np 4 plor_solvers -m ../../data/fichera.mesh -fe l -d cuda
 
 #include "mfem.hpp"
-#include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <memory>
 
@@ -73,6 +73,17 @@
 
 using namespace std;
 using namespace mfem;
+
+// Complete queued device work before reading the wall clock. Reduce timings
+// across ranks after the measurements so collective latency is excluded.
+static double Timestamp()
+{
+   if (Device::Allows(Backend::CUDA_MASK | Backend::HIP_MASK))
+   {
+      MFEM_DEVICE_SYNC;
+   }
+   return MPI_Wtime();
+}
 
 int main(int argc, char *argv[])
 {
@@ -84,7 +95,7 @@ int main(int argc, char *argv[])
    int order = 3;
    const char *fe = "h";
    const char *device_config = "cpu";
-   bool visualization = true;
+   bool visualization = false;
 
    OptionsParser args(argc, argv);
    args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use.");
@@ -97,7 +108,7 @@ int main(int argc, char *argv[])
                   "FE type. h for H1, n for Hcurl, r for Hdiv, l for L2");
    args.AddOption(&visualization, "-vis", "--visualization", "-no-vis",
                   "--no-visualization",
-                  "Enable or disable GLVis visualization.");
+                  "Accepted for compatibility. This benchmark produces no field output.");
    args.AddOption(&device_config, "-d", "--device",
                   "Device configuration string, see Device::Configure().");
    args.ParseCheck();
@@ -114,6 +125,7 @@ int main(int argc, char *argv[])
 
    real_t kappa = 10*(order+1)*(order+1); // Penalty used for DG discretizations
 
+   IntegrationRules lobatto(0, Quadrature1D::GaussLobatto);
    Mesh serial_mesh(mesh_file, 1, 1);
    const int dim = serial_mesh.Dimension();
    const int sdim = serial_mesh.SpaceDimension();
@@ -127,7 +139,7 @@ int main(int argc, char *argv[])
    if (mesh.ncmesh && (RT || ND))
    { MFEM_ABORT("LOR AMS and ADS solvers are not supported with AMR meshes."); }
 
-   FunctionCoefficient f_coeff(f(1.0)), u_coeff(u);
+   LORScalarCoefficient f_coeff(1.0 + sdim*pi2), u_coeff(1.0);
    VectorFunctionCoefficient f_vec_coeff(sdim, f_vec(RT)),
                              u_vec_coeff(sdim, u_vec);
 
@@ -139,13 +151,15 @@ int main(int argc, char *argv[])
    else { fec.reset(new L2_FECollection(order, dim, b1)); }
 
    ParFiniteElementSpace fes(&mesh, fec.get());
-   HYPRE_Int ndofs = fes.GlobalTrueVSize();
+   const HYPRE_BigInt ndofs = fes.GlobalTrueVSize();
    if (Mpi::Root()) { cout << "Number of DOFs: " << ndofs << endl; }
 
    Array<int> ess_dofs;
    // In DG, boundary conditions are enforced weakly, so no essential DOFs.
    if (!L2) { fes.GetBoundaryTrueDofs(ess_dofs); }
 
+   MPI_Barrier(mesh.GetComm());
+   const double start = Timestamp();
    ParBilinearForm a(&fes);
    if (H1 || L2)
    {
@@ -168,6 +182,7 @@ int main(int argc, char *argv[])
    // vector finite elements (ND or RT).
    if (H1 || sdim == dim) { a.SetAssemblyLevel(AssemblyLevel::PARTIAL); }
    a.Assemble();
+   const double assembled = Timestamp();
 
    ParLinearForm b(&fes);
    if (H1 || L2) { b.AddDomainIntegrator(new DomainLFIntegrator(f_coeff)); }
@@ -181,62 +196,104 @@ int main(int argc, char *argv[])
    b.Assemble();
 
    ParGridFunction x(&fes);
-   if (H1 || L2) { x.ProjectCoefficient(u_coeff);}
+   if (H1 && UsesTensorBasis(fes) && !mesh.NURBSext)
+   {
+      // The quadrature points are the H1 nodes in lexicographic order.
+      // FormLinearSystem retains only the essential values.
+      const IntegrationRule &nodes =
+         lobatto.Get(mesh.GetTypicalElementGeometry(), 2*order - 1);
+      QuadratureSpace qs(mesh, nodes);
+      QuadratureFunction nodal_values(qs);
+      u_coeff.Project(nodal_values);
+      const auto *restriction = static_cast<const ElementRestriction*>(
+                                   fes.GetElementRestriction(ElementDofOrdering::LEXICOGRAPHIC));
+      restriction->MultLeftInverse(nodal_values, x);
+   }
+   else if (H1)
+   {
+      x = 0.0;
+      Array<int> ess_bdr(mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0);
+      ess_bdr = 1;
+      x.ProjectBdrCoefficient(u_coeff, ess_bdr);
+   }
+   else if (L2) { x = 0.0; }
    else { x.ProjectCoefficient(u_vec_coeff); }
 
+   const double rhs_ready = Timestamp();
    Vector X, B;
    OperatorHandle A;
    a.FormLinearSystem(ess_dofs, x, b, A, X, B);
 
+   const double system_ready = Timestamp();
+   Vector work(X.Size(), Device::GetDeviceMemoryType());
+   work.UseDevice(true);
+   double lor_ready;
+   auto setup_lor = [&](auto solver) -> unique_ptr<Solver>
+   {
+      lor_ready = Timestamp();
+      solver->GetSolver().SetPrintLevel(0);
+      solver->GetSolver().Setup(B, work);
+      return solver;
+   };
    unique_ptr<Solver> solv_lor;
    if (H1 || L2)
    {
-      solv_lor.reset(new LORSolver<HypreBoomerAMG>(a, ess_dofs));
+      solv_lor = setup_lor(make_unique<LORSolver<HypreBoomerAMG>>(a, ess_dofs));
    }
    else if (RT && dim == 3)
    {
-      solv_lor.reset(new LORSolver<HypreADS>(a, ess_dofs));
+      solv_lor = setup_lor(make_unique<LORSolver<HypreADS>>(a, ess_dofs));
    }
    else
    {
-      solv_lor.reset(new LORSolver<HypreAMS>(a, ess_dofs));
+      solv_lor = setup_lor(make_unique<LORSolver<HypreAMS>>(a, ess_dofs));
    }
 
-   CGSolver cg(MPI_COMM_WORLD);
+   const double hierarchy_ready = Timestamp();
+
+   CGSolver cg(mesh.GetComm());
    cg.SetAbsTol(0.0);
    cg.SetRelTol(1e-12);
    cg.SetMaxIter(500);
-   cg.SetPrintLevel(1);
+   cg.SetPrintLevel(0);
    cg.SetOperator(*A);
    cg.SetPreconditioner(*solv_lor);
    cg.Mult(B, X);
 
-   a.RecoverFEMSolution(X, b, x);
+   const double solved = Timestamp();
 
-   if (sdim == dim)
+   // CG has warmed up both operators. Measure repeated applications without
+   // a device synchronization or timing collective between applications.
+   constexpr int repeats = 20;
+   for (int i = 0; i < repeats; ++i) { A->Mult(B, work); }
+   const double applied = Timestamp();
+   for (int i = 0; i < repeats; ++i) { solv_lor->Mult(B, work); }
+   const double preconditioned = Timestamp();
+
+   double times[] = {assembled - start, rhs_ready - assembled,
+                     system_ready - rhs_ready, lor_ready - system_ready,
+                     hierarchy_ready - lor_ready, solved - hierarchy_ready,
+                     (applied - solved)/repeats, (preconditioned - applied)/repeats};
+   const char *labels[] =
    {
-      real_t er =
-         (H1 || L2) ? x.ComputeL2Error(u_coeff) : x.ComputeL2Error(u_vec_coeff);
-      if (Mpi::Root()) { cout << "L2 error: " << er << endl; }
-   }
-
-   if (visualization)
+      "High-order assembly", "RHS and boundary data", "Form linear system",
+      "LOR construction", "hypre setup", "CG solve",
+      "High-order operator / apply", "LOR preconditioner / apply"
+   };
+   MPI_Allreduce(MPI_IN_PLACE, times, std::size(times), MPI_DOUBLE,
+                 MPI_MAX, mesh.GetComm());
+   if (Mpi::Root())
    {
-      // Save the solution and mesh to disk. The output can be viewed using
-      // GLVis as follows: "glvis -np <np> -m mesh -g sol"
-      x.Save("sol");
-      mesh.Save("mesh");
-
-      // Also save the solution for visualization using ParaView
-      ParaViewDataCollection dc("PLOR", &mesh);
-      dc.SetPrefixPath("ParaView");
-      dc.SetHighOrderOutput(true);
-      dc.SetLevelsOfDetail(order);
-      dc.RegisterField("u", &x);
-      dc.SetCycle(0);
-      dc.SetTime(0.0);
-      dc.Save();
+      cout << "CG " << (cg.GetConverged() ? "converged" : "did not converge")
+           << " in " << cg.GetNumIterations() << " iterations"
+           << " (relative norm " << cg.GetFinalRelNorm() << ")\n"
+           << "Wall time in ms (max across ranks, apply averaged over "
+           << repeats << " calls)\n";
+      for (unsigned i = 0; i < std::size(times); ++i)
+      {
+         cout << "  " << left << setw(29) << labels[i] << right
+              << fixed << setprecision(3) << setw(10) << 1000*times[i] << '\n';
+      }
    }
-
-   return 0;
+   return cg.GetConverged() ? 0 : 1;
 }

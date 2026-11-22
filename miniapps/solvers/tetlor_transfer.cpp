@@ -10,10 +10,7 @@
 // CONTRIBUTING.md for details.
 
 #include "tetlor.hpp"
-#include "lor_mesh.hpp"
-#include <algorithm>
 #include <cmath>
-#include <vector>
 
 namespace tetlor
 {
@@ -90,17 +87,10 @@ public:
 
    // Fit all coefficients in the patch energy, fixing the stiffness null
    // space with the polynomial-exact mean before imposing any trace conditions.
-   void Fit(const SparseMatrix &stiffness, real_t volume, DenseMatrix &fit)
+   void Fit(const BatchedLOR &lor, int e, real_t volume, DenseMatrix &fit)
    {
       const int nh = Q.Width(), nl = Q.Height();
-      fit.SetSize(nh, nl);
-      Vector col, result(nl);
-      for (int j = 0; j < nh; j++)
-      {
-         Q.GetColumnReference(j, col);
-         stiffness.Mult(col, result);
-         fit.SetRow(j, result);
-      }
+      lor.ApplyPatchStiffness(e, Q, fit);
       DenseMatrix gram(nh);
       Mult(fit, Q, gram);
       const real_t h = std::cbrt(volume);
@@ -111,37 +101,18 @@ public:
    }
 };
 
-// The reference and physical meshes have the same child order and local
-// vertex order. Express each child stiffness in reference patch numbering.
-void FitPatch(PatchBasis &basis, const Mesh &patch, BilinearForm &form,
-              int parent, real_t volume, bool assemble_lor, DenseMatrix &fit)
-{
-   SparseMatrix stiffness(patch.GetNV());
-   DenseMatrix child;
-   Array<int> vertices, dofs;
-   for (int s = 0; s < patch.GetNE(); s++)
-   {
-      const int i = parent*patch.GetNE() + s;
-      form.ComputeElementMatrix(i, child);
-      if (assemble_lor) { form.AssembleElementMatrix(i, child, dofs); }
-      patch.GetElementVertices(s, vertices);
-      stiffness.AddSubMatrix(vertices, vertices, child);
-   }
-   stiffness.Finalize();
-   basis.Fit(stiffness, volume, fit);
-}
-
 // Each row of the DOF maps is a coarse tetrahedron in reference patch order.
 class LocalTransfer : public Operator
 {
-   Array2D<int> high_dofs, lor_dofs;
+   Array<int> high_dofs, lor_dofs;
    Vector inv_multiplicity;
-   std::vector<DenseMatrix> fits;
+   DenseTensor fits;
 
 public:
-   LocalTransfer(FiniteElementSpace &high, BilinearForm &lor_form,
-                 int q, const std::string &grid_type, bool reference_fit);
+   LocalTransfer(FiniteElementSpace &high, BatchedLOR &lor,
+                 bool reference_fit);
    using Operator::SetupRAP;
+   MemoryClass GetMemoryClass() const override { return Device::GetMemoryClass(); }
    void Mult(const Vector &x, Vector &y) const override;
    void MultTranspose(const Vector &x, Vector &y) const override;
 };
@@ -154,25 +125,30 @@ void GetBoundaryMarker(const FiniteElementSpace &space, Array<int> &marker)
    space.GetEssentialVDofs(ess_bdr, marker);
 }
 
-LocalTransfer::LocalTransfer(FiniteElementSpace &high, BilinearForm &lor_form,
-                             int q, const std::string &grid_type, bool reference_fit)
-   : Operator(high.GetVSize(), lor_form.FESpace()->GetVSize()),
-     inv_multiplicity(height), fits(reference_fit ? 1 : high.GetNE())
+void InvertInteriorMultiplicity(Vector &multiplicity, const Array<int> &marker)
 {
-   Mesh &mesh = *high.GetMesh(), &mesh_lor = *lor_form.FESpace()->GetMesh();
-   Mesh patch = MakeReferenceLORMesh(q, grid_type);
+   const auto boundary = marker.Read();
+   auto counts = multiplicity.ReadWrite();
+   mfem::forall(multiplicity.Size(), [=] MFEM_HOST_DEVICE (int d)
+   {
+      counts[d] = boundary[d] ? 0.0 : 1.0/counts[d];
+   });
+}
+
+LocalTransfer::LocalTransfer(FiniteElementSpace &high, BatchedLOR &lor,
+                             bool reference_fit)
+   : Operator(high.GetVSize(), lor.Space().GetVSize()),
+     inv_multiplicity(height)
+{
+   Mesh &mesh = *high.GetMesh();
+   Mesh &patch = lor.ReferencePatch();
    const FiniteElement &bern = *high.GetFE(0);
    const int nh = bern.GetDof(), nl = patch.GetNV(), p = bern.GetOrder();
    PatchBasis basis(patch, bern);
+   fits.SetSize(nh, nl, reference_fit ? 1 : mesh.GetNE());
    if (reference_fit)
    {
-      H1_FECollection linear(1);
-      FiniteElementSpace space(&patch, &linear);
-      BilinearForm ref_form(&space);
-      ref_form.AddDomainIntegrator(new DiffusionIntegrator);
-      FitPatch(basis, patch, ref_form, 0, Geometry::Volume[Geometry::TETRAHEDRON],
-               false, fits[0]);
-      lor_form.Assemble();
+      basis.Fit(lor, -1, Geometry::Volume[Geometry::TETRAHEDRON], fits(0));
    }
 
    // Index the Bernstein coefficients by their integer barycentric exponents.
@@ -191,49 +167,32 @@ LocalTransfer::LocalTransfer(FiniteElementSpace &high, BilinearForm &lor_form,
       index(a[1], a[2], a[3]) = i;
    }
 
-   // Each reference LOR vertex needs just one child and local vertex number
-   // to find its order-one H1 DOF on any physical patch.
-   Array<int> child(nl), corner(nl);
-   for (int s = 0; s < patch.GetNE(); s++)
-   {
-      const Element &el = *patch.GetElement(s);
-      for (int j = 0; j < el.GetNVertices(); j++)
-      {
-         const int i = el.GetVertices()[j];
-         child[i] = s;
-         corner[i] = j;
-      }
-   }
-
-   high_dofs.SetSize(mesh.GetNE(), nh);
-   lor_dofs.SetSize(mesh.GetNE(), nl);
+   high_dofs.SetSize(mesh.GetNE()*nh);
+   lor_dofs.SetSize(mesh.GetNE()*nl);
    inv_multiplicity = 0.0;
-   Array<int> hd, vertices, lor_boundary;
-   GetBoundaryMarker(*lor_form.FESpace(), lor_boundary);
+   Array<int> hd, lor_boundary;
+   GetBoundaryMarker(lor.Space(), lor_boundary);
+   lor_boundary.HostRead();
    for (int e = 0; e < mesh.GetNE(); e++)
    {
       high.GetElementDofs(e, hd);
-      GetPatchVertices(mesh, e, grid_type == "duffy", vertices);
-      const int *native = mesh.GetElement(e)->GetVertices();
-      int perm[4];
-      for (int j = 0; j < 4; j++) { perm[j] = vertices.Find(native[j]); }
+      const int *perm = lor.VertexPermutation(e);
       for (int i = 0; i < nh; i++)
       {
          const int *a = alpha[i];
          const int d = hd[index(a[perm[1]], a[perm[2]], a[perm[3]])];
-         high_dofs(e,i) = d;
+         high_dofs[e*nh+i] = d;
          inv_multiplicity(d)++;
       }
 
       for (int i = 0; i < nl; i++)
       {
-         const Element &el = *mesh_lor.GetElement(e*patch.GetNE() + child[i]);
-         const int d = el.GetVertices()[corner[i]];
-         lor_dofs(e,i) = lor_boundary[d] ? -1 : d;
+         const int d = lor.PatchDofs()[e*nl+i];
+         lor_dofs[e*nl+i] = lor_boundary[d] ? -1 : d;
       }
       if (!reference_fit)
       {
-         FitPatch(basis, patch, lor_form, e, mesh.GetElementVolume(e), true, fits[e]);
+         basis.Fit(lor, e, mesh.GetElementVolume(e), fits(e));
       }
    }
 
@@ -243,68 +202,68 @@ LocalTransfer::LocalTransfer(FiniteElementSpace &high, BilinearForm &lor_form,
       P->MultTranspose(inv_multiplicity, sums);
       P->Mult(sums, inv_multiplicity);
    }
-   inv_multiplicity.Reciprocal();
    Array<int> high_boundary;
    GetBoundaryMarker(high, high_boundary);
-   for (int d = 0; d < height; d++)
-   {
-      if (high_boundary[d]) { inv_multiplicity(d) = 0.0; }
-   }
+   InvertInteriorMultiplicity(inv_multiplicity, high_boundary);
 }
 
 void LocalTransfer::Mult(const Vector &x, Vector &y) const
 {
-   Vector u(lor_dofs.NumCols()), v(high_dofs.NumCols());
-   const real_t *input = x.HostRead();
-   real_t *output = y.HostWrite();
-   std::fill_n(output, height, 0.0);
-   for (int e = 0; e < high_dofs.NumRows(); e++)
+   const int nh = fits.SizeI(), nl = fits.SizeJ();
+   const auto fit = Reshape(fits.Read(), nh, nl, fits.SizeK());
+   const bool shared = fits.SizeK() == 1;
+   const auto high = high_dofs.Read(), low = lor_dofs.Read();
+   const auto weight = inv_multiplicity.Read(), input = x.Read();
+   y.UseDevice(true);
+   y = 0.0;
+   auto output = y.ReadWrite();
+   mfem::forall(high_dofs.Size(), [=] MFEM_HOST_DEVICE (int k)
    {
-      for (int i = 0; i < u.Size(); i++)
+      const int e = k/nh, i = k%nh;
+      real_t sum = 0.0;
+      for (int j = 0; j < nl; j++)
       {
-         const int d = lor_dofs(e,i);
-         u(i) = d < 0 ? 0.0 : input[d];
+         const int d = low[e*nl+j];
+         if (d >= 0) { sum += fit(i,j,shared ? 0 : e)*input[d]; }
       }
-      fits[fits.size() == 1 ? 0 : e].Mult(u, v);
-      for (int i = 0; i < v.Size(); i++) { output[high_dofs(e,i)] += v(i); }
-   }
-   for (int i = 0; i < height; i++) { output[i] *= inv_multiplicity(i); }
+      AtomicAdd(output[high[k]], weight[high[k]]*sum);
+   });
 }
 
 void LocalTransfer::MultTranspose(const Vector &x, Vector &y) const
 {
-   Vector u(high_dofs.NumCols()), v(lor_dofs.NumCols());
-   const real_t *input = x.HostRead();
-   real_t *output = y.HostWrite();
-   std::fill_n(output, width, 0.0);
-   for (int e = 0; e < high_dofs.NumRows(); e++)
+   const int nh = fits.SizeI(), nl = fits.SizeJ();
+   const auto fit = Reshape(fits.Read(), nh, nl, fits.SizeK());
+   const bool shared = fits.SizeK() == 1;
+   const auto high = high_dofs.Read(), low = lor_dofs.Read();
+   const auto weight = inv_multiplicity.Read(), input = x.Read();
+   y.UseDevice(true);
+   y = 0.0;
+   auto output = y.ReadWrite();
+   mfem::forall(lor_dofs.Size(), [=] MFEM_HOST_DEVICE (int k)
    {
-      for (int i = 0; i < u.Size(); i++)
+      if (low[k] < 0) { return; }
+      const int e = k/nl, j = k%nl;
+      real_t sum = 0.0;
+      for (int i = 0; i < nh; i++)
       {
-         const int d = high_dofs(e,i);
-         u(i) = inv_multiplicity(d)*input[d];
+         const int d = high[e*nh+i];
+         sum += fit(i,j,shared ? 0 : e)*weight[d]*input[d];
       }
-      fits[fits.size() == 1 ? 0 : e].MultTranspose(u, v);
-      for (int i = 0; i < v.Size(); i++)
-      {
-         const int d = lor_dofs(e,i);
-         if (d >= 0) { output[d] += v(i); }
-      }
-   }
+      AtomicAdd(output[low[k]], sum);
+   });
 }
 
 } // namespace
 
 ElementTransfer::ElementTransfer(FiniteElementSpace &high,
-                                 BilinearForm &lor_form,
-                                 int q, const std::string &grid_type,
+                                 BatchedLOR &lor,
                                  bool reference_fit)
-   : Operator(high.GetTrueVSize(), lor_form.FESpace()->GetTrueVSize())
+   : Operator(high.GetTrueVSize(), lor.Space().GetTrueVSize())
 {
-   auto patch = std::make_unique<LocalTransfer>(high, lor_form, q, grid_type,
-                                                reference_fit);
+   auto patch = std::make_unique<LocalTransfer>(high, lor, reference_fit);
    // SetupRAP returns the local operator when both prolongations are identities.
-   Operator *R = patch->SetupRAP(lor_form.FESpace()->GetProlongationMatrix(),
+   Operator *R = patch->SetupRAP(lor.Space().GetProlongationMatrix(),
                                  high.GetProlongationMatrix());
    transfer.Reset(R, R != patch.get());
    local = std::move(patch);

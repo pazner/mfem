@@ -28,7 +28,7 @@ LOR_ELAST_OBJ = $(LOR_ELAST_SRC:.cpp=.o)
 
 SEQ_MINIAPPS = lor_solvers
 PAR_MINIAPPS = block-solvers plor_solvers lor_elast ptetlor
-ifeq ($(MFEM_USE_SUITESPARSE),YES)
+ifneq ($(filter YES,$(MFEM_USE_SUITESPARSE) $(MFEM_USE_CUDSS)),)
    SEQ_MINIAPPS += tetlor
 endif
 
@@ -49,10 +49,10 @@ all: $(MINIAPPS)
 %: %.cpp
 %.o: %.cpp
 
-tetlor ptetlor: %: %.o lor_mesh.o tetlor_transfer.o
+tetlor ptetlor: %: %.o lor_mesh.o tetlor_batched.o tetlor_transfer.o
 	$(MFEM_CXX) $(MFEM_LINK_FLAGS) $^ -o $@ $(MFEM_LIBS)
 
-tetlor.o ptetlor.o tetlor_transfer.o: $(SRC)tetlor.hpp $(SRC)lor_mesh.hpp
+tetlor.o ptetlor.o tetlor_transfer.o tetlor_batched.o: $(SRC)tetlor.hpp $(SRC)lor_mesh.hpp
 lor_mesh.o: $(SRC)lor_mesh.hpp
 lor_solvers.o: $(SRC)lor_mms.hpp
 plor_solvers.o: $(SRC)lor_mms.hpp
@@ -93,7 +93,7 @@ plor_solvers-test-par: plor_solvers
 
 # Tetrahedral fictitious-space solvers
 tetlor-test-seq: tetlor
-	@$(call mfem-test,$<,, Tetrahedral LOR miniapp,-g isaac,1)
+	@$(call mfem-test,$<,, Tetrahedral LOR miniapp,-g isaac $(if $(filter NO,$(MFEM_USE_SUITESPARSE)),-d cuda),1)
 ptetlor-test-par: ptetlor
 	@$(call mfem-test,$<, $(RUN_MPI), Parallel tetrahedral LOR miniapp,-g duffy -ref-fit,1)
 

@@ -15,10 +15,10 @@
 //   make ptetlor
 //   mpirun -np 2 ./ptetlor -g isaac -p 4 -e 2
 //   mpirun -np 2 ./ptetlor -g duffy -p 4 -e 1 -ref-fit
+//   MFEM_GPU_AWARE_MPI=1 mpirun -np 2 ./ptetlor -d cuda -pa  # GPU-aware MPI
 
-#include "lor_mesh.hpp"
 #include "tetlor.hpp"
-#include <algorithm>
+#include <limits>
 
 using namespace mfem;
 
@@ -29,12 +29,14 @@ int main(int argc, char *argv[])
 
    std::string mesh_file = "../../data/tet-edge-star.mesh";
    std::string grid_type = "isaac";
+   const char *device_config = "cpu";
    int p = 3;
    int enrichment = 2;
    int ref_levels = 0;
    bool pa = false, reference_fit = false;
 
    OptionsParser args(argc, argv);
+   args.AddOption(&device_config, "-d", "--device", "MFEM device configuration.");
    args.AddOption(&mesh_file, "-m", "--mesh",
                   "Conforming affine tetrahedral mesh.");
    args.AddOption(&p, "-p", "--order", "Polynomial degree.");
@@ -49,39 +51,34 @@ int main(int argc, char *argv[])
                   "-phys-fit", "--physical-fit",
                   "Fit in the reference tetrahedron energy on every patch.");
    args.ParseCheck();
+   Device device(device_config);
+   if (Mpi::Root()) { device.Print(); }
+   MFEM_VERIFY(!Device::Allows(Backend::CUDA_MASK | Backend::HIP_MASK) ||
+               HypreUsingGPU(), "A GPU solve requires GPU-enabled hypre.");
+   MFEM_VERIFY(p >= 1 && enrichment >= 0 && ref_levels >= 0 &&
+               enrichment <= std::numeric_limits<int>::max() - p,
+               "Invalid order or refinement.");
    const int q = p + enrichment;
 
-   ParMesh mesh, mesh_lor;
+   ParMesh mesh;
    {
       Mesh serial = Mesh::LoadFromFile(mesh_file, 1, 0);
       for (int r = 0; r < ref_levels; r++) { serial.UniformRefinement(); }
-      Mesh refined = tetlor::MakeLORMesh(serial, q, grid_type);
       MFEM_VERIFY(serial.GetNE() >= Mpi::WorldSize(),
                   "Use at most one rank per coarse element.");
-      // Keep every patch on its parent's rank. ParMesh preserves the relative
-      // order of elements in each partition, hence also the q^3 child blocks.
-      Array<int> parts;
-      parts.MakeRef(serial.GeneratePartitioning(Mpi::WorldSize()),
-                    serial.GetNE(), MemoryType::HOST, true);
-      Array<int> children(refined.GetNE());
-      const int n = refined.GetNE()/serial.GetNE();
-      for (int e = 0; e < serial.GetNE(); e++)
-      {
-         std::fill_n(children.begin() + e*n, n, parts[e]);
-      }
-      mesh = ParMesh(MPI_COMM_WORLD, serial, parts);
-      mesh_lor = ParMesh(MPI_COMM_WORLD, refined, children);
+      mesh = ParMesh(MPI_COMM_WORLD, serial);
    }
 
    H1Pos_FECollection bern(p);
-   H1_FECollection linear(1);
-   ParFiniteElementSpace high(&mesh, &bern), low(&mesh_lor, &linear);
-   const auto nh = high.GlobalTrueVSize(), nl = low.GlobalTrueVSize();
+   ParFiniteElementSpace high(&mesh, &bern);
+   tetlor::BatchedLOR lor(mesh, q, grid_type);
+   const auto nh = high.GlobalTrueVSize();
+   const auto nl = static_cast<ParFiniteElementSpace&>(lor.Space()).GlobalTrueVSize();
    if (Mpi::Root()) { tetlor::PrintProblemSize(p, q, nh, nl); }
 
    Array<int> ess_dofs, lor_ess_dofs;
    high.GetBoundaryTrueDofs(ess_dofs);
-   low.GetBoundaryTrueDofs(lor_ess_dofs);
+   lor.Space().GetBoundaryTrueDofs(lor_ess_dofs);
 
    ParBilinearForm a(&high);
    if (pa) { a.SetAssemblyLevel(AssemblyLevel::PARTIAL); }
@@ -91,7 +88,14 @@ int main(int argc, char *argv[])
 
    ConstantCoefficient one(1.0);
    ParLinearForm b(&high);
-   b.AddDomainIntegrator(new DomainLFIntegrator(one));
+   auto *load = new DomainLFIntegrator(one);
+   if (pa)
+   {
+      // The constant load on affine elements needs degree-p exactness.
+      load->SetIntegrationRule(StroudIntRules.Get(Geometry::TETRAHEDRON, p));
+   }
+   b.AddDomainIntegrator(load);
+   b.UseFastAssembly(pa);
    b.Assemble();
 
    ParGridFunction x(&high);
@@ -100,14 +104,16 @@ int main(int argc, char *argv[])
    Vector X, B;
    a.FormLinearSystem(ess_dofs, x, b, A, X, B);
 
-   ParBilinearForm w(&low);
-   w.SetDiagonalPolicy(Operator::DIAG_ONE);
-   w.AddDomainIntegrator(new DiffusionIntegrator);
-   tetlor::ElementTransfer R(high, w, q, grid_type, reference_fit);
-
-   HypreParMatrix Ahat;
-   w.FormSystemMatrix(lor_ess_dofs, Ahat);
-   HypreBoomerAMG Ahat_inv(Ahat);
+   tetlor::ElementTransfer R(high, lor, reference_fit);
+   OperatorHandle Ahat(Operator::Hypre_ParCSR);
+   lor.FormSystemMatrix(lor_ess_dofs, Ahat);
+   HypreBoomerAMG Ahat_inv(*Ahat.As<HypreParMatrix>());
+   if (HypreUsingGPU())
+   {
+      // Keep the coarse solve on the GPU too. The default Gaussian elimination
+      // stages the coarse vectors on the host on each V-cycle.
+      HYPRE_BoomerAMGSetCycleRelaxType(Ahat_inv, 18, 3); // l1-Jacobi
+   }
    Ahat_inv.SetPrintLevel(1);
    tetlor::FictitiousSpaceSolver prec(R, Ahat_inv, ess_dofs);
 

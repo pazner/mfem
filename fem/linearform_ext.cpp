@@ -46,7 +46,11 @@ void LinearFormExtension::Assemble()
       }
 
       // if there are no markers, just use the whole linear form (1)
-      if (!has_markers_k) { markers.HostReadWrite(); markers = 1; }
+      if (!has_markers_k)
+      {
+         auto active = markers.Write();
+         mfem::forall(markers.Size(), [=] MFEM_HOST_DEVICE(int e) { active[e] = 1; });
+      }
       else
       {
          // scan the attributes to set the markers to 0 or 1
@@ -89,7 +93,12 @@ void LinearFormExtension::Assemble()
       }
 
       // if there are no markers, just use the whole linear form (1)
-      if (!has_markers_k) { bdr_markers.HostReadWrite(); bdr_markers = 1; }
+      if (!has_markers_k)
+      {
+         auto active = bdr_markers.Write();
+         mfem::forall(bdr_markers.Size(),
+                      [=] MFEM_HOST_DEVICE(int e) { active[e] = 1; });
+      }
       else
       {
          // scan the attributes to set the markers to 0 or 1

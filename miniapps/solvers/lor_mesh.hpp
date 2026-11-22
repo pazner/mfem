@@ -13,6 +13,8 @@
 #define MFEM_MINIAPPS_LOR_MESH_HPP
 
 #include "mfem.hpp"
+#include <array>
+#include <vector>
 
 namespace tetlor
 {
@@ -21,11 +23,11 @@ namespace tetlor
 void GetPatchVertices(const mfem::Mesh &mesh, int e, bool duffy,
                       mfem::Array<int> &vertices);
 
-mfem::Mesh MakeReferenceLORMesh(int q, const std::string &grid_type);
+using BarycentricLabel = std::array<long long,4>;
 
-/// Each coarse tetrahedron has q^3 consecutive children in the returned mesh.
-mfem::Mesh MakeLORMesh(const mfem::Mesh &mesh, int q,
-                       const std::string &grid_type);
+/// Build one reference patch, recording exact lattice labels in vertex order.
+mfem::Mesh MakeReferenceLORMesh(int q, const std::string &grid_type,
+                                std::vector<BarycentricLabel> &labels);
 
 } // namespace tetlor
 

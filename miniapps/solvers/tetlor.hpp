@@ -12,7 +12,8 @@
 #ifndef MFEM_MINIAPPS_TETLOR_HPP
 #define MFEM_MINIAPPS_TETLOR_HPP
 
-#include "mfem.hpp"
+#include "lor_mesh.hpp"
+#include "general/forall.hpp"
 #include <memory>
 
 namespace tetlor
@@ -29,6 +30,31 @@ inline void PrintProblemSize(int p, int q, long long high_dofs,
        << "LOR DOFs = " << lor_dofs << "\n\n";
 }
 
+/// One reference stencil and a conforming patch-node layout on the coarse mesh.
+class BatchedLOR
+{
+   std::unique_ptr<FiniteElementCollection> collection;
+   std::unique_ptr<FiniteElementSpace> space;
+   Mesh patch;
+   Array<int> dofs, rows, columns;
+   Array2D<int> vertex_permutations;
+   DenseMatrix stencil, metrics;
+
+public:
+   BatchedLOR(Mesh &mesh, int q, const std::string &grid_type);
+   /// Coarse topology space for numbering, boundary DOFs and prolongation.
+   FiniteElementSpace &Space() const { return *space; }
+   Mesh &ReferencePatch() { return patch; }
+   const int *VertexPermutation(int e) const { return vertex_permutations[e]; }
+   const Array<int> &PatchDofs() const { return dofs; }
+
+   /// Compute Q^t K for a physical patch, or the reference patch if e < 0.
+   void ApplyPatchStiffness(int e, const DenseMatrix &Q, DenseMatrix &QtK) const;
+   /// Assemble the unconstrained rank-local matrix in an empty CSR matrix.
+   void AssembleLocal(SparseMatrix &matrix) const;
+   void FormSystemMatrix(const Array<int> &ess_dofs, OperatorHandle &A) const;
+};
+
 /// LOR-to-Bernstein transfer on true DOFs with homogeneous Dirichlet data.
 class ElementTransfer : public Operator
 {
@@ -36,9 +62,10 @@ class ElementTransfer : public Operator
    OperatorPtr transfer;
 
 public:
-   /// Set up the local fits and assemble the physical LOR diffusion form.
-   ElementTransfer(FiniteElementSpace &high, BilinearForm &lor_form,
-                   int q, const std::string &grid_type, bool reference_fit);
+   MemoryClass GetMemoryClass() const override { return Device::GetMemoryClass(); }
+   /// Set up the local fits from the same patch stencil used for assembly.
+   ElementTransfer(FiniteElementSpace &high, BatchedLOR &lor,
+                   bool reference_fit);
 
    void Mult(const Vector &x, Vector &y) const override { transfer->Mult(x, y); }
    void MultTranspose(const Vector &x, Vector &y) const override
@@ -55,14 +82,29 @@ public:
    FictitiousSpaceSolver(const Operator &R_, const Operator &aux_inv_,
                          const Array<int> &ess_dofs_)
       : Solver(R_.Height()), R(R_), aux_inv(aux_inv_),
-        ess_dofs(ess_dofs_), rhs(R.Width()), sol(R.Width()) { }
+        ess_dofs(ess_dofs_), rhs(R.Width(), Device::GetDeviceMemoryType()),
+        sol(R.Width(), Device::GetDeviceMemoryType())
+   {
+      rhs.UseDevice(true);
+      sol.UseDevice(true);
+   }
+   MemoryClass GetMemoryClass() const override { return R.GetMemoryClass(); }
    void SetOperator(const Operator &op) override { }
    void Mult(const Vector &x, Vector &y) const override
    {
       R.MultTranspose(x, rhs);
       aux_inv.Mult(rhs, sol);
       R.Mult(sol, y);
-      for (int i : ess_dofs) { y(i) = x(i); }
+      if (ess_dofs.Size())
+      {
+         const auto dofs = ess_dofs.Read();
+         const auto input = x.Read();
+         auto output = y.ReadWrite();
+         mfem::forall(ess_dofs.Size(), [=] MFEM_HOST_DEVICE (int i)
+         {
+            output[dofs[i]] = input[dofs[i]];
+         });
+      }
    }
 };
 

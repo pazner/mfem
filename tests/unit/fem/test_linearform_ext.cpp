@@ -201,6 +201,49 @@ struct LinearFormExtTest
    }
 };
 
+TEST_CASE("Bernstein tetrahedron domain load", "[LinearFormExtension][GPU]")
+{
+   Mesh mesh = Mesh::MakeCartesian3D(2, 1, 1, Element::TETRAHEDRON);
+   const bool curved = GENERATE(false, true);
+   if (curved)
+   {
+      mesh.SetCurvature(2);
+      mesh.Transform([](const Vector &x, Vector &y)
+      {
+         y = x;
+         y[0] += 0.2*x[0]*x[1];
+      });
+   }
+   for (int e = 0; e < mesh.GetNE(); ++e) { mesh.SetAttribute(e, 1 + e%2); }
+   mesh.SetAttributes();
+   Array<int> marker({1, 0});
+   const int p = GENERATE(2, 7);
+   H1Pos_FECollection fec(p);
+   FiniteElementSpace fes(&mesh, &fec);
+   const bool constant = GENERATE(false, true);
+   ConstantCoefficient one(1.0);
+   FunctionCoefficient variable(f);
+   Coefficient &load = constant ? static_cast<Coefficient&>(one) : variable;
+   const IntegrationRule *rule = nullptr;
+   SECTION("Default rule") { }
+   SECTION("Stroud rule") { rule = &StroudIntRules.Get(Geometry::TETRAHEDRON, p); }
+   SECTION("Underintegrated rule") { rule = &IntRules.Get(Geometry::TETRAHEDRON, 1); }
+
+   LinearForm fast(&fes), reference(&fes);
+   for (LinearForm *form : {&fast, &reference})
+   {
+      auto *integrator = new DomainLFIntegrator(load);
+      integrator->SetIntRule(rule);
+      form->AddDomainIntegrator(integrator, marker);
+   }
+   REQUIRE(fast.SupportsDevice());
+   fast.UseFastAssembly(true);
+   reference.Assemble();
+   fast.Assemble();
+   fast -= reference;
+   REQUIRE(fast.Normlinf() == MFEM_Approx(0.0));
+}
+
 TEST_CASE("Linear Form Extension", "[LinearFormExtension], [GPU]")
 {
    const bool all = launch_all_non_regression_tests;

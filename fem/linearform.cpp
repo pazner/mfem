@@ -153,9 +153,15 @@ bool LinearForm::SupportsDevice() const
    const int mesh_dim = mesh.Dimension();
    if (mesh_dim == 1 || mesh_dim != mesh.SpaceDimension()) { return false; }
 
-   // tensor-product finite element space only
-   if (!UsesTensorBasis(*fes)) { return false; }
+   if (UsesTensorBasis(*fes)) { return true; }
 
+   // Bernstein tetrahedra currently support scalar volume loads.
+   if (mesh_dim != 3 || !fes->UsesRaggedTensorBasis() ||
+       fes->GetVDim() != 1 || boundary_integs.Size()) { return false; }
+   for (const auto *integ : domain_integs)
+   {
+      if (!dynamic_cast<const DomainLFIntegrator*>(integ)) { return false; }
+   }
    return true;
 }
 

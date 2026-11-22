@@ -9,26 +9,47 @@
 // terms of the BSD-3 license. We welcome feedback and contributions, see file
 // CONTRIBUTING.md for details.
 
-// Tetrahedral fictitious-space preconditioning with an exact auxiliary solve.
+// Tetrahedral fictitious-space preconditioning with an exact auxiliary solve
+// (UMFPACK on CPU, cuDSS on CUDA).
 //
 //   make tetlor
 //   ./tetlor -g isaac -p 4 -e 2
 //   ./tetlor -g duffy -p 4 -e 1 -ref-fit
+//   ./tetlor -d cuda -pa  # requires cuDSS
 
-#include "lor_mesh.hpp"
 #include "tetlor.hpp"
 #include <limits>
 
 using namespace mfem;
 
+static std::unique_ptr<Solver> MakeAuxiliarySolver()
+{
+   if (Device::Allows(Backend::DEVICE_MASK))
+   {
+#ifdef MFEM_USE_CUDSS
+      MFEM_VERIFY(Device::Allows(Backend::CUDA_MASK), "cuDSS requires CUDA.");
+      return std::make_unique<CuDSSSolver>();
+#else
+      MFEM_ABORT("The serial device solve requires MFEM built with cuDSS.");
+#endif
+   }
+#ifdef MFEM_USE_SUITESPARSE
+   return std::make_unique<UMFPackSolver>();
+#else
+   MFEM_ABORT("The serial CPU solve requires MFEM built with SuiteSparse.");
+#endif
+}
+
 int main(int argc, char *argv[])
 {
    const char *mesh_file = "../../data/tet-edge-star.mesh";
    std::string grid_type = "isaac";
+   const char *device_config = "cpu";
    int p = 3, enrichment = 2, ref_levels = 0;
    bool pa = false, reference_fit = false;
 
    OptionsParser args(argc, argv);
+   args.AddOption(&device_config, "-d", "--device", "MFEM device configuration.");
    args.AddOption(&mesh_file, "-m", "--mesh",
                   "Conforming affine tetrahedral mesh.");
    args.AddOption(&p, "-p", "--order", "Polynomial degree.");
@@ -43,6 +64,9 @@ int main(int argc, char *argv[])
                   "-phys-fit", "--physical-fit",
                   "Fit in the reference tetrahedron energy on every patch.");
    args.ParseCheck();
+   Device device(device_config);
+   device.Print();
+   auto Ahat_inv = MakeAuxiliarySolver();
    MFEM_VERIFY(p >= 1 && enrichment >= 0 && ref_levels >= 0,
                "Invalid order or refinement.");
    MFEM_VERIFY(enrichment <= std::numeric_limits<int>::max() - p,
@@ -51,16 +75,15 @@ int main(int argc, char *argv[])
 
    Mesh mesh = Mesh::LoadFromFile(mesh_file, 1, 0);
    for (int r = 0; r < ref_levels; r++) { mesh.UniformRefinement(); }
-   Mesh mesh_lor = tetlor::MakeLORMesh(mesh, q, grid_type);
 
    H1Pos_FECollection bern(p);
-   H1_FECollection linear(1);
-   FiniteElementSpace high(&mesh, &bern), low(&mesh_lor, &linear);
-   tetlor::PrintProblemSize(p, q, high.GetVSize(), low.GetVSize());
+   FiniteElementSpace high(&mesh, &bern);
+   tetlor::BatchedLOR lor(mesh, q, grid_type);
+   tetlor::PrintProblemSize(p, q, high.GetVSize(), lor.Space().GetTrueVSize());
 
    Array<int> ess_dofs, lor_ess_dofs;
    high.GetBoundaryTrueDofs(ess_dofs);
-   low.GetBoundaryTrueDofs(lor_ess_dofs);
+   lor.Space().GetBoundaryTrueDofs(lor_ess_dofs);
 
    BilinearForm a(&high);
    if (pa) { a.SetAssemblyLevel(AssemblyLevel::PARTIAL); }
@@ -70,7 +93,14 @@ int main(int argc, char *argv[])
 
    ConstantCoefficient one(1.0);
    LinearForm b(&high);
-   b.AddDomainIntegrator(new DomainLFIntegrator(one));
+   auto *load = new DomainLFIntegrator(one);
+   if (pa)
+   {
+      // The constant load on affine elements needs degree-p exactness.
+      load->SetIntegrationRule(StroudIntRules.Get(Geometry::TETRAHEDRON, p));
+   }
+   b.AddDomainIntegrator(load);
+   b.UseFastAssembly(pa);
    b.Assemble();
 
    GridFunction x(&high);
@@ -79,15 +109,11 @@ int main(int argc, char *argv[])
    Vector X, B;
    a.FormLinearSystem(ess_dofs, x, b, A, X, B);
 
-   BilinearForm w(&low);
-   w.SetDiagonalPolicy(Operator::DIAG_ONE);
-   w.AddDomainIntegrator(new DiffusionIntegrator);
-   tetlor::ElementTransfer R(high, w, q, grid_type, reference_fit);
-
-   SparseMatrix Ahat;
-   w.FormSystemMatrix(lor_ess_dofs, Ahat);
-   UMFPackSolver Ahat_inv(Ahat);
-   tetlor::FictitiousSpaceSolver prec(R, Ahat_inv, ess_dofs);
+   tetlor::ElementTransfer R(high, lor, reference_fit);
+   OperatorHandle Ahat;
+   lor.FormSystemMatrix(lor_ess_dofs, Ahat);
+   Ahat_inv->SetOperator(*Ahat);
+   tetlor::FictitiousSpaceSolver prec(R, *Ahat_inv, ess_dofs);
 
    CGSolver cg;
    cg.SetPreconditioner(prec);
