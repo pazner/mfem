@@ -152,17 +152,21 @@ void ReferenceStencil(Mesh &patch, Array<int> &rows, Array<int> &columns,
    }
 }
 
-void ComputeMetrics(const DenseMatrix &jacobians, DenseMatrix &metrics)
+void ComputeMetrics(const DenseMatrix &jacobians, DenseMatrix &metrics,
+                    Vector &volumes)
 {
    // Upper triangle of |det J| J^{-1} J^{-T}, in the ReferenceStencil order.
    const auto J = jacobians.Read();
    metrics.SetSize(6, jacobians.Width());
+   volumes.SetSize(jacobians.Width());
+   auto volume = volumes.Write();
    auto G = metrics.Write();
    mfem::forall(jacobians.Width(), [=] MFEM_HOST_DEVICE (int e)
    {
       real_t inv[9];
       kernels::CalcInverse<3>(J+9*e, inv);
       const real_t det = std::abs(kernels::Det<3>(J+9*e));
+      volume[e] = det/6;
       int k = 0;
       for (int a = 0; a < 3; ++a)
       {
@@ -241,7 +245,7 @@ BatchedLOR::BatchedLOR(Mesh &mesh, int q, const std::string &grid_type)
          }
       }
    }
-   ComputeMetrics(jacobians, metrics);
+   ComputeMetrics(jacobians, metrics, volumes);
    ReferenceStencil(patch, rows, columns, stencil);
 }
 
@@ -249,7 +253,12 @@ void BatchedLOR::ApplyPatchStiffness(int e, const DenseMatrix &Q,
                                      DenseMatrix &QtK) const
 {
    const real_t identity[6] = {1,0,0,1,0,1};
-   const real_t *g = e < 0 ? identity : metrics.HostRead()+6*e;
+   ApplyPatchStiffness(e < 0 ? identity : metrics.HostRead()+6*e,Q,QtK);
+}
+
+void BatchedLOR::ApplyPatchStiffness(const real_t g[6], const DenseMatrix &Q,
+                                     DenseMatrix &QtK) const
+{
    const auto I = rows.HostRead(), J = columns.HostRead();
    const auto S = stencil.HostRead();
    QtK.SetSize(Q.Width(), Q.Height());

@@ -24,6 +24,19 @@ std::unique_ptr<Operator> MakeEntityTransfer(FiniteElementSpace &high,
 
 namespace entity
 {
+// Free DOFs on the closed entity, interior first. Each of its two lists is
+// ordered by true DOF number so incident cells and ranks assemble the same form.
+struct EntityDofs
+{
+   Array<int> all;
+   int interior = 0;
+
+   void Init(FiniteElementSpace &fes, int dim, int id, const Array<int> &essential);
+};
+
+Array<int> BoundaryMarker(const FiniteElementSpace &fes);
+std::unique_ptr<Operator> MakeDeviceTransfer(FiniteElementSpace &high, BatchedLOR &lor);
+
 void ReferenceMatrix(BatchedLOR &lor, const FiniteElement &bern,
                      DenseMatrix &R);
 

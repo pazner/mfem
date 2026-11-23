@@ -49,11 +49,12 @@ all: $(MINIAPPS)
 %: %.cpp
 %.o: %.cpp
 
-TETLOR_OBJ = lor_mesh.o tetlor_batched.o tetlor_transfer.o tetlor_entity.o tetlor_entity_reference.o tetlor_entity_energy.o
+TETLOR_ENTITY_OBJ = tetlor_entity.o tetlor_entity_device.o tetlor_entity_reference.o tetlor_entity_energy.o
+TETLOR_OBJ = lor_mesh.o tetlor_batched.o tetlor_transfer.o $(TETLOR_ENTITY_OBJ)
 tetlor ptetlor: %: %.o $(TETLOR_OBJ)
 	$(MFEM_CXX) $(MFEM_LINK_FLAGS) $^ -o $@ $(MFEM_LIBS)
 
-tetlor_transfer.o tetlor_entity.o tetlor_entity_reference.o tetlor_entity_energy.o: $(SRC)tetlor_entity.hpp
+tetlor_transfer.o $(TETLOR_ENTITY_OBJ): $(SRC)tetlor_entity.hpp
 tetlor.o ptetlor.o $(filter-out lor_mesh.o,$(TETLOR_OBJ)): $(SRC)tetlor.hpp $(SRC)lor_mesh.hpp
 lor_mesh.o: $(SRC)lor_mesh.hpp
 lor_solvers.o: $(SRC)lor_mms.hpp

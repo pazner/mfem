@@ -101,6 +101,75 @@ public:
       weights *= lump;
    }
 
+   // Q^t K and its Gram matrix are linear in the six affine metric entries.
+   // Tabulate each reference contribution once, then solve the physical patch
+   // systems in batches without materializing a stiffness matrix per element.
+   void FitDevice(const BatchedLOR &lor, DenseTensor &fits)
+   {
+      const int nh = Q.Width(), nl = Q.Height(), ne = fits.SizeK();
+      DenseTensor rhs_terms(nh,nl,7), gram_terms(nh,nh,7);
+      for (int k = 0; k < 6; ++k)
+      {
+         real_t metric[6] = {};
+         metric[k] = 1;
+         lor.ApplyPatchStiffness(metric,Q,rhs_terms(k));
+         Mult(rhs_terms(k),Q,gram_terms(k));
+      }
+      rhs_terms(6) = 0.0;
+      gram_terms(6) = 0.0;
+      AddMult_a_VWt(1.0,mean,weights,rhs_terms(6));
+      AddMult_a_VVt(1.0,mean,gram_terms(6));
+
+      const auto metric = Reshape(lor.PatchMetrics().Read(),6,ne);
+      Vector scale(ne,Device::GetDeviceMemoryType());
+      const auto volume = lor.PatchVolumes().Read();
+      auto h = scale.Write();
+      mfem::forall(ne,[=] MFEM_HOST_DEVICE (int i) { h[i] = cbrt(volume[i]); });
+      const auto u = Reshape(U.Read(),nh,nh);
+      const auto rhs_basis = Reshape(rhs_terms.Read(),nh*nl,7);
+      const auto gram_basis = Reshape(gram_terms.Read(),nh*nh,7);
+      auto result = Reshape(fits.Write(),nh,nl,ne);
+      const auto mt = Device::GetDeviceMemoryType();
+      const auto backend = BatchedLinAlg::IsAvailable(BatchedLinAlg::GPU_BLAS) ?
+                           BatchedLinAlg::GPU_BLAS : BatchedLinAlg::NATIVE;
+      const auto &blas = BatchedLinAlg::Get(backend);
+      // Bound temporary storage independently of the partition size.
+      const int batch = std::max(1, (4*1024*1024)/(nh*(nh+nl)));
+      for (int first = 0; first < ne; first += batch)
+      {
+         const int n = std::min(batch,ne-first);
+         DenseTensor grams(nh,nh,n,mt);
+         Vector rhs(nh*nl*n,mt);
+         auto g = Reshape(grams.Write(),nh*nh,n);
+         auto r = Reshape(rhs.Write(),nh*nl,n);
+         mfem::forall(nh*nh,n,[=] MFEM_HOST_DEVICE (int i, int e)
+         {
+            real_t v = h[first+e]*gram_basis(i,6);
+            for (int k = 0; k < 6; ++k) { v += metric(k,first+e)*gram_basis(i,k); }
+            g(i,e) = v;
+         });
+         mfem::forall(nh*nl,n,[=] MFEM_HOST_DEVICE (int i, int e)
+         {
+            real_t v = h[first+e]*rhs_basis(i,6);
+            for (int k = 0; k < 6; ++k) { v += metric(k,first+e)*rhs_basis(i,k); }
+            r(i,e) = v;
+         });
+         Array<int> pivots;
+         blas.LUFactor(grams,pivots);
+         blas.LUSolve(grams,pivots,rhs);
+         const auto solved = Reshape(rhs.Read(),nh,nl,n);
+         mfem::forall(nl,n,[=] MFEM_HOST_DEVICE (int j, int e)
+         {
+            for (int i = nh-1; i >= 0; --i)
+            {
+               real_t v = solved(i,j,e);
+               for (int k = i+1; k < nh; ++k) { v -= u(i,k)*result(k,j,first+e); }
+               result(i,j,first+e) = v/u(i,i);
+            }
+         });
+      }
+   }
+
    // Fit all coefficients in the patch energy, fixing the stiffness null
    // space with the polynomial-exact mean before imposing any trace conditions.
    void Fit(const BatchedLOR &lor, int e, real_t volume, DenseMatrix &fit)
@@ -162,6 +231,7 @@ class LocalTransfer : public Operator
    Array<int> high_dofs, lor_dofs;
    Vector inv_multiplicity;
    DenseTensor matrices;
+   const bool unique_high;
    mutable Vector packed_high, packed_lor;
 
 public:
@@ -194,18 +264,19 @@ void InvertInteriorMultiplicity(Vector &multiplicity, const Array<int> &marker)
 LocalTransfer::LocalTransfer(FiniteElementSpace &high, BatchedLOR &lor,
                              TransferType type)
    : Operator(high.GetVSize(), lor.Space().GetVSize()),
-     inv_multiplicity(height)
+     inv_multiplicity(height), unique_high(type.method == TransferMethod::Entity)
 {
    Mesh &mesh = *high.GetMesh();
    Mesh &patch = lor.ReferencePatch();
    const FiniteElement &bern = *high.GetFE(0);
    const int nh = bern.GetDof(), nl = patch.GetNV(), p = bern.GetOrder();
-   const bool use_entity = type.method == TransferMethod::Entity;
    const bool shared = type.reference;
    std::unique_ptr<PatchBasis> basis;
    std::unique_ptr<CanonicalPatch> canonical;
+   const bool gpu_blas = BatchedLinAlg::IsAvailable(BatchedLinAlg::GPU_BLAS);
+   const bool device_fit = !shared && Device::Allows(Backend::DEVICE_MASK);
    matrices.SetSize(nh,nl,shared ? 1 : mesh.GetNE());
-   if (use_entity)
+   if (unique_high)
    {
       entity::ReferenceMatrix(lor,bern,matrices(0));
       canonical = std::make_unique<CanonicalPatch>(lor.PatchLabels());
@@ -230,7 +301,7 @@ LocalTransfer::LocalTransfer(FiniteElementSpace &high, BatchedLOR &lor,
 
    high_dofs.SetSize(mesh.GetNE()*nh);
    lor_dofs.SetSize(mesh.GetNE()*nl);
-   if (shared && BatchedLinAlg::IsAvailable(BatchedLinAlg::GPU_BLAS))
+   if (shared && gpu_blas)
    {
       const auto mt = Device::GetDeviceMemoryType();
       packed_high.SetSize(high_dofs.Size(), mt);
@@ -256,7 +327,7 @@ LocalTransfer::LocalTransfer(FiniteElementSpace &high, BatchedLOR &lor,
          const auto &a = alpha[i];
          const int d = hd[index(a[perm[1]], a[perm[2]], a[perm[3]])];
          // Identical entity traces need just one writer on each rank.
-         high_dofs[e*nh+i] = use_entity && inv_multiplicity(d) ? -1 : d;
+         high_dofs[e*nh+i] = unique_high && inv_multiplicity(d) ? -1 : d;
          inv_multiplicity(d)++;
       }
 
@@ -265,15 +336,15 @@ LocalTransfer::LocalTransfer(FiniteElementSpace &high, BatchedLOR &lor,
          const int d = lor.PatchDofs()[e*nl+(order ? (*order)[i] : i)];
          lor_dofs[e*nl+i] = lor_boundary[d] ? -1 : d;
       }
-      if (!shared)
-      {
-         basis->Fit(lor, e, mesh.GetElementVolume(e), matrices(e));
-      }
+      if (!shared && !device_fit)
+      { basis->Fit(lor,e,lor.PatchVolumes().HostRead()[e],matrices(e)); }
    }
+
+   if (device_fit) { basis->FitDevice(lor,matrices); }
 
    Array<int> high_boundary;
    GetBoundaryMarker(high, high_boundary);
-   if (use_entity)
+   if (unique_high)
    {
       const auto boundary = high_boundary.HostRead();
       for (int i = 0; i < height; ++i)
@@ -311,16 +382,19 @@ void LocalTransfer::ApplyReference(const Vector &x, Vector &y,
    if (transpose) { blas.MultTranspose(matrices, src, dst); }
    else { blas.Mult(matrices, src, dst); }
 
+   const bool single_writer = unique_high && !transpose;
    y.UseDevice(true);
-   y = 0.0;
-   auto output = y.ReadWrite();
+   if (!single_writer) { y = 0.0; }
+   auto output = single_writer ? y.Write() : y.ReadWrite();
    const auto values = dst.Read();
    mfem::forall(dst.Size(), [=] MFEM_HOST_DEVICE (int k)
    {
       const int d = scatter[k];
       if (d >= 0)
       {
-         AtomicAdd(output[d], transpose ? values[k] : weight[d]*values[k]);
+         const real_t v = transpose ? values[k] : weight[d]*values[k];
+         if (single_writer) { output[d] = v; }
+         else { AtomicAdd(output[d],v); }
       }
    });
 }

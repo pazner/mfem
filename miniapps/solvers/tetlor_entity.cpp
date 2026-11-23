@@ -15,53 +15,63 @@
 
 namespace tetlor
 {
+namespace entity
+{
+void EntityDofs::Init(FiniteElementSpace &fes, int dim, int id,
+                      const Array<int> &essential)
+{
+   Array<int> dofs;
+   switch (dim)
+   {
+      case 0: fes.GetVertexDofs(id,dofs); break;
+      case 1: fes.GetEdgeDofs(id,dofs); break;
+      case 2: fes.GetFaceDofs(id,dofs); break;
+      case 3: fes.GetElementDofs(id,dofs); break;
+   }
+   const Geometry::Type geom[] = {Geometry::POINT, Geometry::SEGMENT,
+                                  Geometry::TRIANGLE, Geometry::TETRAHEDRON
+                                 };
+   const int boundary = dofs.Size()-fes.FEColl()->DofForGeometry(geom[dim]);
+   for (int j = boundary; j < dofs.Size(); ++j)
+   {
+      if (!essential[dofs[j]]) { all.Append(dofs[j]); }
+   }
+   interior = all.Size();
+   for (int j = 0; j < boundary; ++j)
+   {
+      if (!essential[dofs[j]]) { all.Append(dofs[j]); }
+   }
+   if (all.Size() == 0) { return; }
+   auto number = [&](int d) -> long long
+   {
+#ifdef MFEM_USE_MPI
+      if (auto *pf = dynamic_cast<ParFiniteElementSpace*>(&fes))
+      { return pf->GetGlobalTDofNumber(d); }
+#endif
+      return d;
+   };
+   auto less = [&](int a, int b) { return number(a) < number(b); };
+   std::sort(all.begin(), all.begin()+interior, less);
+   std::sort(all.begin()+interior, all.end(), less);
+}
+
+Array<int> BoundaryMarker(const FiniteElementSpace &fes)
+{
+   const auto &attr = fes.GetMesh()->bdr_attributes;
+   Array<int> boundary(attr.Size() ? attr.Max() : 0), marker;
+   boundary = 1;
+   fes.GetEssentialVDofs(boundary,marker);
+   marker.HostRead();
+   return marker;
+}
+
+} // namespace entity
+
 namespace
 {
 
-// Free DOFs on the closed entity, interior first. Each of its two lists is
-// ordered by true DOF number so incident cells and ranks assemble the same form.
-struct EntityDofs
-{
-   Array<int> all;
-   int interior = 0;
-
-   void Init(FiniteElementSpace &fes, int dim, int id, const Array<int> &essential)
-   {
-      Array<int> dofs;
-      switch (dim)
-      {
-         case 0: fes.GetVertexDofs(id,dofs); break;
-         case 1: fes.GetEdgeDofs(id,dofs); break;
-         case 2: fes.GetFaceDofs(id,dofs); break;
-         case 3: fes.GetElementDofs(id,dofs); break;
-      }
-      const Geometry::Type geom[] = {Geometry::POINT, Geometry::SEGMENT,
-                                     Geometry::TRIANGLE, Geometry::TETRAHEDRON
-                                    };
-      const int boundary = dofs.Size()-fes.FEColl()->DofForGeometry(geom[dim]);
-      for (int j = boundary; j < dofs.Size(); ++j)
-      {
-         if (!essential[dofs[j]]) { all.Append(dofs[j]); }
-      }
-      interior = all.Size();
-      for (int j = 0; j < boundary; ++j)
-      {
-         if (!essential[dofs[j]]) { all.Append(dofs[j]); }
-      }
-      if (all.Size() == 0) { return; }
-      auto number = [&](int d) -> long long
-      {
-#ifdef MFEM_USE_MPI
-         if (auto *pf = dynamic_cast<ParFiniteElementSpace*>(&fes))
-         { return pf->GetGlobalTDofNumber(d); }
-#endif
-         return d;
-      };
-      auto less = [&](int a, int b) { return number(a) < number(b); };
-      std::sort(all.begin(), all.begin()+interior, less);
-      std::sort(all.begin()+interior, all.end(), less);
-   }
-};
+using entity::EntityDofs;
+using entity::BoundaryMarker;
 
 struct Entity
 {
@@ -83,16 +93,6 @@ struct Entity
       }
    }
 };
-
-Array<int> BoundaryMarker(const FiniteElementSpace &fes)
-{
-   const auto &attr = fes.GetMesh()->bdr_attributes;
-   Array<int> boundary(attr.Size() ? attr.Max() : 0), marker;
-   boundary = 1;
-   fes.GetEssentialVDofs(boundary,marker);
-   marker.HostRead();
-   return marker;
-}
 
 // One contribution, indexed by rank-local DOF. Eliminate the cell interior
 // once before condensing to individual edges and faces.
@@ -424,6 +424,8 @@ EntityTransfer::EntityTransfer(FiniteElementSpace &high, BatchedLOR &lor)
 std::unique_ptr<Operator> MakeEntityTransfer(FiniteElementSpace &high,
                                              BatchedLOR &lor)
 {
+   if (Device::Allows(Backend::DEVICE_MASK))
+   { return entity::MakeDeviceTransfer(high,lor); }
    return std::make_unique<EntityTransfer>(high,lor);
 }
 

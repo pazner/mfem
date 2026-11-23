@@ -40,6 +40,7 @@ class BatchedLOR
    Array<int> dofs, rows, columns;
    Array2D<int> vertex_permutations;
    DenseMatrix stencil, metrics;
+   Vector volumes;
 
 public:
    BatchedLOR(Mesh &mesh, int q, const std::string &grid_type);
@@ -48,10 +49,14 @@ public:
    Mesh &ReferencePatch() { return patch; }
    const auto &PatchLabels() const { return labels; }
    const int *VertexPermutation(int e) const { return vertex_permutations[e]; }
+   const DenseMatrix &PatchMetrics() const { return metrics; }
+   const Vector &PatchVolumes() const { return volumes; }
    const Array<int> &PatchDofs() const { return dofs; }
 
    /// Compute Q^t K for a physical patch, or the reference patch if e < 0.
    void ApplyPatchStiffness(int e, const DenseMatrix &Q, DenseMatrix &QtK) const;
+   void ApplyPatchStiffness(const real_t metric[6], const DenseMatrix &Q,
+                            DenseMatrix &QtK) const;
    void GetPatchStiffness(const real_t metric[6], DenseMatrix &K) const;
    void GetPatchStiffness(int e, DenseMatrix &K) const;
    /// Assemble the unconstrained rank-local matrix in an empty CSR matrix.
