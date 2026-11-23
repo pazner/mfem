@@ -97,7 +97,7 @@ void LinearFormExtension::Assemble()
       {
          auto active = bdr_markers.Write();
          mfem::forall(bdr_markers.Size(),
-                      [=] MFEM_HOST_DEVICE(int e) { active[e] = 1; });
+         [=] MFEM_HOST_DEVICE(int e) { active[e] = 1; });
       }
       else
       {

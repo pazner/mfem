@@ -93,7 +93,7 @@ Array<int> NodePermutation(const std::vector<BarycentricLabel> &labels,
    Array<int> order(n), inverse(n);
    std::iota(order.begin(), order.end(), 0);
    std::sort(order.begin(), order.end(),
-             [&](int i, int j) { return keys[i] < keys[j]; });
+   [&](int i, int j) { return keys[i] < keys[j]; });
    for (int i = 0; i < n; ++i) { inverse[order[i]] = i; }
    return inverse;
 }
@@ -191,10 +191,10 @@ BatchedLOR::BatchedLOR(Mesh &mesh, int q, const std::string &grid_type)
                mesh.GetElementGeometry(0) == Geometry::TETRAHEDRON,
                "Expected a conforming affine tetrahedral mesh.");
    MFEM_VERIFY(mesh.HasBoundaryElements(), "Expected a Dirichlet boundary.");
-   MFEM_VERIFY(mesh.CheckElementOrientation(false) == 0, "Inverted coarse tetrahedron.");
+   MFEM_VERIFY(mesh.CheckElementOrientation(false) == 0,
+               "Inverted coarse tetrahedron.");
    MFEM_VERIFY(q > 0 && ne <= std::numeric_limits<int>::max()/q/q/q,
                "Invalid LOR order or patch count.");
-   std::vector<BarycentricLabel> labels;
    patch = MakeReferenceLORMesh(q, grid_type, labels);
    const int nl = patch.GetNV();
    MFEM_VERIFY(ne <= std::numeric_limits<int>::max()/nl, "Too many patch nodes.");
@@ -226,7 +226,7 @@ BatchedLOR::BatchedLOR(Mesh &mesh, int q, const std::string &grid_type)
       for (int i = 0; i < 4; ++i) { native_to_patch[i] = vertices.Find(native[i]); }
       std::array<int,4> sorted = {0,1,2,3};
       std::sort(sorted.begin(), sorted.end(),
-                [&](int i, int j) { return native[i] < native[j]; });
+      [&](int i, int j) { return native[i] < native[j]; });
       auto &perm = permutations[sorted];
       if (!perm.Size()) { perm = NodePermutation(labels, native_to_patch, sorted); }
       space->GetElementDofs(e, element_dofs);
@@ -261,6 +261,23 @@ void BatchedLOR::ApplyPatchStiffness(int e, const DenseMatrix &Q,
          const real_t value = Contract(g, S+6*k);
          for (int j = 0; j < Q.Width(); ++j) { QtK(j,i) += value*Q(J[k],j); }
       }
+   }
+}
+
+void BatchedLOR::GetPatchStiffness(int e, DenseMatrix &K) const
+{
+   GetPatchStiffness(metrics.HostRead() + 6*e, K);
+}
+
+void BatchedLOR::GetPatchStiffness(const real_t g[6], DenseMatrix &K) const
+{
+   const auto I = rows.HostRead(), J = columns.HostRead();
+   const auto S = stencil.HostRead();
+   K.SetSize(patch.GetNV());
+   K = 0.0;
+   for (int i = 0; i < K.Height(); ++i)
+   {
+      for (int k = I[i]; k < I[i+1]; ++k) { K(i,J[k]) = Contract(g, S+6*k); }
    }
 }
 

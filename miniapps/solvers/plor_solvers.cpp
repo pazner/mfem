@@ -273,7 +273,8 @@ int main(int argc, char *argv[])
    double times[] = {assembled - start, rhs_ready - assembled,
                      system_ready - rhs_ready, lor_ready - system_ready,
                      hierarchy_ready - lor_ready, solved - hierarchy_ready,
-                     (applied - solved)/repeats, (preconditioned - applied)/repeats};
+                     (applied - solved)/repeats, (preconditioned - applied)/repeats
+                    };
    const char *labels[] =
    {
       "High-order assembly", "RHS and boundary data", "Form linear system",

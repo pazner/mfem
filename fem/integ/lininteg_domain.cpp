@@ -116,7 +116,8 @@ static void AssembleTetDomainLF(const FiniteElementSpace &fes,
        (!nodes || nodes->FESpace()->GetMaxElementOrder() == 1))
    {
       const auto &center = IntRules.Get(fe.GetGeomType(), 1);
-      const auto det = mesh.GetGeometricFactors(center, GeometricFactors::DETERMINANTS,
+      const auto det = mesh.GetGeometricFactors(center,
+                                                GeometricFactors::DETERMINANTS,
                                                 mt)->detJ.Read();
       const real_t scale = constant->constant*Geometry::Volume[fe.GetGeomType()]/nd;
       auto Y = Reshape(b.ReadWrite(), nd, ne);

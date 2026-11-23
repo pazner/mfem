@@ -14,7 +14,8 @@
 //
 //   make ptetlor
 //   mpirun -np 2 ./ptetlor -g isaac -p 4 -e 2
-//   mpirun -np 2 ./ptetlor -g duffy -p 4 -e 1 -ref-fit
+//   mpirun -np 2 ./ptetlor -g duffy -p 4 -e 1 -t fit -ref
+//   mpirun -np 2 ./ptetlor -g isaac -p 4 -e 2 -t entity -ref
 //   MFEM_GPU_AWARE_MPI=1 mpirun -np 2 ./ptetlor -d cuda -pa  # GPU-aware MPI
 
 #include "tetlor.hpp"
@@ -29,11 +30,13 @@ int main(int argc, char *argv[])
 
    std::string mesh_file = "../../data/tet-edge-star.mesh";
    std::string grid_type = "isaac";
+   std::string transfer = "fit";
+   bool reference = false;
    const char *device_config = "cpu";
    int p = 3;
    int enrichment = 2;
    int ref_levels = 0;
-   bool pa = false, reference_fit = false;
+   bool pa = false;
 
    OptionsParser args(argc, argv);
    args.AddOption(&device_config, "-d", "--device", "MFEM device configuration.");
@@ -47,10 +50,16 @@ int main(int argc, char *argv[])
                   "Number of uniform coarse mesh refinements.");
    args.AddOption(&pa, "-pa", "--partial-assembly", "-no-pa",
                   "--no-partial-assembly", "Use partial assembly for the high-order form.");
-   args.AddOption(&reference_fit, "-ref-fit", "--reference-fit",
-                  "-phys-fit", "--physical-fit",
-                  "Fit in the reference tetrahedron energy on every patch.");
+   args.AddOption(&transfer, "-t", "--transfer",
+                  "Transfer method: fit or entity.");
+   args.AddOption(&reference, "-ref", "--reference", "-phys", "--physical",
+                  "Build the transfer on the reference or physical geometry.");
    args.ParseCheck();
+   MFEM_VERIFY(transfer == "fit" || transfer == "entity",
+               "Expected transfer method fit or entity.");
+   const auto method = transfer == "fit" ? tetlor::TransferMethod::Fit :
+                       tetlor::TransferMethod::Entity;
+
    Device device(device_config);
    if (Mpi::Root()) { device.Print(); }
    MFEM_VERIFY(!Device::Allows(Backend::CUDA_MASK | Backend::HIP_MASK) ||
@@ -73,7 +82,8 @@ int main(int argc, char *argv[])
    ParFiniteElementSpace high(&mesh, &bern);
    tetlor::BatchedLOR lor(mesh, q, grid_type);
    const auto nh = high.GlobalTrueVSize();
-   const auto nl = static_cast<ParFiniteElementSpace&>(lor.Space()).GlobalTrueVSize();
+   const auto nl = static_cast<ParFiniteElementSpace&>
+                   (lor.Space()).GlobalTrueVSize();
    if (Mpi::Root()) { tetlor::PrintProblemSize(p, q, nh, nl); }
 
    Array<int> ess_dofs, lor_ess_dofs;
@@ -104,7 +114,7 @@ int main(int argc, char *argv[])
    Vector X, B;
    a.FormLinearSystem(ess_dofs, x, b, A, X, B);
 
-   tetlor::ElementTransfer R(high, lor, reference_fit);
+   tetlor::ElementTransfer R(high, lor, {method, reference});
    OperatorHandle Ahat(Operator::Hypre_ParCSR);
    lor.FormSystemMatrix(lor_ess_dofs, Ahat);
    HypreBoomerAMG Ahat_inv(*Ahat.As<HypreParMatrix>());

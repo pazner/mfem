@@ -14,7 +14,8 @@
 //
 //   make tetlor
 //   ./tetlor -g isaac -p 4 -e 2
-//   ./tetlor -g duffy -p 4 -e 1 -ref-fit
+//   ./tetlor -g duffy -p 4 -e 1 -t fit -ref
+//   ./tetlor -g isaac -p 4 -e 2 -t entity -ref
 //   ./tetlor -d cuda -pa  # requires cuDSS
 
 #include "tetlor.hpp"
@@ -44,9 +45,11 @@ int main(int argc, char *argv[])
 {
    const char *mesh_file = "../../data/tet-edge-star.mesh";
    std::string grid_type = "isaac";
+   std::string transfer = "fit";
+   bool reference = false;
    const char *device_config = "cpu";
    int p = 3, enrichment = 2, ref_levels = 0;
-   bool pa = false, reference_fit = false;
+   bool pa = false;
 
    OptionsParser args(argc, argv);
    args.AddOption(&device_config, "-d", "--device", "MFEM device configuration.");
@@ -60,10 +63,16 @@ int main(int argc, char *argv[])
                   "Number of uniform coarse mesh refinements.");
    args.AddOption(&pa, "-pa", "--partial-assembly", "-no-pa",
                   "--no-partial-assembly", "Use partial assembly for the high-order form.");
-   args.AddOption(&reference_fit, "-ref-fit", "--reference-fit",
-                  "-phys-fit", "--physical-fit",
-                  "Fit in the reference tetrahedron energy on every patch.");
+   args.AddOption(&transfer, "-t", "--transfer",
+                  "Transfer method: fit or entity.");
+   args.AddOption(&reference, "-ref", "--reference", "-phys", "--physical",
+                  "Build the transfer on the reference or physical geometry.");
    args.ParseCheck();
+   MFEM_VERIFY(transfer == "fit" || transfer == "entity",
+               "Expected transfer method fit or entity.");
+   const auto method = transfer == "fit" ? tetlor::TransferMethod::Fit :
+                       tetlor::TransferMethod::Entity;
+
    Device device(device_config);
    device.Print();
    auto Ahat_inv = MakeAuxiliarySolver();
@@ -109,7 +118,7 @@ int main(int argc, char *argv[])
    Vector X, B;
    a.FormLinearSystem(ess_dofs, x, b, A, X, B);
 
-   tetlor::ElementTransfer R(high, lor, reference_fit);
+   tetlor::ElementTransfer R(high, lor, {method, reference});
    OperatorHandle Ahat;
    lor.FormSystemMatrix(lor_ess_dofs, Ahat);
    Ahat_inv->SetOperator(*Ahat);

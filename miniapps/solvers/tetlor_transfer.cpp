@@ -9,11 +9,27 @@
 // terms of the BSD-3 license. We welcome feedback and contributions, see file
 // CONTRIBUTING.md for details.
 
-#include "tetlor.hpp"
+#include "tetlor_entity.hpp"
 #include <cmath>
+#include <map>
+
 
 namespace tetlor
 {
+std::vector<BarycentricLabel> BernsteinLabels(const FiniteElement &bern)
+{
+   const int p = bern.GetOrder();
+   std::vector<BarycentricLabel> alpha(bern.GetDof());
+   for (int i = 0; i < bern.GetDof(); ++i)
+   {
+      const auto &ip = bern.GetNodes().IntPoint(i);
+      auto &a = alpha[i];
+      a = {0,std::lround(p*ip.x),std::lround(p*ip.y),std::lround(p*ip.z)};
+      a[0] = p-a[1]-a[2]-a[3];
+   }
+   return alpha;
+}
+
 namespace
 {
 
@@ -101,19 +117,57 @@ public:
    }
 };
 
+// Convert canonical (increasing macrovertex ID) patch nodes to the patch
+// ordering used by BatchedLOR. Each vertex permutation is built only once.
+class CanonicalPatch
+{
+   const std::vector<BarycentricLabel> &labels;
+   std::map<BarycentricLabel,int> index;
+   std::map<std::array<int,4>,Array<int>> permutations;
+
+public:
+   explicit CanonicalPatch(const std::vector<BarycentricLabel> &labels_)
+      : labels(labels_)
+   {
+      for (int i = 0; i < int(labels.size()); ++i) { index.emplace(labels[i],i); }
+   }
+
+   const Array<int> &Order(const int *vertices, const int *native_to_patch,
+                           std::array<int,4> &native_to_canonical)
+   {
+      std::array<int,4> sorted = {0,1,2,3}, key;
+      std::sort(sorted.begin(),sorted.end(),
+      [&](int i, int j) { return vertices[i] < vertices[j]; });
+      for (int i = 0; i < 4; ++i)
+      {
+         native_to_canonical[sorted[i]] = i;
+         key[i] = native_to_patch[sorted[i]];
+      }
+      auto &order = permutations[key];
+      if (order.Size()) { return order; }
+      order.SetSize(labels.size());
+      for (int j = 0; j < order.Size(); ++j)
+      {
+         BarycentricLabel a;
+         for (int i = 0; i < 4; ++i) { a[key[i]] = labels[j][i]; }
+         order[j] = index.at(a);
+      }
+      return order;
+   }
+};
+
 // Each row of the DOF maps is a coarse tetrahedron in reference patch order.
 class LocalTransfer : public Operator
 {
    Array<int> high_dofs, lor_dofs;
    Vector inv_multiplicity;
-   DenseTensor fits;
+   DenseTensor matrices;
    mutable Vector packed_high, packed_lor;
 
 public:
    void ApplyReference(const Vector &x, Vector &y, bool transpose) const;
    LocalTransfer(FiniteElementSpace &high, BatchedLOR &lor,
-                 bool reference_fit);
-   using Operator::SetupRAP;
+                 TransferType type);
    MemoryClass GetMemoryClass() const override { return Device::GetMemoryClass(); }
    void Mult(const Vector &x, Vector &y) const override;
    void MultTranspose(const Vector &x, Vector &y) const override;
@@ -138,7 +192,7 @@ void InvertInteriorMultiplicity(Vector &multiplicity, const Array<int> &marker)
 }
 
 LocalTransfer::LocalTransfer(FiniteElementSpace &high, BatchedLOR &lor,
-                             bool reference_fit)
+                             TransferType type)
    : Operator(high.GetVSize(), lor.Space().GetVSize()),
      inv_multiplicity(height)
 {
@@ -146,32 +200,37 @@ LocalTransfer::LocalTransfer(FiniteElementSpace &high, BatchedLOR &lor,
    Mesh &patch = lor.ReferencePatch();
    const FiniteElement &bern = *high.GetFE(0);
    const int nh = bern.GetDof(), nl = patch.GetNV(), p = bern.GetOrder();
-   PatchBasis basis(patch, bern);
-   fits.SetSize(nh, nl, reference_fit ? 1 : mesh.GetNE());
-   if (reference_fit)
+   const bool use_entity = type.method == TransferMethod::Entity;
+   const bool shared = type.reference;
+   std::unique_ptr<PatchBasis> basis;
+   std::unique_ptr<CanonicalPatch> canonical;
+   matrices.SetSize(nh,nl,shared ? 1 : mesh.GetNE());
+   if (use_entity)
    {
-      basis.Fit(lor, -1, Geometry::Volume[Geometry::TETRAHEDRON], fits(0));
+      entity::ReferenceMatrix(lor,bern,matrices(0));
+      canonical = std::make_unique<CanonicalPatch>(lor.PatchLabels());
+   }
+   else
+   {
+      basis = std::make_unique<PatchBasis>(patch,bern);
+      if (shared)
+      { basis->Fit(lor,-1,Geometry::Volume[Geometry::TETRAHEDRON],matrices(0)); }
    }
 
    // Index the Bernstein coefficients by their integer barycentric exponents.
    // A permutation of the Duffy vertices induces the same permutation of these
    // exponents, including for the coefficients on shared edges and faces.
-   Array2D<int> alpha(nh, 4);
+   auto alpha = BernsteinLabels(bern);
    Array3D<int> index(p+1, p+1, p+1);
    for (int i = 0; i < nh; i++)
    {
-      const IntegrationPoint &ip = bern.GetNodes().IntPoint(i);
-      int *a = alpha[i];
-      a[1] = std::lround(p*ip.x);
-      a[2] = std::lround(p*ip.y);
-      a[3] = std::lround(p*ip.z);
-      a[0] = p - a[1] - a[2] - a[3];
+      const auto &a = alpha[i];
       index(a[1], a[2], a[3]) = i;
    }
 
    high_dofs.SetSize(mesh.GetNE()*nh);
    lor_dofs.SetSize(mesh.GetNE()*nl);
-   if (reference_fit && BatchedLinAlg::IsAvailable(BatchedLinAlg::GPU_BLAS))
+   if (shared && BatchedLinAlg::IsAvailable(BatchedLinAlg::GPU_BLAS))
    {
       const auto mt = Device::GetDeviceMemoryType();
       packed_high.SetSize(high_dofs.Size(), mt);
@@ -185,37 +244,52 @@ LocalTransfer::LocalTransfer(FiniteElementSpace &high, BatchedLOR &lor,
    {
       high.GetElementDofs(e, hd);
       const int *perm = lor.VertexPermutation(e);
+      std::array<int,4> sorted;
+      const Array<int> *order = nullptr;
+      if (canonical)
+      {
+         order = &canonical->Order(mesh.GetElement(e)->GetVertices(),perm,sorted);
+         perm = sorted.data();
+      }
       for (int i = 0; i < nh; i++)
       {
-         const int *a = alpha[i];
+         const auto &a = alpha[i];
          const int d = hd[index(a[perm[1]], a[perm[2]], a[perm[3]])];
-         high_dofs[e*nh+i] = d;
+         // Identical entity traces need just one writer on each rank.
+         high_dofs[e*nh+i] = use_entity && inv_multiplicity(d) ? -1 : d;
          inv_multiplicity(d)++;
       }
 
       for (int i = 0; i < nl; i++)
       {
-         const int d = lor.PatchDofs()[e*nl+i];
+         const int d = lor.PatchDofs()[e*nl+(order ? (*order)[i] : i)];
          lor_dofs[e*nl+i] = lor_boundary[d] ? -1 : d;
       }
-      if (!reference_fit)
+      if (!shared)
       {
-         basis.Fit(lor, e, mesh.GetElementVolume(e), fits(e));
+         basis->Fit(lor, e, mesh.GetElementVolume(e), matrices(e));
       }
    }
 
+   Array<int> high_boundary;
+   GetBoundaryMarker(high, high_boundary);
+   if (use_entity)
+   {
+      const auto boundary = high_boundary.HostRead();
+      for (int i = 0; i < height; ++i)
+      { inv_multiplicity(i) = boundary[i] ? 0.0 : 1.0; }
+      return;
+   }
    if (const Operator *P = high.GetProlongationMatrix())
    {
       Vector sums(P->Width());
       P->MultTranspose(inv_multiplicity, sums);
       P->Mult(sums, inv_multiplicity);
    }
-   Array<int> high_boundary;
-   GetBoundaryMarker(high, high_boundary);
    InvertInteriorMultiplicity(inv_multiplicity, high_boundary);
 }
 
-// Pack one column per element. The shared reference fit acts on all columns
+// Pack one column per element. The shared reference matrix acts on all columns
 // in a single GEMM. Apply multiplicity weights on the high-order side only.
 void LocalTransfer::ApplyReference(const Vector &x, Vector &y,
                                    bool transpose) const
@@ -234,8 +308,8 @@ void LocalTransfer::ApplyReference(const Vector &x, Vector &y,
    });
 
    const auto &blas = BatchedLinAlg::Get(BatchedLinAlg::GPU_BLAS);
-   if (transpose) { blas.MultTranspose(fits, src, dst); }
-   else { blas.Mult(fits, src, dst); }
+   if (transpose) { blas.MultTranspose(matrices, src, dst); }
+   else { blas.Mult(matrices, src, dst); }
 
    y.UseDevice(true);
    y = 0.0;
@@ -254,9 +328,9 @@ void LocalTransfer::ApplyReference(const Vector &x, Vector &y,
 void LocalTransfer::Mult(const Vector &x, Vector &y) const
 {
    if (packed_high.Size()) { ApplyReference(x, y, false); return; }
-   const int nh = fits.SizeI(), nl = fits.SizeJ();
-   const auto fit = Reshape(fits.Read(), nh, nl, fits.SizeK());
-   const bool shared = fits.SizeK() == 1;
+   const int nh = matrices.SizeI(), nl = matrices.SizeJ();
+   const auto fit = Reshape(matrices.Read(), nh, nl, matrices.SizeK());
+   const bool shared = matrices.SizeK() == 1;
    const auto high = high_dofs.Read(), low = lor_dofs.Read();
    const auto weight = inv_multiplicity.Read(), input = x.Read();
    y.UseDevice(true);
@@ -264,6 +338,7 @@ void LocalTransfer::Mult(const Vector &x, Vector &y) const
    auto output = y.ReadWrite();
    mfem::forall(high_dofs.Size(), [=] MFEM_HOST_DEVICE (int k)
    {
+      if (high[k] < 0) { return; }
       const int e = k/nh, i = k%nh;
       real_t sum = 0.0;
       for (int j = 0; j < nl; j++)
@@ -278,9 +353,9 @@ void LocalTransfer::Mult(const Vector &x, Vector &y) const
 void LocalTransfer::MultTranspose(const Vector &x, Vector &y) const
 {
    if (packed_high.Size()) { ApplyReference(x, y, true); return; }
-   const int nh = fits.SizeI(), nl = fits.SizeJ();
-   const auto fit = Reshape(fits.Read(), nh, nl, fits.SizeK());
-   const bool shared = fits.SizeK() == 1;
+   const int nh = matrices.SizeI(), nl = matrices.SizeJ();
+   const auto fit = Reshape(matrices.Read(), nh, nl, matrices.SizeK());
+   const bool shared = matrices.SizeK() == 1;
    const auto high = high_dofs.Read(), low = lor_dofs.Read();
    const auto weight = inv_multiplicity.Read(), input = x.Read();
    y.UseDevice(true);
@@ -294,7 +369,7 @@ void LocalTransfer::MultTranspose(const Vector &x, Vector &y) const
       for (int i = 0; i < nh; i++)
       {
          const int d = high[e*nh+i];
-         sum += fit(i,j,shared ? 0 : e)*weight[d]*input[d];
+         if (d >= 0) { sum += fit(i,j,shared ? 0 : e)*weight[d]*input[d]; }
       }
       AtomicAdd(output[low[k]], sum);
    });
@@ -304,15 +379,31 @@ void LocalTransfer::MultTranspose(const Vector &x, Vector &y) const
 
 ElementTransfer::ElementTransfer(FiniteElementSpace &high,
                                  BatchedLOR &lor,
-                                 bool reference_fit)
+                                 TransferType type)
    : Operator(high.GetTrueVSize(), lor.Space().GetTrueVSize())
 {
-   auto patch = std::make_unique<LocalTransfer>(high, lor, reference_fit);
-   // SetupRAP returns the local operator when both prolongations are identities.
-   Operator *R = patch->SetupRAP(lor.Space().GetProlongationMatrix(),
-                                 high.GetProlongationMatrix());
-   transfer.Reset(R, R != patch.get());
-   local = std::move(patch);
+   const bool use_entity = type.method == TransferMethod::Entity;
+   if (use_entity && !type.reference)
+   {
+      local = MakeEntityTransfer(high, lor);
+   }
+   else
+   {
+      local = std::make_unique<LocalTransfer>(high, lor, type);
+   }
+   // Select the owner's trace for either conforming entity method.
+   const Operator *output = use_entity ? high.GetRestrictionTransposeOperator() :
+                            high.GetProlongationMatrix();
+   // Form P_out^t local P_in, eliding identities.
+   const Operator *input = lor.Space().GetProlongationMatrix();
+   if (IsIdentityProlongation(input) && IsIdentityProlongation(output))
+   {
+      transfer.Reset(local.get(), false);
+   }
+   else
+   {
+      transfer.Reset(new RAPOperator(*output, *local, *input));
+   }
 }
 
 } // namespace tetlor

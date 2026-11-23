@@ -36,6 +36,7 @@ class BatchedLOR
    std::unique_ptr<FiniteElementCollection> collection;
    std::unique_ptr<FiniteElementSpace> space;
    Mesh patch;
+   std::vector<BarycentricLabel> labels;
    Array<int> dofs, rows, columns;
    Array2D<int> vertex_permutations;
    DenseMatrix stencil, metrics;
@@ -45,14 +46,25 @@ public:
    /// Coarse topology space for numbering, boundary DOFs and prolongation.
    FiniteElementSpace &Space() const { return *space; }
    Mesh &ReferencePatch() { return patch; }
+   const auto &PatchLabels() const { return labels; }
    const int *VertexPermutation(int e) const { return vertex_permutations[e]; }
    const Array<int> &PatchDofs() const { return dofs; }
 
    /// Compute Q^t K for a physical patch, or the reference patch if e < 0.
    void ApplyPatchStiffness(int e, const DenseMatrix &Q, DenseMatrix &QtK) const;
+   void GetPatchStiffness(const real_t metric[6], DenseMatrix &K) const;
+   void GetPatchStiffness(int e, DenseMatrix &K) const;
    /// Assemble the unconstrained rank-local matrix in an empty CSR matrix.
    void AssembleLocal(SparseMatrix &matrix) const;
    void FormSystemMatrix(const Array<int> &ess_dofs, OperatorHandle &A) const;
+};
+
+enum class TransferMethod { Fit, Entity };
+
+struct TransferType
+{
+   TransferMethod method;
+   bool reference;
 };
 
 /// LOR-to-Bernstein transfer on true DOFs with homogeneous Dirichlet data.
@@ -63,9 +75,9 @@ class ElementTransfer : public Operator
 
 public:
    MemoryClass GetMemoryClass() const override { return Device::GetMemoryClass(); }
-   /// Set up the local fits from the same patch stencil used for assembly.
+   /// Build the LOR-to-high-order transfer for the selected method and geometry.
    ElementTransfer(FiniteElementSpace &high, BatchedLOR &lor,
-                   bool reference_fit);
+                   TransferType type);
 
    void Mult(const Vector &x, Vector &y) const override { transfer->Mult(x, y); }
    void MultTranspose(const Vector &x, Vector &y) const override

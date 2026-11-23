@@ -58,7 +58,7 @@ public:
 
    explicit LORScalarCoefficient(real_t factor)
       : FunctionCoefficient([factor](const Vector &x) { return factor*u(x); }),
-        scale(factor) { }
+   scale(factor) { }
 
    void Project(QuadratureFunction &qf) override
    {
