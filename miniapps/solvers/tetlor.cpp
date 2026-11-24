@@ -13,9 +13,10 @@
 // (UMFPACK on CPU, cuDSS on CUDA).
 //
 //   make tetlor
-//   ./tetlor -g isaac -p 4 -e 2
-//   ./tetlor -g duffy -p 4 -e 1 -t fit -ref
-//   ./tetlor -g isaac -p 4 -e 2 -t entity -ref
+//   ./tetlor -g isaac -o 4 -e 2
+//   ./tetlor -g duffy -o 4 -e 1 -t fit -ref
+//   ./tetlor -g isaac -o 4 -e 2 -t entity -ref
+//   ./tetlor -g electro -o 5 -e 0 -t interp
 //   ./tetlor -d cuda -pa  # requires cuDSS
 
 #include "tetlor.hpp"
@@ -55,23 +56,20 @@ int main(int argc, char *argv[])
    args.AddOption(&device_config, "-d", "--device", "MFEM device configuration.");
    args.AddOption(&mesh_file, "-m", "--mesh",
                   "Conforming affine tetrahedral mesh.");
-   args.AddOption(&p, "-p", "--order", "Polynomial degree.");
+   args.AddOption(&p, "-o", "--order", "Polynomial degree.");
    args.AddOption(&enrichment, "-e", "--enrichment", "LOR order q = p + e.");
    args.AddOption(&grid_type, "-g", "--grid",
-                  "LOR point distribution: isaac or duffy.");
+                  "LOR point distribution: isaac, duffy, or electro (q <= 10).");
    args.AddOption(&ref_levels, "-r", "--refine",
                   "Number of uniform coarse mesh refinements.");
    args.AddOption(&pa, "-pa", "--partial-assembly", "-no-pa",
                   "--no-partial-assembly", "Use partial assembly for the high-order form.");
    args.AddOption(&transfer, "-t", "--transfer",
-                  "Transfer method: fit or entity.");
+                  "Transfer method: fit, entity, or interp (square nodal grid).");
    args.AddOption(&reference, "-ref", "--reference", "-phys", "--physical",
-                  "Build the transfer on the reference or physical geometry.");
+                  "Geometry for fit and entity transfers.");
    args.ParseCheck();
-   MFEM_VERIFY(transfer == "fit" || transfer == "entity",
-               "Expected transfer method fit or entity.");
-   const auto method = transfer == "fit" ? tetlor::TransferMethod::Fit :
-                       tetlor::TransferMethod::Entity;
+   const auto method = tetlor::GetTransferMethod(transfer);
 
    Device device(device_config);
    device.Print();

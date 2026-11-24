@@ -50,13 +50,13 @@ all: $(MINIAPPS)
 %.o: %.cpp
 
 TETLOR_ENTITY_OBJ = tetlor_entity.o tetlor_entity_device.o tetlor_entity_reference.o tetlor_entity_energy.o
-TETLOR_OBJ = lor_mesh.o tetlor_batched.o tetlor_transfer.o $(TETLOR_ENTITY_OBJ)
+TETLOR_OBJ = lor_mesh.o lor_electrostatic.o tetlor_batched.o tetlor_transfer.o $(TETLOR_ENTITY_OBJ)
 tetlor ptetlor: %: %.o $(TETLOR_OBJ)
 	$(MFEM_CXX) $(MFEM_LINK_FLAGS) $^ -o $@ $(MFEM_LIBS)
 
 tetlor_transfer.o $(TETLOR_ENTITY_OBJ): $(SRC)tetlor_entity.hpp
-tetlor.o ptetlor.o $(filter-out lor_mesh.o,$(TETLOR_OBJ)): $(SRC)tetlor.hpp $(SRC)lor_mesh.hpp
-lor_mesh.o: $(SRC)lor_mesh.hpp
+tetlor.o ptetlor.o $(filter-out lor_mesh.o lor_electrostatic.o,$(TETLOR_OBJ)): $(SRC)tetlor.hpp $(SRC)lor_mesh.hpp
+lor_mesh.o lor_electrostatic.o: $(SRC)lor_mesh.hpp
 lor_solvers.o: $(SRC)lor_mms.hpp
 plor_solvers.o: $(SRC)lor_mms.hpp
 
@@ -97,12 +97,14 @@ plor_solvers-test-par: plor_solvers
 # Tetrahedral fictitious-space solvers
 tetlor-test-seq: tetlor
 	@$(call mfem-test,$<,, Tetrahedral LOR miniapp,-g isaac $(if $(filter NO,$(MFEM_USE_SUITESPARSE)),-d cuda),1)
-	@$(call mfem-test,$<,, Tetrahedral entity transfer,-t entity -g isaac -p 4 $(if $(filter NO,$(MFEM_USE_SUITESPARSE)),-d cuda),1)
-	@$(call mfem-test,$<,, Reference entity transfer,-t entity -ref -g isaac -p 4 -e 2 $(if $(filter NO,$(MFEM_USE_SUITESPARSE)),-d cuda),1)
+	@$(call mfem-test,$<,, Tetrahedral entity transfer,-t entity -g isaac -o 4 $(if $(filter NO,$(MFEM_USE_SUITESPARSE)),-d cuda),1)
+	@$(call mfem-test,$<,, Reference entity transfer,-t entity -ref -g isaac -o 4 -e 2 $(if $(filter NO,$(MFEM_USE_SUITESPARSE)),-d cuda),1)
+	@$(call mfem-test,$<,, Electrostatic interpolation,-t interp -g electro -o 5 -e 0 $(if $(filter NO,$(MFEM_USE_SUITESPARSE)),-d cuda),1)
 ptetlor-test-par: ptetlor
 	@$(call mfem-test,$<, $(RUN_MPI), Parallel tetrahedral LOR miniapp,-g duffy -t fit -ref,1)
-	@$(call mfem-test,$<, $(RUN_MPI), Parallel tetrahedral entity transfer,-t entity -g duffy -p 4 -e 1,1)
-	@$(call mfem-test,$<, $(RUN_MPI), Parallel reference entity transfer,-t entity -ref -g duffy -p 4 -e 1,1)
+	@$(call mfem-test,$<, $(RUN_MPI), Parallel tetrahedral entity transfer,-t entity -g duffy -o 4 -e 1,1)
+	@$(call mfem-test,$<, $(RUN_MPI), Parallel reference entity transfer,-t entity -ref -g duffy -o 4 -e 1,1)
+	@$(call mfem-test,$<, $(RUN_MPI), Parallel electrostatic interpolation,-t interp -g electro -o 5 -e 0,1)
 
 # LOR elasticity miniapp tests
 lor_elast-test-par: lor_elast-tri lor_elast-hex

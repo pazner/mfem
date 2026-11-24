@@ -31,11 +31,13 @@ struct EntityDofs
    Array<int> all;
    int interior = 0;
 
-   void Init(FiniteElementSpace &fes, int dim, int id, const Array<int> &essential);
+   void Init(FiniteElementSpace &fes, int dim, int id,
+             const Array<int> &essential);
 };
 
 Array<int> BoundaryMarker(const FiniteElementSpace &fes);
-std::unique_ptr<Operator> MakeDeviceTransfer(FiniteElementSpace &high, BatchedLOR &lor);
+std::unique_ptr<Operator> MakeDeviceTransfer(FiniteElementSpace &high,
+                                             BatchedLOR &lor);
 
 void ReferenceMatrix(BatchedLOR &lor, const FiniteElement &bern,
                      DenseMatrix &R);

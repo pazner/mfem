@@ -229,15 +229,8 @@ void ReferenceMatrix(BatchedLOR &lor, const FiniteElement &bern, DenseMatrix &R)
    T.SetIdentityTransformation(Geometry::TETRAHEDRON);
    DiffusionIntegrator(coefficient).AssembleElementMatrix(bern,T,H);
 
-   DenseMatrix sampling(nl,nh);
-   Vector shape(nh);
-   for (int i = 0; i < nl; ++i)
-   {
-      IntegrationPoint ip;
-      ip.Set3(lor.ReferencePatch().GetVertex(i));
-      bern.CalcShape(ip,shape);
-      sampling.SetRow(i,shape);
-   }
+   DenseMatrix sampling;
+   SamplePatchBasis(lor.ReferencePatch(),bern,sampling);
    Templates source(low,A,p), target(high,H,p);
    auto trace = [&](int e, TraceRule &a, TraceRule &h)
    {

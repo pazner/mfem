@@ -69,10 +69,13 @@ void GetPatchVertices(const Mesh &mesh, int e, bool duffy, Array<int> &v)
 Mesh MakeReferenceLORMesh(int q, const std::string &grid_type,
                           std::vector<BarycentricLabel> &labels)
 {
-   MFEM_VERIFY(q > 0 && (grid_type == "isaac" || grid_type == "duffy"),
-               "Expected a positive LOR order and an isaac or duffy grid.");
-   MFEM_VERIFY(q <= std::numeric_limits<int>::max()/q/q, "LOR order overflow.");
    const bool duffy = grid_type == "duffy";
+   const bool electrostatic = grid_type == "electro";
+   MFEM_VERIFY(q > 0 && (grid_type == "isaac" || duffy || electrostatic),
+               "Expected a positive LOR order and an isaac, duffy or electro grid.");
+   MFEM_VERIFY(q <= std::numeric_limits<int>::max()/q/q, "LOR order overflow.");
+   MFEM_VERIFY(!electrostatic || q <= 10,
+               "Electrostatic nodes are tabulated for orders 1 through 10.");
    GeometryRefiner refiner;
    auto &rg = *refiner.Refine(duffy ? Geometry::CUBE : Geometry::TETRAHEDRON, q);
    const int n = rg.RefPts.GetNPoints();
@@ -97,9 +100,12 @@ Mesh MakeReferenceLORMesh(int q, const std::string &grid_type,
       else
       {
          // Freudenthal chains in (lambda_3, lambda_2+lambda_3, 1-lambda_0).
+         // Swapping j and k gives the Nektar++ octahedron diagonal from
+         // (x,y+1,z) to (x+1,y,z+1) in integer simplex coordinates.
          const int alpha[] = {q-i-j-k,i,k,j};
-         IsaacNode(alpha, 4, bary[l].data());
          std::copy_n(alpha, 4, label[l].begin());
+         if (electrostatic) { bary[l] = ElectrostaticNode(label[l],gll); }
+         else { IsaacNode(alpha, 4, bary[l].data()); }
       }
    }
 

@@ -64,7 +64,12 @@ public:
    void FormSystemMatrix(const Array<int> &ess_dofs, OperatorHandle &A) const;
 };
 
-enum class TransferMethod { Fit, Entity };
+enum class TransferMethod { Fit, Entity, Interp };
+TransferMethod GetTransferMethod(const std::string &name);
+
+/// Sample the high-order basis in reference patch vertex order.
+void SamplePatchBasis(const Mesh &patch, const FiniteElement &fe,
+                      DenseMatrix &V);
 
 struct TransferType
 {

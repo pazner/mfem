@@ -30,8 +30,45 @@ std::vector<BarycentricLabel> BernsteinLabels(const FiniteElement &bern)
    return alpha;
 }
 
+void SamplePatchBasis(const Mesh &patch, const FiniteElement &fe,
+                      DenseMatrix &V)
+{
+   V.SetSize(patch.GetNV(),fe.GetDof());
+   Vector shape(fe.GetDof());
+   for (int i = 0; i < patch.GetNV(); ++i)
+   {
+      IntegrationPoint ip;
+      ip.Set3(patch.GetVertex(i));
+      fe.CalcShape(ip,shape);
+      V.SetRow(i,shape);
+   }
+}
+
+TransferMethod GetTransferMethod(const std::string &name)
+{
+   if (name == "fit") { return TransferMethod::Fit; }
+   if (name == "entity") { return TransferMethod::Entity; }
+   if (name == "interp") { return TransferMethod::Interp; }
+   MFEM_ABORT("Expected transfer method fit, entity, or interp.");
+}
+
 namespace
 {
+
+// Interpolation maps nodal data to Bernstein coefficients: V R = I.
+void InterpolationMatrix(const Mesh &patch, const FiniteElement &bern,
+                         DenseMatrix &R)
+{
+   MFEM_VERIFY(patch.GetNV() == bern.GetDof(),
+               "interp requires one patch node per polynomial DOF. "
+               "Use -e 0 with -g electro or -g isaac.");
+   DenseMatrix V;
+   SamplePatchBasis(patch,bern,V);
+   Array<int> pivots(V.Height());
+   LUFactors lu(V.Data(),pivots.GetData());
+   MFEM_VERIFY(lu.Factor(V.Height()), "Singular interpolation matrix.");
+   lu.GetInverseMatrix(V.Height(),R.Data());
+}
 
 // The sampled Bernstein basis J = Q U is orthonormalized with the normalized
 // lumped weights. These weights and the polynomial means are affine invariant.
@@ -57,14 +94,11 @@ public:
          }
       }
       lump /= lump.Sum();
-      Vector root(lump.Size()), shape(bern.GetDof());
+      SamplePatchBasis(patch,bern,Q);
+      Vector root(lump.Size());
       for (int i = 0; i < patch.GetNV(); i++)
       {
          root(i) = std::sqrt(lump(i));
-         IntegrationPoint ip;
-         ip.Set3(patch.GetVertex(i));
-         bern.CalcShape(ip, shape);
-         Q.SetRow(i, shape);
       }
 
       U = 0.0;
@@ -270,13 +304,18 @@ LocalTransfer::LocalTransfer(FiniteElementSpace &high, BatchedLOR &lor,
    Mesh &patch = lor.ReferencePatch();
    const FiniteElement &bern = *high.GetFE(0);
    const int nh = bern.GetDof(), nl = patch.GetNV(), p = bern.GetOrder();
-   const bool shared = type.reference;
+   const bool interp = type.method == TransferMethod::Interp;
+   const bool shared = type.reference || interp;
    std::unique_ptr<PatchBasis> basis;
    std::unique_ptr<CanonicalPatch> canonical;
    const bool gpu_blas = BatchedLinAlg::IsAvailable(BatchedLinAlg::GPU_BLAS);
    const bool device_fit = !shared && Device::Allows(Backend::DEVICE_MASK);
    matrices.SetSize(nh,nl,shared ? 1 : mesh.GetNE());
-   if (unique_high)
+   if (interp)
+   {
+      InterpolationMatrix(patch,bern,matrices(0));
+   }
+   else if (unique_high)
    {
       entity::ReferenceMatrix(lor,bern,matrices(0));
       canonical = std::make_unique<CanonicalPatch>(lor.PatchLabels());

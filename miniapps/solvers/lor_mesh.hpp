@@ -25,6 +25,10 @@ void GetPatchVertices(const mfem::Mesh &mesh, int e, bool duffy,
 
 using BarycentricLabel = std::array<long long,4>;
 
+/// Electrostatic simplex node at the given lattice label (orders 1 through 10).
+std::array<mfem::real_t,4> ElectrostaticNode(const BarycentricLabel &label,
+                                             const mfem::real_t *gll);
+
 /// Build one reference patch, recording exact lattice labels in vertex order.
 mfem::Mesh MakeReferenceLORMesh(int q, const std::string &grid_type,
                                 std::vector<BarycentricLabel> &labels);

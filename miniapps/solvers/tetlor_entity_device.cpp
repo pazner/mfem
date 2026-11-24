@@ -572,14 +572,7 @@ void ReferenceTables(BatchedLOR &lor, const FiniteElement &bern,
          DiffusionIntegrator(coefficient).AssembleElementMatrix(bern,T,high(k));
       }
    }
-   Vector shape(bern.GetDof());
-   for (int i = 0; i < sample.Height(); ++i)
-   {
-      IntegrationPoint ip;
-      ip.Set3(lor.ReferencePatch().GetVertex(i));
-      bern.CalcShape(ip,shape);
-      sample.SetRow(i,shape);
-   }
+   SamplePatchBasis(lor.ReferencePatch(),bern,sample);
 }
 
 void AddPermutation(Array<int> &perm, const int *entity, int keep,
